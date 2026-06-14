@@ -333,7 +333,9 @@ CONTENT_TYPES = {
 
 class Handler(BaseHTTPRequestHandler):
     def _json(self, data, code=200):
-        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        # default=str — Postgres'dan keladigan sana-vaqt (datetime) obyektlarini
+        # matnga aylantiradi, aks holda JSON serializatsiya xato beradi.
+        body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
