@@ -12,6 +12,8 @@ import sqlite3
 import datetime
 import threading
 import urllib.request
+import hashlib
+import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -39,6 +41,52 @@ STAGE_LABEL = {
     "ssenariy": "Ssenariy", "syomka": "Syomka", "montaj": "Montaj",
     "tasdiq": "Tasdiq", "joylash": "Joylash",
 }
+
+# Video darajalari va narxlari (so'm). Rahbar daraja tanlaydi, tizim avtomatik hisoblaydi.
+TIERS = {
+    "oddiy":    {"label": "Oddiy Reels",    "price": 25000},
+    "standart": {"label": "Standart Reels", "price": 35000},
+    "premium":  {"label": "Premium Reels",  "price": 50000},
+}
+
+# Rollar: ceo, coordinator, lead (rahbar), editor (montajchi), client (mijoz)
+# Tasdiqlay oladiganlar (video/ssenariy):
+APPROVER_ROLES = ("ceo", "coordinator", "lead")
+# Hamma narsani ko'radiganlar:
+ADMIN_ROLES = ("ceo", "coordinator")
+
+# Jamoa va kirish ma'lumotlari. (name, username, password, role, title, color, client_name)
+TEAM = [
+    ("Dilshod Khamraev", "dilshod", "ceo2026",  "ceo",         "CEO",                    "#0A84FF", None),
+    ("Xonzoda",          "xonzoda", "xonz2026", "coordinator", "Loyiha koordinatori",    "#BF5AF2", None),
+    ("Said",             "said",    "said2026", "lead",        "Loyiha rahbari · Syomka", "#FF9F0A", None),
+    ("Gulmira",          "gulmira", "gulm2026", "lead",        "Loyiha rahbari",          "#30D158", None),
+    ("Robiya",           "robiya",  "robi2026", "lead",        "Loyiha rahbari",          "#FF375F", None),
+    # Montajchilar
+    ("Sardor",           "sardor",  "sard2026", "editor",      "Montajchi",               "#64D2FF", None),
+    ("Talg'at",          "talgat",  "talg2026", "editor",      "Montajchi",               "#FFD60A", None),
+    ("Oygul",            "oygul",   "oygu2026", "editor",      "Montajchi",               "#FF6482", None),
+    ("Umid",             "umid",    "umid2026", "editor",      "Montajchi",               "#5E5CE6", None),
+    ("Umida",            "umida",   "umid2027", "editor",      "Montajchi · Ssenarist",   "#AC8E68", None),
+    ("Shodiya",          "shodiya", "shod2026", "editor",      "Montajchi",               "#32D74B", None),
+    # Mijozlar (faqat o'z loyihasini ko'radi)
+    ("Rohatoy Mamolog",                          "rohatoy",  "mijoz2601", "client", "Mijoz", "#0A84FF", "Rohatoy Mamolog"),
+    ("Nova School",                              "novaschool","mijoz2602", "client", "Mijoz", "#30D158", "Nova School"),
+    ("Aziza Psixolog",                           "aziza",    "mijoz2603", "client", "Mijoz", "#BF5AF2", "Aziza Psixolog"),
+    ("Namuna Mebel",                             "namuna",   "mijoz2604", "client", "Mijoz", "#FF9F0A", "Namuna Mebel"),
+    ('Bekzod Trading "AMARKETS"',                "bekzod",   "mijoz2605", "client", "Mijoz", "#64D2FF", 'Bekzod Trading "AMARKETS"'),
+    ("Mohira Valiyeva Kosmetolog",               "mohira",   "mijoz2606", "client", "Mijoz", "#FF375F", "Mohira Valiyeva Kosmetolog"),
+    ("Nodirbek Primqulov Arab tili",             "nodirbek", "mijoz2607", "client", "Mijoz", "#FFD60A", "Nodirbek Primqulov Arab tili"),
+    ("Zebo Rixsibayevna (Nova School asoschisi)","zebo",     "mijoz2608", "client", "Mijoz", "#5E5CE6", "Zebo Rixsibayevna (Nova School asoschisi)"),
+]
+
+
+def make_salt():
+    return secrets.token_hex(8)
+
+
+def hash_pw(password, salt):
+    return hashlib.pbkdf2_hmac("sha256", (password or "").encode(), salt.encode(), 100000).hex()
 
 
 def uz_now():
@@ -114,6 +162,47 @@ def get_db():
     return Conn(raw)
 
 
+def add_column_if_missing(conn, table, col, coltype):
+    """users jadvaliga yangi ustun qo'shadi (agar yo'q bo'lsa). SQLite/Postgres."""
+    if IS_PG:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {coltype}")
+    else:
+        cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+        if col not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {coltype}")
+
+
+def ensure_accounts(conn):
+    """Jamoa va mijoz akkauntlarini ta'minlaydi (idempotent — qayta-qayta xavfsiz).
+    Mavjud foydalanuvchi (ism bo'yicha) bo'lsa — login ma'lumotini qo'shadi,
+    bo'lmasa — yangi yaratadi. Parol faqat bo'sh bo'lsa o'rnatiladi."""
+    for name, username, password, role, title, color, client_name in TEAM:
+        existing = conn.execute(
+            "SELECT id, password_hash FROM users WHERE username=? OR name=?",
+            (username, name),
+        ).fetchone()
+        salt = make_salt()
+        ph = hash_pw(password, salt)
+        if existing:
+            # Parol allaqachon o'rnatilgan bo'lsa — tegmaymiz (foydalanuvchi o'zgartirgan bo'lishi mumkin)
+            if existing["password_hash"]:
+                conn.execute(
+                    "UPDATE users SET username=?, role=?, title=?, color=?, client_name=? WHERE id=?",
+                    (username, role, title, color, client_name, existing["id"]),
+                )
+            else:
+                conn.execute(
+                    "UPDATE users SET username=?, salt=?, password_hash=?, role=?, title=?, color=?, client_name=? WHERE id=?",
+                    (username, salt, ph, role, title, color, client_name, existing["id"]),
+                )
+        else:
+            conn.execute(
+                "INSERT INTO users (name, username, salt, password_hash, role, title, color, client_name) VALUES (?,?,?,?,?,?,?,?)",
+                (name, username, salt, ph, role, title, color, client_name),
+            )
+    conn.commit()
+
+
 def init_db():
     conn = get_db()
     pk = "SERIAL PRIMARY KEY" if IS_PG else "INTEGER PRIMARY KEY AUTOINCREMENT"
@@ -133,6 +222,37 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS activity (
         id {pk}, project_id INTEGER, project_name TEXT, stage TEXT, status TEXT,
         actor TEXT, created_at TEXT)""")
+
+    # --- Yangi modul jadvallari (mavjud ma'lumotga tegmaydi) ---
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY, user_id INTEGER, created_at TEXT)""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS scripts (
+        id {pk}, project_id INTEGER, project TEXT, client TEXT DEFAULT '', author TEXT, title TEXT,
+        status TEXT DEFAULT 'yozilmoqda', hook TEXT DEFAULT '', story TEXT DEFAULT '',
+        cta TEXT DEFAULT '', link TEXT DEFAULT '',
+        approved_by TEXT DEFAULT '', approved_at TEXT DEFAULT '',
+        expert_ok INTEGER DEFAULT 0, expert_note TEXT DEFAULT '', expert_at TEXT DEFAULT '',
+        created_at {ts}, updated_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS script_versions (
+        id {pk}, script_id INTEGER, version INTEGER, hook TEXT, story TEXT, cta TEXT,
+        edited_by TEXT, created_at TEXT)""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS videos (
+        id {pk}, project_id INTEGER, project TEXT, client TEXT DEFAULT '', script_id INTEGER,
+        title TEXT, editor TEXT, vdate TEXT, drive_link TEXT DEFAULT '', note TEXT DEFAULT '',
+        tier TEXT DEFAULT '', amount INTEGER DEFAULT 0, status TEXT DEFAULT 'topshirildi',
+        approved_by TEXT DEFAULT '', approved_at TEXT DEFAULT '',
+        instagram_link TEXT DEFAULT '', created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS payments (
+        id {pk}, editor TEXT, amount INTEGER, paid_by TEXT, note TEXT DEFAULT '',
+        pdate TEXT, created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS audit (
+        id {pk}, actor TEXT, action TEXT, detail TEXT DEFAULT '', created_at TEXT)""")
+
+    # users jadvaliga login ustunlarini qo'shish (idempotent)
+    add_column_if_missing(conn, "users", "username", "TEXT")
+    add_column_if_missing(conn, "users", "salt", "TEXT")
+    add_column_if_missing(conn, "users", "password_hash", "TEXT")
+    add_column_if_missing(conn, "users", "client_name", "TEXT")
     conn.commit()
 
     # Seed (faqat bo'sh bo'lsa)
@@ -184,6 +304,8 @@ def init_db():
             sample,
         )
         conn.commit()
+
+    ensure_accounts(conn)
     conn.close()
 
 
@@ -437,6 +559,460 @@ def api_telegram_digest():
     return {"ok": True, "overdue": len(overdue), "soon": len(soon)}
 
 
+# ============================================================
+#  AUTH (login / parol)
+# ============================================================
+def public_user(u):
+    if not u:
+        return None
+    d = dict(u)
+    d.pop("salt", None)
+    d.pop("password_hash", None)
+    d["hasPassword"] = True
+    return d
+
+
+def user_from_token(token):
+    if not token:
+        return None
+    conn = get_db()
+    row = conn.execute(
+        "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?",
+        (token,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def api_login(b):
+    username = (b.get("username") or "").strip().lower()
+    password = b.get("password") or ""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE lower(username) = ?", (username,)).fetchone()
+    if not row or not row["password_hash"] or hash_pw(password, row["salt"]) != row["password_hash"]:
+        conn.close()
+        return None
+    token = secrets.token_hex(24)
+    conn.execute(
+        "INSERT INTO sessions (token, user_id, created_at) VALUES (?,?,?)",
+        (token, row["id"], now_local()),
+    )
+    log_audit(conn, row["name"], "kirdi", "")
+    conn.commit()
+    conn.close()
+    return {"token": token, "user": public_user(dict(row))}
+
+
+def api_logout(token):
+    conn = get_db()
+    conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_change_password(user, b):
+    old = b.get("old") or ""
+    new = b.get("new") or ""
+    if len(new) < 4:
+        return {"ok": False, "error": "Yangi parol kamida 4 ta belgi bo'lsin"}
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE id = ?", (user["id"],)).fetchone()
+    if hash_pw(old, row["salt"]) != row["password_hash"]:
+        conn.close()
+        return {"ok": False, "error": "Eski parol noto'g'ri"}
+    salt = make_salt()
+    conn.execute(
+        "UPDATE users SET salt=?, password_hash=? WHERE id=?",
+        (salt, hash_pw(new, salt), user["id"]),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def log_audit(conn, actor, action, detail=""):
+    conn.execute(
+        "INSERT INTO audit (actor, action, detail, created_at) VALUES (?,?,?,?)",
+        (actor, action, detail, now_local()),
+    )
+
+
+def api_team():
+    """Login uchun emas — boshqaruvda ishlatish uchun jamoa ro'yxati (parolsiz)."""
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+    conn.close()
+    return [public_user(dict(r)) for r in rows]
+
+
+# ============================================================
+#  SSENARIYLAR (scripts)
+# ============================================================
+SCRIPT_STATUSES = ["yozilmoqda", "tasdiq_kutilmoqda", "tasdiqlandi", "qaytarildi"]
+
+
+def api_scripts(user):
+    conn = get_db()
+    if user["role"] == "client":
+        rows = conn.execute(
+            "SELECT * FROM scripts WHERE client = ? ORDER BY id DESC",
+            (user.get("client_name") or "",),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM scripts ORDER BY id DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def api_create_script(user, b):
+    conn = get_db()
+    title = b.get("title") or "Nomsiz ssenariy"
+    project = b.get("project") or ""
+    client = b.get("client") or ""
+    author = b.get("author") or user["name"]
+    sql = """INSERT INTO scripts (project_id, project, client, author, title, status, hook, story, cta, link)
+             VALUES (?,?,?,?,?,?,?,?,?,?)"""
+    params = (
+        b.get("project_id"), project, client, author, title, "yozilmoqda",
+        b.get("hook") or "", b.get("story") or "", b.get("cta") or "", b.get("link") or "",
+    )
+    if IS_PG:
+        sid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        sid = conn.execute(sql, params).lastrowid
+    conn.execute(
+        "INSERT INTO script_versions (script_id, version, hook, story, cta, edited_by, created_at) VALUES (?,?,?,?,?,?,?)",
+        (sid, 1, b.get("hook") or "", b.get("story") or "", b.get("cta") or "", author, now_local()),
+    )
+    log_audit(conn, user["name"], "ssenariy yaratdi", f"#{sid} {title}")
+    conn.commit()
+    row = conn.execute("SELECT * FROM scripts WHERE id=?", (sid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+def api_update_script(user, sid, b):
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM scripts WHERE id=?", (sid,)).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    ex = dict(ex)
+    new = {
+        "title": b.get("title", ex["title"]),
+        "project": b.get("project", ex["project"]),
+        "client": b.get("client", ex["client"]),
+        "hook": b.get("hook", ex["hook"]),
+        "story": b.get("story", ex["story"]),
+        "cta": b.get("cta", ex["cta"]),
+        "link": b.get("link", ex["link"]),
+    }
+    text_changed = (new["hook"], new["story"], new["cta"]) != (ex["hook"], ex["story"], ex["cta"])
+    if text_changed:
+        ver = conn.execute("SELECT COUNT(*) AS n FROM script_versions WHERE script_id=?", (sid,)).fetchone()["n"] + 1
+        conn.execute(
+            "INSERT INTO script_versions (script_id, version, hook, story, cta, edited_by, created_at) VALUES (?,?,?,?,?,?,?)",
+            (sid, ver, new["hook"], new["story"], new["cta"], user["name"], now_local()),
+        )
+        log_audit(conn, user["name"], "ssenariy tahrirladi", f"#{sid} v{ver}")
+    conn.execute(
+        "UPDATE scripts SET title=?, project=?, client=?, hook=?, story=?, cta=?, link=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        (new["title"], new["project"], new["client"], new["hook"], new["story"], new["cta"], new["link"], sid),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM scripts WHERE id=?", (sid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+def api_script_action(user, sid, b):
+    """submit | approve | return | expert — ssenariy holatini o'zgartiradi."""
+    action = b.get("action")
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM scripts WHERE id=?", (sid,)).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    ex = dict(ex)
+    if action == "submit":
+        conn.execute("UPDATE scripts SET status='tasdiq_kutilmoqda', updated_at=CURRENT_TIMESTAMP WHERE id=?", (sid,))
+        log_audit(conn, user["name"], "ssenariy tasdiqqa yubordi", f"#{sid} {ex['title']}")
+    elif action == "approve" and user["role"] in APPROVER_ROLES:
+        conn.execute(
+            "UPDATE scripts SET status='tasdiqlandi', approved_by=?, approved_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (user["name"], now_local(), sid),
+        )
+        log_audit(conn, user["name"], "ssenariy tasdiqladi", f"#{sid} {ex['title']}")
+        send_telegram(f"📝 <b>Ssenariy tasdiqlandi</b>\n{ex['title']} — {ex['project']}\n✅ {user['name']}")
+    elif action == "return" and user["role"] in APPROVER_ROLES:
+        conn.execute(
+            "UPDATE scripts SET status='qaytarildi', approved_by=?, approved_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (user["name"], now_local(), sid),
+        )
+        log_audit(conn, user["name"], "ssenariy qaytardi", f"#{sid} {ex['title']}")
+    elif action == "expert" and user["role"] in APPROVER_ROLES:
+        ok = 1 if b.get("expert_ok") else 0
+        conn.execute(
+            "UPDATE scripts SET expert_ok=?, expert_note=?, expert_at=? WHERE id=?",
+            (ok, b.get("expert_note") or "", now_local(), sid),
+        )
+        log_audit(conn, user["name"], "ekspert tasdig'i", f"#{sid} {'ha' if ok else 'yoq'}")
+    else:
+        conn.close()
+        return {"error": "Ruxsat yo'q yoki noto'g'ri amal"}
+    conn.commit()
+    row = conn.execute("SELECT * FROM scripts WHERE id=?", (sid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+def api_script_versions(sid):
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM script_versions WHERE script_id=? ORDER BY version DESC", (sid,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def api_script_stats():
+    """Har bir ssenarist bo'yicha statistika."""
+    conn = get_db()
+    rows = conn.execute("SELECT author, status FROM scripts").fetchall()
+    conn.close()
+    by = {}
+    for r in rows:
+        a = r["author"] or "—"
+        by.setdefault(a, {"author": a, "total": 0, "approved": 0, "returned": 0})
+        by[a]["total"] += 1
+        if r["status"] == "tasdiqlandi":
+            by[a]["approved"] += 1
+        if r["status"] == "qaytarildi":
+            by[a]["returned"] += 1
+    for v in by.values():
+        v["rate"] = round(v["approved"] / v["total"] * 100) if v["total"] else 0
+    return sorted(by.values(), key=lambda x: -x["total"])
+
+
+# ============================================================
+#  VIDEOLAR (montaj) + pul hisobi
+# ============================================================
+VIDEO_STATUSES = ["topshirildi", "qaytarildi", "qabul_qilindi"]
+
+
+def api_videos(user):
+    conn = get_db()
+    if user["role"] == "client":
+        rows = conn.execute("SELECT * FROM videos WHERE client=? ORDER BY id DESC", (user.get("client_name") or "",)).fetchall()
+    elif user["role"] == "editor":
+        rows = conn.execute("SELECT * FROM videos WHERE editor=? ORDER BY id DESC", (user["name"],)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM videos ORDER BY id DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def api_create_video(user, b):
+    conn = get_db()
+    editor = b.get("editor") or (user["name"] if user["role"] == "editor" else "")
+    title = b.get("title") or "Nomsiz video"
+    sql = """INSERT INTO videos (project_id, project, client, script_id, title, editor, vdate, drive_link, note, status)
+             VALUES (?,?,?,?,?,?,?,?,?,?)"""
+    params = (
+        b.get("project_id"), b.get("project") or "", b.get("client") or "", b.get("script_id"),
+        title, editor, b.get("vdate") or uz_today().isoformat(),
+        b.get("drive_link") or "", b.get("note") or "", "topshirildi",
+    )
+    if IS_PG:
+        vid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        vid = conn.execute(sql, params).lastrowid
+    log_audit(conn, user["name"], "video topshirdi", f"#{vid} {title} ({editor})")
+    conn.commit()
+    row = conn.execute("SELECT * FROM videos WHERE id=?", (vid,)).fetchone()
+    conn.close()
+    send_telegram(f"🎬 <b>Video topshirildi</b>\n{title}\n👤 Montajchi: {editor}\n📁 {b.get('project') or '—'}")
+    return dict(row)
+
+
+def api_video_action(user, vid, b):
+    """accept (qabul + pul hisoblanadi) | return | instagram — faqat rahbar."""
+    action = b.get("action")
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM videos WHERE id=?", (vid,)).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    ex = dict(ex)
+    if action == "accept" and user["role"] in APPROVER_ROLES:
+        tier = b.get("tier") if b.get("tier") in TIERS else "standart"
+        amount = TIERS[tier]["price"]
+        conn.execute(
+            "UPDATE videos SET status='qabul_qilindi', tier=?, amount=?, approved_by=?, approved_at=? WHERE id=?",
+            (tier, amount, user["name"], now_local(), vid),
+        )
+        log_audit(conn, user["name"], "video qabul qildi", f"#{vid} {ex['title']} · {TIERS[tier]['label']} · {amount} so'm")
+        log_audit(conn, "Tizim", "pul hisoblandi", f"#{vid} {ex['editor']} +{amount} so'm")
+        send_telegram(
+            f"✅ <b>Video QABUL QILINDI</b>\n{ex['title']}\n👤 {ex['editor']}\n"
+            f"💰 {TIERS[tier]['label']} — {amount:,} so'm hisoblandi\n👮 Tasdiqladi: {user['name']}".replace(",", " ")
+        )
+    elif action == "return" and user["role"] in APPROVER_ROLES:
+        conn.execute(
+            "UPDATE videos SET status='qaytarildi', approved_by=?, approved_at=?, note=? WHERE id=?",
+            (user["name"], now_local(), b.get("note") or ex["note"], vid),
+        )
+        log_audit(conn, user["name"], "video qaytardi", f"#{vid} {ex['title']}")
+        send_telegram(f"↩️ <b>Video qaytarildi</b>\n{ex['title']}\n👤 {ex['editor']}\n👮 {user['name']}")
+    elif action == "instagram":
+        conn.execute("UPDATE videos SET instagram_link=? WHERE id=?", (b.get("instagram_link") or "", vid))
+        log_audit(conn, user["name"], "instagram link qo'shdi", f"#{vid}")
+    else:
+        conn.close()
+        return {"error": "Ruxsat yo'q yoki noto'g'ri amal"}
+    conn.commit()
+    row = conn.execute("SELECT * FROM videos WHERE id=?", (vid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+def api_delete_video(user, vid):
+    conn = get_db()
+    conn.execute("DELETE FROM videos WHERE id=?", (vid,))
+    log_audit(conn, user["name"], "video o'chirdi", f"#{vid}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ============================================================
+#  MONTAJCHILAR KABINETI + STATISTIKA
+# ============================================================
+def editor_summary(conn, name):
+    vids = [dict(r) for r in conn.execute("SELECT * FROM videos WHERE editor=?", (name,)).fetchall()]
+    accepted = [v for v in vids if v["status"] == "qabul_qilindi"]
+    earned = sum(v["amount"] or 0 for v in accepted)
+    paid = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE editor=?", (name,)).fetchone()["s"] or 0
+    by_project = {}
+    for v in accepted:
+        by_project[v["project"]] = by_project.get(v["project"], 0) + 1
+    return {
+        "name": name,
+        "videos": len(vids),
+        "accepted": len(accepted),
+        "returned": sum(1 for v in vids if v["status"] == "qaytarildi"),
+        "pending": sum(1 for v in vids if v["status"] == "topshirildi"),
+        "earned": earned,
+        "paid": paid,
+        "remaining": earned - paid,
+        "avg": round(earned / len(accepted)) if accepted else 0,
+        "byProject": [{"project": k, "count": v} for k, v in sorted(by_project.items(), key=lambda x: -x[1])],
+    }
+
+
+def api_editors(user):
+    conn = get_db()
+    editors = conn.execute("SELECT name, color, title FROM users WHERE role='editor' ORDER BY name").fetchall()
+    result = []
+    for e in editors:
+        s = editor_summary(conn, e["name"])
+        s["color"] = e["color"]
+        s["title"] = e["title"]
+        result.append(s)
+    conn.close()
+    return result
+
+
+def api_editor_cabinet(user):
+    """Montajchining o'z kabineti (o'zi uchun)."""
+    conn = get_db()
+    s = editor_summary(conn, user["name"])
+    vids = [dict(r) for r in conn.execute("SELECT * FROM videos WHERE editor=? ORDER BY id DESC", (user["name"],)).fetchall()]
+    pays = [dict(r) for r in conn.execute("SELECT * FROM payments WHERE editor=? ORDER BY id DESC", (user["name"],)).fetchall()]
+    conn.close()
+    s["videosList"] = vids
+    s["payments"] = pays
+    s["color"] = user.get("color")
+    return s
+
+
+# ============================================================
+#  TO'LOVLAR
+# ============================================================
+def api_payments(user):
+    conn = get_db()
+    if user["role"] == "editor":
+        rows = conn.execute("SELECT * FROM payments WHERE editor=? ORDER BY id DESC", (user["name"],)).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM payments ORDER BY id DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def api_create_payment(user, b):
+    conn = get_db()
+    editor = b.get("editor") or ""
+    amount = int(b.get("amount") or 0)
+    sql = "INSERT INTO payments (editor, amount, paid_by, note, pdate) VALUES (?,?,?,?,?)"
+    params = (editor, amount, user["name"], b.get("note") or "", b.get("pdate") or uz_today().isoformat())
+    if IS_PG:
+        pid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        pid = conn.execute(sql, params).lastrowid
+    log_audit(conn, user["name"], "to'lov qildi", f"{editor} +{amount} so'm — {b.get('note') or ''}")
+    conn.commit()
+    conn.close()
+    send_telegram(
+        f"💸 <b>To'lov amalga oshirildi</b>\n👤 {editor}\n💰 {amount:,} so'm\n👮 To'lagan: {user['name']}".replace(",", " ")
+        + (f"\n📝 {b.get('note')}" if b.get("note") else "")
+    )
+    return {"ok": True, "id": pid}
+
+
+# ============================================================
+#  AUDIT LOG
+# ============================================================
+def api_audit(limit=200):
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM audit ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ============================================================
+#  CEO MOLIYA PANELI
+# ============================================================
+def api_finance():
+    conn = get_db()
+    month = uz_now().strftime("%Y-%m")
+    editors = api_editors({"role": "ceo"})
+    total_earned = sum(e["earned"] for e in editors)
+    total_paid = sum(e["paid"] for e in editors)
+    # Shu oydagi xarajat (qabul qilingan videolar)
+    accepted = [dict(r) for r in conn.execute("SELECT * FROM videos WHERE status='qabul_qilindi'").fetchall()]
+    month_cost = sum(v["amount"] or 0 for v in accepted if (v["approved_at"] or "").startswith(month))
+    # Loyiha bo'yicha montaj xarajati
+    by_project = {}
+    for v in accepted:
+        by_project[v["project"] or "—"] = by_project.get(v["project"] or "—", 0) + (v["amount"] or 0)
+    conn.close()
+    top = max(editors, key=lambda e: e["accepted"], default=None)
+    return {
+        "month": month,
+        "totalEarned": total_earned,
+        "totalPaid": total_paid,
+        "totalRemaining": total_earned - total_paid,
+        "monthCost": month_cost,
+        "topEditor": (top["name"] if top and top["accepted"] else None),
+        "topEditorVideos": (top["accepted"] if top else 0),
+        "editors": editors,
+        "byProject": [{"project": k, "cost": v} for k, v in sorted(by_project.items(), key=lambda x: -x[1])],
+    }
+
+
+def api_tiers():
+    return TIERS
+
+
 # ------------------------------------------------------------
 #  HTTP Handler
 # ------------------------------------------------------------
@@ -483,61 +1059,158 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _auth(self):
+        return user_from_token(self.headers.get("X-Token", ""))
+
+    @staticmethod
+    def _int(s):
+        try:
+            return int(s)
+        except (ValueError, TypeError):
+            return None
+
+    def _forbid(self):
+        return self._json({"error": "Ruxsat yo'q"}, 403)
+
     def do_GET(self):
         path = urlparse(self.path).path
-        if path == "/api/users":
-            return self._json(api_users())
-        if path == "/api/clients":
-            return self._json(api_clients())
-        if path == "/api/projects":
-            return self._json(api_projects())
-        if path == "/api/stats":
-            return self._json(api_stats())
+        # --- Ochiq (auth shart emas) ---
+        if path == "/api/tiers":
+            return self._json(api_tiers())
         if path == "/api/telegram/test":
             return self._json(api_telegram_test())
         if path == "/api/telegram/digest":
             return self._json(api_telegram_digest())
-        if path.startswith("/api/projects/"):
-            pid = self._pid(path)
-            if pid is None:
-                return self._json({"error": "Topilmadi"}, 404)
-            row = api_get_project(pid)
+        if not path.startswith("/api/"):
+            return self._serve_static(path)
+
+        # --- Auth talab qilinadi ---
+        user = self._auth()
+        if not user:
+            return self._json({"error": "Avtorizatsiya kerak"}, 401)
+        seg = [s for s in path.split("/") if s]
+        role = user["role"]
+
+        if path == "/api/me":
+            return self._json(public_user(user))
+        if path == "/api/team":
+            return self._json(api_team())
+        if path == "/api/clients":
+            return self._json(api_clients())
+        if path == "/api/projects":
+            rows = api_projects()
+            if role == "client":
+                rows = [p for p in rows if p.get("client") == user.get("client_name")]
+            return self._json(rows)
+        if path == "/api/stats":
+            return self._json(api_stats())
+        if path == "/api/scripts":
+            return self._json(api_scripts(user))
+        if path == "/api/script-stats":
+            return self._json(api_script_stats())
+        if path == "/api/videos":
+            return self._json(api_videos(user))
+        if path == "/api/payments":
+            return self._json(api_payments(user))
+        if path == "/api/cabinet":
+            return self._json(api_editor_cabinet(user))
+        if path == "/api/editors":
+            return self._forbid() if role not in APPROVER_ROLES else self._json(api_editors(user))
+        if path == "/api/audit":
+            return self._forbid() if role not in ADMIN_ROLES else self._json(api_audit())
+        if path == "/api/finance":
+            return self._forbid() if role not in ADMIN_ROLES else self._json(api_finance())
+        if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "versions":
+            sid = self._int(seg[2])
+            return self._json(api_script_versions(sid)) if sid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 3 and seg[1] == "projects":
+            pid = self._int(seg[2])
+            row = api_get_project(pid) if pid else None
             return self._json(row) if row else self._json({"error": "Topilmadi"}, 404)
-        if path.startswith("/api/"):
-            return self._json({"error": "Topilmadi"}, 404)
-        return self._serve_static(path)
+        return self._json({"error": "Topilmadi"}, 404)
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/api/login":
+            res = api_login(self._body())
+            return self._json(res) if res else self._json({"error": "Login yoki parol noto'g'ri"}, 401)
+
+        user = self._auth()
+        if not user:
+            return self._json({"error": "Avtorizatsiya kerak"}, 401)
+        b = self._body()
+        seg = [s for s in path.split("/") if s]
+        r = user["role"]
+
+        if path == "/api/logout":
+            return self._json(api_logout(self.headers.get("X-Token", "")))
+        if path == "/api/change-password":
+            return self._json(api_change_password(user, b))
         if path == "/api/projects":
-            return self._json(api_create_project(self._body()), 201)
+            if r not in APPROVER_ROLES:
+                return self._forbid()
+            b["_actor"] = user["name"]
+            return self._json(api_create_project(b), 201)
+        if path == "/api/scripts":
+            if r == "client":
+                return self._forbid()
+            return self._json(api_create_script(user, b), 201)
+        if path == "/api/videos":
+            if r == "client":
+                return self._forbid()
+            return self._json(api_create_video(user, b), 201)
+        if path == "/api/payments":
+            if r not in ADMIN_ROLES:
+                return self._forbid()
+            return self._json(api_create_payment(user, b), 201)
+        if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "action":
+            sid = self._int(seg[2])
+            res = api_script_action(user, sid, b) if sid else None
+            return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "videos" and seg[3] == "action":
+            vid = self._int(seg[2])
+            res = api_video_action(user, vid, b) if vid else None
+            return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
         return self._json({"error": "Topilmadi"}, 404)
 
     def do_PUT(self):
         path = urlparse(self.path).path
-        if path.startswith("/api/projects/"):
-            pid = self._pid(path)
+        user = self._auth()
+        if not user:
+            return self._json({"error": "Avtorizatsiya kerak"}, 401)
+        b = self._body()
+        seg = [s for s in path.split("/") if s]
+        if len(seg) == 3 and seg[1] == "projects":
+            pid = self._int(seg[2])
             if pid is None:
                 return self._json({"error": "Topilmadi"}, 404)
-            row = api_update_project(pid, self._body())
+            b["_actor"] = user["name"]
+            row = api_update_project(pid, b)
+            return self._json(row) if row else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 3 and seg[1] == "scripts":
+            sid = self._int(seg[2])
+            if sid is None:
+                return self._json({"error": "Topilmadi"}, 404)
+            row = api_update_script(user, sid, b)
             return self._json(row) if row else self._json({"error": "Topilmadi"}, 404)
         return self._json({"error": "Topilmadi"}, 404)
 
     def do_DELETE(self):
         path = urlparse(self.path).path
-        if path.startswith("/api/projects/"):
-            pid = self._pid(path)
-            if pid is None:
-                return self._json({"error": "Topilmadi"}, 404)
-            return self._json(api_delete_project(pid))
+        user = self._auth()
+        if not user:
+            return self._json({"error": "Avtorizatsiya kerak"}, 401)
+        seg = [s for s in path.split("/") if s]
+        r = user["role"]
+        if len(seg) == 3 and seg[1] == "projects":
+            if r not in APPROVER_ROLES:
+                return self._forbid()
+            pid = self._int(seg[2])
+            return self._json(api_delete_project(pid)) if pid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 3 and seg[1] == "videos":
+            vid = self._int(seg[2])
+            return self._json(api_delete_video(user, vid)) if vid else self._json({"error": "Topilmadi"}, 404)
         return self._json({"error": "Topilmadi"}, 404)
-
-    @staticmethod
-    def _pid(path):
-        try:
-            return int(path.rsplit("/", 1)[-1])
-        except ValueError:
-            return None
 
     def log_message(self, *args):
         pass  # konsolni toza ushlab turamiz
