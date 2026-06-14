@@ -10,6 +10,8 @@ import json
 import os
 import sqlite3
 import datetime
+import threading
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -23,8 +25,54 @@ PORT = int(os.environ.get("PORT", 3000))
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 IS_PG = DATABASE_URL.startswith("postgres")
 
+# Telegram bildirishnoma (ixtiyoriy) — Render env'da TELEGRAM_BOT_TOKEN va
+# TELEGRAM_CHAT_ID o'rnatilsa ishlaydi. O'rnatilmasa, jim turadi.
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+
+# Toshkent vaqti — O'zbekiston UTC+5, yozgi vaqt yo'q.
+UZ_TZ = datetime.timezone(datetime.timedelta(hours=5))
+
 STAGES = ["ssenariy", "syomka", "montaj", "tasdiq", "joylash"]
 STATUSES = ["kutilmoqda", "jarayonda", "tayyor"]
+STAGE_LABEL = {
+    "ssenariy": "Ssenariy", "syomka": "Syomka", "montaj": "Montaj",
+    "tasdiq": "Tasdiq", "joylash": "Joylash",
+}
+
+
+def uz_now():
+    """Toshkent vaqti bilan hozirgi sana-vaqt."""
+    return datetime.datetime.now(UZ_TZ)
+
+
+def uz_today():
+    """Toshkent vaqti bilan bugungi sana."""
+    return uz_now().date()
+
+
+def send_telegram(text):
+    """Telegram'ga xabar yuboradi (fon oqimida, xatolar yutiladi)."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+
+    def _send():
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            payload = json.dumps({
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": text,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                url, data=payload, headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(req, timeout=10)
+        except Exception:
+            pass  # bildirishnoma muvaffaqiyatsiz bo'lsa ham ilova ishlashda davom etadi
+
+    threading.Thread(target=_send, daemon=True).start()
 
 
 # ------------------------------------------------------------
@@ -105,7 +153,7 @@ def init_db():
         ]
         conn.executemany("INSERT INTO clients (name) VALUES (?)", [(x,) for x in clients])
 
-        today = datetime.date.today()
+        today = uz_today()
         def d(off):
             return (today + datetime.timedelta(days=off)).isoformat()
 
@@ -154,7 +202,7 @@ def decorate(row):
     if p.get("deadline"):
         try:
             dl = datetime.date.fromisoformat(p["deadline"])
-            days_left = (dl - datetime.date.today()).days
+            days_left = (dl - uz_today()).days
             overdue = (not p["fullyDone"]) and days_left < 0
         except ValueError:
             pass
@@ -169,7 +217,7 @@ def decorate(row):
 
 
 def now_local():
-    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return uz_now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 # ------------------------------------------------------------
@@ -226,7 +274,16 @@ def api_create_project(b):
     conn.commit()
     row = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
     conn.close()
-    return decorate(row)
+
+    p = decorate(row)
+    send_telegram(
+        f"🆕 <b>Yangi loyiha qo'shildi</b>\n"
+        f"📁 {p['name']}\n"
+        f"👤 Javobgar: {p['responsible'] or '—'}\n"
+        f"🏢 Mijoz: {p['client'] or '—'}\n"
+        f"📅 Deadline: {p['deadline'] or '—'}"
+    )
+    return p
 
 
 def api_update_project(pid, b):
@@ -254,12 +311,20 @@ def api_update_project(pid, b):
     }
 
     # Faollik jurnali — qaysi bosqich "tayyor" bo'ldi
+    completed_stages = []
     for s in STAGES:
         if merged[s] != existing[s] and merged[s] == "tayyor":
+            completed_stages.append(s)
             conn.execute(
                 "INSERT INTO activity (project_id,project_name,stage,status,actor,created_at) VALUES (?,?,?,?,?,?)",
                 (pid, merged["name"], s, "tayyor", actor, now_local()),
             )
+
+    # Yangi muammo qo'shildimi?
+    new_problem = (
+        (merged["muammo"] or "").strip()
+        and (merged["muammo"] or "").strip() != (existing["muammo"] or "").strip()
+    )
 
     conn.execute(
         """UPDATE projects SET name=?,client=?,responsible=?,ssenariy=?,syomka=?,montaj=?,
@@ -273,7 +338,22 @@ def api_update_project(pid, b):
     conn.commit()
     row = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
     conn.close()
-    return decorate(row)
+
+    p = decorate(row)
+    # Telegram bildirishnomalar
+    if p["fullyDone"] and not all(existing[s] == "tayyor" for s in STAGES):
+        send_telegram(f"🎉 <b>Loyiha to'liq yakunlandi!</b>\n📁 {p['name']} — {p['responsible'] or '—'}")
+    else:
+        for s in completed_stages:
+            send_telegram(
+                f"✅ <b>{STAGE_LABEL[s]} tayyor</b>\n"
+                f"📁 {p['name']}\n👤 {actor} · {p['progress']}% bajarildi"
+            )
+    if new_problem:
+        send_telegram(
+            f"⚠️ <b>Muammo qayd etildi</b>\n📁 {p['name']} ({p['responsible'] or '—'})\n💬 {merged['muammo']}"
+        )
+    return p
 
 
 def api_delete_project(pid):
@@ -292,7 +372,7 @@ def api_stats():
     at_risk = sum(1 for p in rows if p["atRisk"])
 
     conn = get_db()
-    today = datetime.date.today().isoformat()
+    today = uz_today().isoformat()
     today_tasks = conn.execute(
         "SELECT COUNT(*) AS n FROM activity WHERE substr(created_at,1,10)=?", (today,)
     ).fetchone()["n"]
@@ -319,6 +399,42 @@ def api_stats():
         "overdue": overdue, "atRisk": at_risk, "todayTasks": today_tasks,
         "workload": workload, "recent": [dict(r) for r in recent],
     }
+
+
+def api_telegram_test():
+    """Telegram ulanishini sinash uchun test xabari yuboradi."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return {"ok": False, "error": "Telegram sozlanmagan (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID yo'q)"}
+    send_telegram("🤖 <b>Kadr Media Dashboard</b>\nTelegram bildirishnoma muvaffaqiyatli ulandi! ✅")
+    return {"ok": True}
+
+
+def api_telegram_digest():
+    """Kechikkan va muddati yaqin loyihalar bo'yicha kunlik hisobot yuboradi.
+    Buni bepul cron xizmati (masalan cron-job.org) har kuni chaqirishi mumkin."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return {"ok": False, "error": "Telegram sozlanmagan"}
+    rows = api_projects()
+    overdue = [p for p in rows if p["overdue"]]
+    soon = [
+        p for p in rows
+        if not p["overdue"] and not p["fullyDone"]
+        and p["daysLeft"] is not None and 0 <= p["daysLeft"] <= 2
+    ]
+    lines = [f"📊 <b>Kunlik hisobot — {uz_today().isoformat()}</b>"]
+    if overdue:
+        lines.append("\n⏱ <b>Kechikkan loyihalar:</b>")
+        for p in overdue:
+            lines.append(f"• {p['name']} — {p['responsible'] or '—'} ({abs(p['daysLeft'])} kun kechikdi)")
+    if soon:
+        lines.append("\n🔔 <b>Muddati yaqin (≤2 kun):</b>")
+        for p in soon:
+            when = "bugun" if p["daysLeft"] == 0 else f"{p['daysLeft']} kun qoldi"
+            lines.append(f"• {p['name']} — {p['responsible'] or '—'} ({when})")
+    if not overdue and not soon:
+        lines.append("\n✅ Kechikkan yoki muddati yaqin loyiha yo'q. Zo'r!")
+    send_telegram("\n".join(lines))
+    return {"ok": True, "overdue": len(overdue), "soon": len(soon)}
 
 
 # ------------------------------------------------------------
@@ -377,6 +493,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_projects())
         if path == "/api/stats":
             return self._json(api_stats())
+        if path == "/api/telegram/test":
+            return self._json(api_telegram_test())
+        if path == "/api/telegram/digest":
+            return self._json(api_telegram_digest())
         if path.startswith("/api/projects/"):
             pid = self._pid(path)
             if pid is None:
