@@ -1,0 +1,22 @@
+name: Kunlik Telegram hisobot
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hisobotni guruhga yuborish
+        run: |
+          for i in 1 2 3; do
+            if curl -sf --max-time 120 "https://kadr-media.onrender.com/api/telegram/digest"; then
+              echo "Hisobot yuborildi."
+              exit 0
+            fi
+            echo "Urinish $i muvaffaqiyatsiz, qayta urinaman..."
+            sleep 20
+          done
+          exit 1
