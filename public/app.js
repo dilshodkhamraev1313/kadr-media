@@ -267,8 +267,18 @@ function projectCard(p) {
       <div class="pc-top"><div class="pc-name">${esc(p.name)}</div><div class="pc-badges">${badges.join('')}</div></div>
       <div class="pc-client">📁 ${esc(p.client) || '—'}</div>
       <div class="pc-stages">${STAGES.map((s) => `<div class="stage-dot ${p[s.key]}">${s.label}</div>`).join('')}</div>
+      ${p.plan ? `
+      <div class="plan-box">
+        <div class="plan-head"><span>📅 Oylik reja (${p.plan} ta/oy)</span><b>${p.planDone}/${p.planTotal} · ${p.planPct}%</b></div>
+        <div class="plan-grid">${STAGES.map((s) => {
+          const dn = p['done_' + s.key] || 0; const pct = p.plan ? Math.min(Math.round(dn / p.plan * 100), 100) : 0;
+          const full = dn >= p.plan;
+          return `<div class="plan-stage"><div class="pl-top"><span>${s.label}</span><b class="${full ? 'full' : ''}">${dn}/${p.plan}</b></div>
+            <div class="pl-bar"><div class="pl-fill ${full ? 'done' : ''}" style="width:${pct}%"></div></div></div>`;
+        }).join('')}</div>
+      </div>` : `
       <div class="pc-progress"><div class="progress-bar"><div class="progress-fill" style="width:${p.progress}%"></div></div>
-        <div class="pc-progress-label"><span>${p.doneCount}/5 bosqich</span><span>${p.progress}%</span></div></div>
+        <div class="pc-progress-label"><span>${p.doneCount}/5 bosqich</span><span>${p.progress}%</span></div></div>`}
       ${p.muammo ? `<div class="pc-problem">⚠ ${esc(p.muammo)}</div>` : ''}
       <div class="pc-foot"><div class="pc-resp"><div class="mini-av" style="background:${colorFor(p.responsible)}">${initials(p.responsible)}</div><span>${esc(p.responsible) || '—'}</span></div>
         <div class="pc-deadline ${dlCls}">📅 ${dl}</div></div>
@@ -542,7 +552,11 @@ async function openProjectModal(project) {
       <div class="field"><label>Javobgar</label><select id="pf_resp"><option value="">—</option>${leads.map((u) => `<option ${PDRAFT.responsible === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></div>
     </div>
     <div class="field"><label>Deadline</label><input id="pf_deadline" type="date" value="${PDRAFT.deadline || ''}" /></div>
-    <div class="divider"></div><div class="sec-label">Jarayon bosqichlari</div>
+    <div class="divider"></div><div class="sec-label">📅 Oylik reja (mijoz bilan kelishilgan)</div>
+    <div class="field"><label>Oyiga nechta video — har bosqich uchun shu son</label><input id="pf_plan" type="number" min="0" value="${PDRAFT.plan || 0}" placeholder="masalan: 15" /></div>
+    <div class="sec-label" style="margin-top:12px">Bu oy bajarilgani (har bosqich):</div>
+    <div class="plan-inputs">${STAGES.map((s) => `<div class="field"><label>${s.label}</label><input id="pf_done_${s.key}" type="number" min="0" value="${PDRAFT['done_' + s.key] || 0}" /></div>`).join('')}</div>
+    <div class="divider"></div><div class="sec-label">Jarayon bosqichlari (umumiy holat)</div>
     <div class="stage-editor">${STAGES.map((s) => `<div class="stage-edit-row"><span class="sname">${s.label}</span>
       <div class="seg" data-stage="${s.key}">
         <button data-v="kutilmoqda" class="${PDRAFT[s.key] === 'kutilmoqda' ? 'on-k' : ''}">Kutilmoqda</button>
@@ -565,7 +579,11 @@ async function openProjectModal(project) {
 async function saveProject() {
   const body = { name: $('#pf_name').value.trim() || 'Nomsiz', client: $('#pf_client').value, responsible: $('#pf_resp').value,
     deadline: $('#pf_deadline').value || null, muammo: $('#pf_muammo').value.trim(), izoh: $('#pf_izoh').value.trim(),
-    ssenariy: PDRAFT.ssenariy, syomka: PDRAFT.syomka, montaj: PDRAFT.montaj, tasdiq: PDRAFT.tasdiq, joylash: PDRAFT.joylash };
+    ssenariy: PDRAFT.ssenariy, syomka: PDRAFT.syomka, montaj: PDRAFT.montaj, tasdiq: PDRAFT.tasdiq, joylash: PDRAFT.joylash,
+    plan: parseInt($('#pf_plan').value || '0', 10),
+    done_ssenariy: parseInt($('#pf_done_ssenariy').value || '0', 10), done_syomka: parseInt($('#pf_done_syomka').value || '0', 10),
+    done_montaj: parseInt($('#pf_done_montaj').value || '0', 10), done_tasdiq: parseInt($('#pf_done_tasdiq').value || '0', 10),
+    done_joylash: parseInt($('#pf_done_joylash').value || '0', 10) };
   if (EDIT_P) await api(`/api/projects/${EDIT_P.id}`, { method: 'PUT', body: JSON.stringify(body) });
   else await api('/api/projects', { method: 'POST', body: JSON.stringify(body) });
   closeModal(); toast('✓ Saqlandi'); render();

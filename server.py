@@ -49,6 +49,19 @@ TIERS = {
     "premium":  {"label": "Premium Reels",  "price": 50000},
 }
 
+# Mijoz bilan kelishilgan oylik video reja (har bir bosqich uchun shu son).
+CLIENT_PLAN = {
+    "Nova School": 40,
+    "Zebo Rixsibayevna (Nova School asoschisi)": 15,
+    "Nodirbek Primqulov Arab tili": 15,
+    "Rohatoy Mamolog": 15,
+    "Aziza Psixolog": 50,
+    "Namuna Mebel": 30,
+    "Mohira Valiyeva Kosmetolog": 15,
+    'Bekzod Trading "AMARKETS"': 10,
+}
+DONE_COLS = ["done_ssenariy", "done_syomka", "done_montaj", "done_tasdiq", "done_joylash"]
+
 # Rollar: ceo, coordinator, lead (rahbar), editor (montajchi), client (mijoz)
 # Tasdiqlay oladiganlar (video/ssenariy):
 APPROVER_ROLES = ("ceo", "coordinator", "lead")
@@ -253,6 +266,10 @@ def init_db():
     add_column_if_missing(conn, "users", "salt", "TEXT")
     add_column_if_missing(conn, "users", "password_hash", "TEXT")
     add_column_if_missing(conn, "users", "client_name", "TEXT")
+    # projects: oylik reja + har bosqich bo'yicha bajarilgan sanoq
+    add_column_if_missing(conn, "projects", "plan", "INTEGER DEFAULT 0")
+    for col in DONE_COLS:
+        add_column_if_missing(conn, "projects", col, "INTEGER DEFAULT 0")
     conn.commit()
 
     # Seed (faqat bo'sh bo'lsa)
@@ -306,7 +323,19 @@ def init_db():
         conn.commit()
 
     ensure_accounts(conn)
+    ensure_project_plans(conn)
     conn.close()
+
+
+def ensure_project_plans(conn):
+    """Mavjud loyihalarga mijoz bo'yicha oylik rejani o'rnatadi.
+    Faqat reja hali kiritilmagan (0/NULL) loyihalarga — qo'lda o'zgartirilganiga tegmaydi."""
+    for client, plan in CLIENT_PLAN.items():
+        conn.execute(
+            "UPDATE projects SET plan=? WHERE client=? AND (plan IS NULL OR plan=0)",
+            (plan, client),
+        )
+    conn.commit()
 
 
 # ------------------------------------------------------------
@@ -335,6 +364,13 @@ def decorate(row):
     p["atRisk"] = (not p["fullyDone"]) and (
         (days_left is not None and days_left <= 2 and p["progress"] < 60) or has_problem
     )
+
+    # Oylik reja progressi (har bosqich uchun plan dona)
+    plan = p.get("plan") or 0
+    done_total = sum(p.get(c) or 0 for c in DONE_COLS)
+    p["planTotal"] = plan * len(STAGES)
+    p["planDone"] = done_total
+    p["planPct"] = round(done_total / (plan * len(STAGES)) * 100) if plan else 0
     return p
 
 
@@ -379,15 +415,22 @@ def api_create_project(b):
     def st(v):
         return v if v in STATUSES else "kutilmoqda"
 
+    def iv(k):
+        try:
+            return int(b.get(k) or 0)
+        except (ValueError, TypeError):
+            return 0
     conn = get_db()
     sql = """INSERT INTO projects
-           (name,client,responsible,ssenariy,syomka,montaj,tasdiq,joylash,deadline,muammo,izoh)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)"""
+           (name,client,responsible,ssenariy,syomka,montaj,tasdiq,joylash,deadline,muammo,izoh,
+            plan,done_ssenariy,done_syomka,done_montaj,done_tasdiq,done_joylash)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
     params = (
         b.get("name") or "Nomsiz loyiha", b.get("client") or "",
         b.get("responsible") or "", st(b.get("ssenariy")), st(b.get("syomka")),
         st(b.get("montaj")), st(b.get("tasdiq")), st(b.get("joylash")),
         b.get("deadline") or None, b.get("muammo") or "", b.get("izoh") or "",
+        iv("plan"), iv("done_ssenariy"), iv("done_syomka"), iv("done_montaj"), iv("done_tasdiq"), iv("done_joylash"),
     )
     if IS_PG:
         pid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
@@ -421,6 +464,14 @@ def api_update_project(pid, b):
         v = b.get(key)
         return v if v in STATUSES else existing[key]
 
+    def iv(key):
+        if key not in b or b.get(key) is None or b.get(key) == "":
+            return existing.get(key) or 0
+        try:
+            return int(b.get(key))
+        except (ValueError, TypeError):
+            return existing.get(key) or 0
+
     merged = {
         "name": b.get("name", existing["name"]),
         "client": b.get("client", existing["client"]),
@@ -430,6 +481,10 @@ def api_update_project(pid, b):
         "deadline": b["deadline"] if "deadline" in b else existing["deadline"],
         "muammo": b.get("muammo", existing["muammo"]),
         "izoh": b.get("izoh", existing["izoh"]),
+        "plan": iv("plan"),
+        "done_ssenariy": iv("done_ssenariy"), "done_syomka": iv("done_syomka"),
+        "done_montaj": iv("done_montaj"), "done_tasdiq": iv("done_tasdiq"),
+        "done_joylash": iv("done_joylash"),
     }
 
     # Faollik jurnali — qaysi bosqich "tayyor" bo'ldi
@@ -450,11 +505,15 @@ def api_update_project(pid, b):
 
     conn.execute(
         """UPDATE projects SET name=?,client=?,responsible=?,ssenariy=?,syomka=?,montaj=?,
-           tasdiq=?,joylash=?,deadline=?,muammo=?,izoh=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+           tasdiq=?,joylash=?,deadline=?,muammo=?,izoh=?,
+           plan=?,done_ssenariy=?,done_syomka=?,done_montaj=?,done_tasdiq=?,done_joylash=?,
+           updated_at=CURRENT_TIMESTAMP WHERE id=?""",
         (
             merged["name"], merged["client"], merged["responsible"], merged["ssenariy"],
             merged["syomka"], merged["montaj"], merged["tasdiq"], merged["joylash"],
-            merged["deadline"], merged["muammo"], merged["izoh"], pid,
+            merged["deadline"], merged["muammo"], merged["izoh"],
+            merged["plan"], merged["done_ssenariy"], merged["done_syomka"],
+            merged["done_montaj"], merged["done_tasdiq"], merged["done_joylash"], pid,
         ),
     )
     conn.commit()
