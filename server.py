@@ -82,6 +82,8 @@ TEAM = [
     ("Umid",             "umid",    "umid2026", "editor",      "Montajchi",               "#5E5CE6", None),
     ("Umida",            "umida",   "umid2027", "editor",      "Montajchi · Ssenarist",   "#AC8E68", None),
     ("Shodiya",          "shodiya", "shod2026", "editor",      "Montajchi",               "#32D74B", None),
+    # SMM menejer (faqat joylash)
+    ("Aisha",            "aisha",   "aisha2026","smm",         "SMM menejer · Joylash",   "#FF2D55", None),
     # Mijozlar (faqat o'z loyihasini ko'radi)
     ("Rohatoy Mamolog",                          "rohatoy",  "mijoz2601", "client", "Mijoz", "#0A84FF", "Rohatoy Mamolog"),
     ("Nova School",                              "novaschool","mijoz2602", "client", "Mijoz", "#30D158", "Nova School"),
@@ -270,6 +272,9 @@ def init_db():
     add_column_if_missing(conn, "projects", "plan", "INTEGER DEFAULT 0")
     for col in DONE_COLS:
         add_column_if_missing(conn, "projects", col, "INTEGER DEFAULT 0")
+    # videos: ish jarayoni ustunlari
+    for col in ("assigned_by", "qc_by", "qc_at", "posted_by", "posted_at"):
+        add_column_if_missing(conn, "videos", col, "TEXT")
     conn.commit()
 
     # Seed (faqat bo'sh bo'lsa)
@@ -890,58 +895,105 @@ def api_script_stats():
 # ============================================================
 #  VIDEOLAR (montaj) + pul hisobi
 # ============================================================
-VIDEO_STATUSES = ["topshirildi", "qaytarildi", "qabul_qilindi"]
+# Video ish jarayoni:
+#  biriktirildi  → rahbar montajchiga biriktirdi (montajchi montaj qilishi kerak)
+#  montaj_qilindi→ montajchi tugatdi → sifat nazoratiga (Said)
+#  sifat_ok      → sifat nazorati o'tdi → loyiha rahbari yakuniy qabuliga
+#  qabul_qilindi → rahbar qabul qildi → PUL hisoblandi → joylashga (Aisha)
+#  joylandi      → SMM Instagram'ga joyladi (tugadi)
+#  qaytarildi    → qaytarildi (montajchi qayta ishlaydi)
+VIDEO_STATUSES = ["biriktirildi", "montaj_qilindi", "sifat_ok", "qabul_qilindi", "joylandi", "qaytarildi"]
+DONE_STATUSES = ("qabul_qilindi", "joylandi")  # pul hisoblanadigan holatlar
+SMM_ROLES = ("smm", "ceo", "coordinator")
 
 
 def api_videos(user, show_all=False):
     conn = get_db()
-    if user["role"] == "client":
+    role = user["role"]
+    if role == "client":
         rows = conn.execute("SELECT * FROM videos WHERE client=? ORDER BY id DESC", (user.get("client_name") or "",)).fetchall()
-    elif user["role"] == "editor":
+    elif role == "editor":
         rows = conn.execute("SELECT * FROM videos WHERE editor=? ORDER BY id DESC", (user["name"],)).fetchall()
+    elif role == "smm":
+        # Aisha faqat qabul qilingan (joylash kutayotgan) va joylangan videolarni ko'radi
+        rows = conn.execute(
+            "SELECT * FROM videos WHERE status IN ('qabul_qilindi','joylandi') ORDER BY id DESC"
+        ).fetchall()
     else:
         rows = conn.execute("SELECT * FROM videos ORDER BY id DESC").fetchall()
     conn.close()
     result = [dict(r) for r in rows]
-    if user["role"] == "lead" and not show_all:
+    if role == "lead" and not show_all:
         names = lead_project_names(user["name"])
         result = [r for r in result if r.get("project") in names]
     return result
 
 
-def api_create_video(user, b):
+def api_qc(user):
+    """Sifat nazorati uchun — montaj qilingan, tasdiq kutayotgan videolar (hammasi)."""
     conn = get_db()
-    editor = b.get("editor") or (user["name"] if user["role"] == "editor" else "")
+    rows = conn.execute("SELECT * FROM videos WHERE status='montaj_qilindi' ORDER BY id DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def api_create_video(user, b):
+    """Loyiha rahbari videoni montajchiga BIRIKTIRADI."""
+    conn = get_db()
+    editor = b.get("editor") or ""
     title = b.get("title") or "Nomsiz video"
-    sql = """INSERT INTO videos (project_id, project, client, script_id, title, editor, vdate, drive_link, note, status)
-             VALUES (?,?,?,?,?,?,?,?,?,?)"""
+    sql = """INSERT INTO videos (project_id, project, client, script_id, title, editor, vdate, drive_link, note, status, assigned_by)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)"""
     params = (
         b.get("project_id"), b.get("project") or "", b.get("client") or "", b.get("script_id"),
         title, editor, b.get("vdate") or uz_today().isoformat(),
-        b.get("drive_link") or "", b.get("note") or "", "topshirildi",
+        b.get("drive_link") or "", b.get("note") or "", "biriktirildi", user["name"],
     )
     if IS_PG:
         vid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:
         vid = conn.execute(sql, params).lastrowid
-    log_audit(conn, user["name"], "video topshirdi", f"#{vid} {title} ({editor})")
+    log_audit(conn, user["name"], "video biriktirdi", f"#{vid} {title} → {editor}")
     conn.commit()
     row = conn.execute("SELECT * FROM videos WHERE id=?", (vid,)).fetchone()
     conn.close()
-    send_telegram(f"🎬 <b>Video topshirildi</b>\n{title}\n👤 Montajchi: {editor}\n📁 {b.get('project') or '—'}")
+    send_telegram(f"🎬 <b>Yangi montaj biriktirildi</b>\n{title}\n👤 Montajchi: {editor}\n📁 {b.get('project') or '—'}\n👮 {user['name']}")
     return dict(row)
 
 
 def api_video_action(user, vid, b):
-    """accept (qabul + pul hisoblanadi) | return | instagram — faqat rahbar."""
+    """Ish jarayoni amallari: montaj_done | qc_ok | qc_return | accept | return | posted."""
     action = b.get("action")
+    role = user["role"]
     conn = get_db()
     ex = conn.execute("SELECT * FROM videos WHERE id=?", (vid,)).fetchone()
     if not ex:
         conn.close()
         return None
     ex = dict(ex)
-    if action == "accept" and user["role"] in APPROVER_ROLES:
+
+    if action == "montaj_done" and (ex["editor"] == user["name"] or role in ADMIN_ROLES):
+        conn.execute(
+            "UPDATE videos SET status='montaj_qilindi', drive_link=?, note=? WHERE id=?",
+            (b.get("drive_link") or ex["drive_link"], b.get("note") or ex["note"], vid),
+        )
+        log_audit(conn, user["name"], "montaj tugatdi", f"#{vid} {ex['title']}")
+        send_telegram(f"🎞 <b>Montaj tugatildi</b>\n{ex['title']}\n👤 {ex['editor']}\n→ Sifat nazoratiga")
+    elif action == "qc_ok" and role in APPROVER_ROLES:
+        conn.execute(
+            "UPDATE videos SET status='sifat_ok', qc_by=?, qc_at=? WHERE id=?",
+            (user["name"], now_local(), vid),
+        )
+        log_audit(conn, user["name"], "sifat tasdiqladi", f"#{vid} {ex['title']}")
+        send_telegram(f"🔎 <b>Sifat nazorati o'tdi</b>\n{ex['title']}\n👮 {user['name']} → Rahbar qabuliga")
+    elif action == "qc_return" and role in APPROVER_ROLES:
+        conn.execute(
+            "UPDATE videos SET status='qaytarildi', qc_by=?, qc_at=?, note=? WHERE id=?",
+            (user["name"], now_local(), b.get("note") or ex["note"], vid),
+        )
+        log_audit(conn, user["name"], "sifat qaytardi", f"#{vid} {ex['title']}")
+        send_telegram(f"↩️ <b>Sifatdan qaytarildi</b>\n{ex['title']}\n👤 {ex['editor']}\n👮 {user['name']}")
+    elif action == "accept" and role in APPROVER_ROLES:
         tier = b.get("tier") if b.get("tier") in TIERS else "standart"
         amount = TIERS[tier]["price"]
         conn.execute(
@@ -952,18 +1004,22 @@ def api_video_action(user, vid, b):
         log_audit(conn, "Tizim", "pul hisoblandi", f"#{vid} {ex['editor']} +{amount} so'm")
         send_telegram(
             f"✅ <b>Video QABUL QILINDI</b>\n{ex['title']}\n👤 {ex['editor']}\n"
-            f"💰 {TIERS[tier]['label']} — {amount:,} so'm hisoblandi\n👮 Tasdiqladi: {user['name']}".replace(",", " ")
+            f"💰 {TIERS[tier]['label']} — {amount:,} so'm hisoblandi\n👮 Tasdiqladi: {user['name']}\n→ Joylashga".replace(",", " ")
         )
-    elif action == "return" and user["role"] in APPROVER_ROLES:
+    elif action == "return" and role in APPROVER_ROLES:
         conn.execute(
             "UPDATE videos SET status='qaytarildi', approved_by=?, approved_at=?, note=? WHERE id=?",
             (user["name"], now_local(), b.get("note") or ex["note"], vid),
         )
         log_audit(conn, user["name"], "video qaytardi", f"#{vid} {ex['title']}")
         send_telegram(f"↩️ <b>Video qaytarildi</b>\n{ex['title']}\n👤 {ex['editor']}\n👮 {user['name']}")
-    elif action == "instagram":
-        conn.execute("UPDATE videos SET instagram_link=? WHERE id=?", (b.get("instagram_link") or "", vid))
-        log_audit(conn, user["name"], "instagram link qo'shdi", f"#{vid}")
+    elif action == "posted" and role in SMM_ROLES:
+        conn.execute(
+            "UPDATE videos SET status='joylandi', instagram_link=?, posted_by=?, posted_at=? WHERE id=?",
+            (b.get("instagram_link") or ex["instagram_link"], user["name"], now_local(), vid),
+        )
+        log_audit(conn, user["name"], "Instagram'ga joyladi", f"#{vid} {ex['title']}")
+        send_telegram(f"📷 <b>Instagram'ga joylandi</b>\n{ex['title']}\n📁 {ex['project']}\n👤 {user['name']}")
     else:
         conn.close()
         return {"error": "Ruxsat yo'q yoki noto'g'ri amal"}
@@ -987,7 +1043,7 @@ def api_delete_video(user, vid):
 # ============================================================
 def editor_summary(conn, name):
     vids = [dict(r) for r in conn.execute("SELECT * FROM videos WHERE editor=?", (name,)).fetchall()]
-    accepted = [v for v in vids if v["status"] == "qabul_qilindi"]
+    accepted = [v for v in vids if v["status"] in DONE_STATUSES]
     earned = sum(v["amount"] or 0 for v in accepted)
     paid = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE editor=?", (name,)).fetchone()["s"] or 0
     by_project = {}
@@ -997,8 +1053,12 @@ def editor_summary(conn, name):
         "name": name,
         "videos": len(vids),
         "accepted": len(accepted),
+        # montaj qilishi kerak: biriktirilgan + qaytarilgan
+        "toDo": sum(1 for v in vids if v["status"] in ("biriktirildi", "qaytarildi")),
+        # tasdiq jarayonida: montaj qilingan + sifat o'tgan
+        "inReview": sum(1 for v in vids if v["status"] in ("montaj_qilindi", "sifat_ok")),
         "returned": sum(1 for v in vids if v["status"] == "qaytarildi"),
-        "pending": sum(1 for v in vids if v["status"] == "topshirildi"),
+        "pending": sum(1 for v in vids if v["status"] in ("biriktirildi", "qaytarildi")),
         "earned": earned,
         "paid": paid,
         "remaining": earned - paid,
@@ -1086,7 +1146,7 @@ def api_finance():
     total_earned = sum(e["earned"] for e in editors)
     total_paid = sum(e["paid"] for e in editors)
     # Shu oydagi xarajat (qabul qilingan videolar)
-    accepted = [dict(r) for r in conn.execute("SELECT * FROM videos WHERE status='qabul_qilindi'").fetchall()]
+    accepted = [dict(r) for r in conn.execute("SELECT * FROM videos WHERE status IN ('qabul_qilindi','joylandi')").fetchall()]
     month_cost = sum(v["amount"] or 0 for v in accepted if (v["approved_at"] or "").startswith(month))
     # Loyiha bo'yicha montaj xarajati
     by_project = {}
@@ -1206,6 +1266,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_script_stats())
         if path == "/api/videos":
             return self._json(api_videos(user, show_all))
+        if path == "/api/qc":
+            return self._forbid() if role not in APPROVER_ROLES else self._json(api_qc(user))
         if path == "/api/payments":
             return self._json(api_payments(user))
         if path == "/api/cabinet":
@@ -1252,7 +1314,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             return self._json(api_create_script(user, b), 201)
         if path == "/api/videos":
-            if r == "client":
+            if r not in APPROVER_ROLES:
                 return self._forbid()
             return self._json(api_create_video(user, b), 201)
         if path == "/api/payments":

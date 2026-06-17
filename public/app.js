@@ -19,9 +19,12 @@ const SCRIPT_ST = {
   qaytarildi:        { label: 'Qaytarildi',        dot: '🔴', cls: 'st-red' },
 };
 const VIDEO_ST = {
-  topshirildi:   { label: 'Topshirildi',   cls: 'st-orange' },
-  qabul_qilindi: { label: 'Qabul qilindi', cls: 'st-green' },
-  qaytarildi:    { label: 'Qaytarildi',    cls: 'st-red' },
+  biriktirildi:   { label: 'Montaj kerak',    cls: 'st-yellow' },
+  montaj_qilindi: { label: 'Sifat nazoratida', cls: 'st-orange' },
+  sifat_ok:       { label: 'Rahbar qabulida',  cls: 'st-blue' },
+  qabul_qilindi:  { label: 'Qabul · joylashga', cls: 'st-green' },
+  joylandi:       { label: 'Joylandi ✓',       cls: 'st-green' },
+  qaytarildi:     { label: 'Qaytarildi',       cls: 'st-red' },
 };
 
 let ME = null;
@@ -123,11 +126,14 @@ const NAV_ITEMS = [
   { view: 'client',    icon: '▦', label: 'Loyihalarim',   roles: ['client'] },
   { view: 'cscripts',  icon: '✎', label: 'Ssenariylar',   roles: ['client'] },
   { view: 'cvideos',   icon: '►', label: 'Videolar',      roles: ['client'] },
+  // SMM (Aisha) — faqat joylash
+  { view: 'joylash',   icon: '📷', label: 'Joylash',      roles: ['smm'] },
   // Jamoa
   { view: 'dashboard', icon: '▦', label: 'Boshqaruv',     roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'projects',  icon: '▣', label: 'Loyihalar',     roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'scripts',   icon: '✎', label: 'Ssenariylar',   roles: ['ceo', 'coordinator', 'lead', 'editor'] },
   { view: 'videos',    icon: '►', label: 'Montaj',        roles: ['ceo', 'coordinator', 'lead'] },
+  { view: 'qc',        icon: '🔎', label: 'Sifat nazorati', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo', 'coordinator'] },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo', 'coordinator'] },
@@ -159,7 +165,9 @@ const TITLES = {
   dashboard: ['Boshqaruv paneli', 'Bugungi holat — bir qarashda'],
   projects:  ['Loyihalar', 'Barcha loyihalar'],
   scripts:   ['Ssenariylar', 'Yozish, tasdiqlash, versiyalar'],
-  videos:    ['Montaj — videolar', 'Topshirish va tasdiqlash'],
+  videos:    ['Montaj — videolar', 'Biriktirish va qabul qilish'],
+  qc:        ['Sifat nazorati', 'Montaj qilingan, tasdiq kutayotgan videolar'],
+  joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
   editors:   ['Montajchilar', 'Kabinetlar va hisob-kitob'],
   finance:   ['Moliya', 'Montaj xarajatlari va to\'lovlar'],
   team:      ['Jamoa yuklamasi', 'Rahbarlar yuklamasi'],
@@ -182,7 +190,8 @@ async function render() {
     else if (VIEW === 'projects') await viewProjects();
     else if (VIEW === 'scripts' || VIEW === 'cscripts') await viewScripts();
     else if (VIEW === 'videos') await viewVideos();
-    else if (VIEW === 'myvideos' || VIEW === 'cvideos') await viewVideos();
+    else if (VIEW === 'myvideos' || VIEW === 'cvideos' || VIEW === 'joylash') await viewVideos();
+    else if (VIEW === 'qc') await viewQC();
     else if (VIEW === 'editors') await viewEditors();
     else if (VIEW === 'finance') await viewFinance();
     else if (VIEW === 'team') await viewTeam();
@@ -203,12 +212,12 @@ function buildTopbarActions() {
       <button class="${SCOPE === 'mine' ? 'on' : ''}" data-scope="mine">👤 Meniki</button>
       <button class="${SCOPE === 'all' ? 'on' : ''}" data-scope="all">👥 Jamoa</button></div>`;
   }
-  const canSearch = ['projects', 'scripts', 'videos', 'editors', 'client', 'cscripts', 'cvideos', 'myvideos'].includes(VIEW);
+  const canSearch = ['projects', 'scripts', 'videos', 'qc', 'joylash', 'editors', 'client', 'cscripts', 'cvideos', 'myvideos'].includes(VIEW);
   if (canSearch) html += `<div class="search-box"><span>⌕</span><input id="searchInput" placeholder="Qidirish..." value="${esc(SEARCH)}" /></div>`;
   const role = ME.role;
   if ((VIEW === 'projects') && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-project">+ Loyiha</button>`;
   if ((VIEW === 'scripts') && role !== 'client') html += `<button class="btn-primary" data-act="add-script">+ Ssenariy</button>`;
-  if ((VIEW === 'videos' || VIEW === 'myvideos') && role !== 'client') html += `<button class="btn-primary" data-act="add-video">+ Video</button>`;
+  if (VIEW === 'videos' && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-video">+ Video biriktirish</button>`;
   if (VIEW === 'finance') html += `<button class="btn-primary" data-act="add-payment">+ To'lov</button>`;
   a.innerHTML = html;
   a.querySelectorAll('[data-scope]').forEach((b) => b.addEventListener('click', () => { SCOPE = b.dataset.scope; render(); }));
@@ -364,60 +373,96 @@ async function viewVideos() {
   const videos = await api('/api/videos' + (VIEW === 'videos' ? scopeQ() : ''));
   DATA.videos = videos;
   let list = videos.filter((v) => matchSearch(v.title + ' ' + v.project + ' ' + v.editor));
-  if (['topshirildi', 'qabul_qilindi', 'qaytarildi'].includes(FILTER)) list = list.filter((v) => v.status === FILTER);
-  const chips = [['all', 'Hammasi'], ['topshirildi', 'Topshirilgan'], ['qabul_qilindi', 'Qabul qilingan'], ['qaytarildi', 'Qaytgan']];
+  if (Object.keys(VIDEO_ST).includes(FILTER)) list = list.filter((v) => v.status === FILTER);
+  const chips = (VIEW === 'joylash')
+    ? [['all', 'Hammasi'], ['qabul_qilindi', 'Joylash kerak'], ['joylandi', 'Joylandi']]
+    : [['all', 'Hammasi'], ['biriktirildi', 'Montaj kerak'], ['montaj_qilindi', 'Sifatda'], ['sifat_ok', 'Qabulda'], ['qabul_qilindi', 'Qabul qilingan'], ['qaytarildi', 'Qaytgan']];
   $('#content').innerHTML = `
     <div class="filter-row">${chips.map(([k, l]) => `<button class="chip ${FILTER === k ? 'active' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
     <div class="cards-grid">${list.map(videoCard).join('') || emptyState('Video yo\'q')}</div>`;
+  bindVideoCards();
+}
+
+async function viewQC() {
+  const videos = await api('/api/qc');
+  DATA.videos = videos;
+  const list = videos.filter((v) => matchSearch(v.title + ' ' + v.project + ' ' + v.editor));
+  $('#content').innerHTML = `
+    <p class="muted" style="margin-bottom:16px">🔎 Montaj qilingan, sifat nazorati kutayotgan videolar. Ko'rib, tasdiqlang yoki qaytaring.</p>
+    <div class="cards-grid">${list.map(videoCard).join('') || emptyState('Tekshirish uchun video yo\'q ✓')}</div>`;
+  bindVideoCards();
+}
+
+function bindVideoCards() {
   $('#content').querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => { FILTER = c.dataset.f; render(); }));
   $('#content').querySelectorAll('[data-vact]').forEach((b) => b.addEventListener('click', () => videoActionUI(b.dataset.id, b.dataset.vact)));
 }
 
-function videoCard(v) {
-  const st = VIDEO_ST[v.status] || VIDEO_ST.topshirildi;
-  const isApprover = ['ceo', 'coordinator', 'lead'].includes(ME.role);
-  let actions = '';
-  if (isApprover && v.status === 'topshirildi') {
-    actions += `<button class="mini-btn green" data-vact="accept" data-id="${v.id}">✓ Qabul</button>`;
-    actions += `<button class="mini-btn red" data-vact="return" data-id="${v.id}">↩ Qaytar</button>`;
+function videoActions(v) {
+  const role = ME.role;
+  const isApprover = ['ceo', 'coordinator', 'lead'].includes(role);
+  const b = [];
+  if ((v.editor === ME.name || ['ceo', 'coordinator'].includes(role)) && (v.status === 'biriktirildi' || v.status === 'qaytarildi'))
+    b.push(`<button class="mini-btn blue" data-vact="montaj_done" data-id="${v.id}">✓ Montaj qildim</button>`);
+  if (isApprover && v.status === 'montaj_qilindi') {
+    b.push(`<button class="mini-btn green" data-vact="qc_ok" data-id="${v.id}">✓ Sifat OK</button>`);
+    b.push(`<button class="mini-btn red" data-vact="qc_return" data-id="${v.id}">↩ Qaytar</button>`);
   }
-  if (isApprover && v.status === 'qabul_qilindi') actions += `<button class="mini-btn blue" data-vact="instagram" data-id="${v.id}">📷 IG link</button>`;
+  if (isApprover && v.status === 'sifat_ok') {
+    b.push(`<button class="mini-btn green" data-vact="accept" data-id="${v.id}">✓ Qabul (pul)</button>`);
+    b.push(`<button class="mini-btn red" data-vact="return" data-id="${v.id}">↩ Qaytar</button>`);
+  }
+  if (['smm', 'ceo', 'coordinator'].includes(role) && v.status === 'qabul_qilindi')
+    b.push(`<button class="mini-btn blue" data-vact="posted" data-id="${v.id}">📷 Joyladim</button>`);
+  return b.join('');
+}
+
+function videoCard(v) {
+  const st = VIDEO_ST[v.status] || VIDEO_ST.biriktirildi;
+  const who = [];
+  if (v.assigned_by) who.push('🎬 ' + esc(v.assigned_by));
+  if (v.qc_by) who.push('🔎 ' + esc(v.qc_by));
+  if (v.approved_by) who.push('✓ ' + esc(v.approved_by));
+  if (v.posted_by) who.push('📷 ' + esc(v.posted_by));
   return `
     <div class="video-card">
       <div class="pc-top"><div class="pc-name">${esc(v.title)}</div><span class="pill ${st.cls}">${st.label}</span></div>
-      <div class="pc-client">📁 ${esc(v.project) || '—'} · 🎬 ${esc(v.editor)}</div>
+      <div class="pc-client">📁 ${esc(v.project) || '—'} · 🎬 ${esc(v.editor) || '—'}</div>
       <div class="video-meta">
         ${v.amount ? `<span class="money-chip">💰 ${money(v.amount)}${v.tier ? ' · ' + (TIERS[v.tier] ? TIERS[v.tier].label : v.tier) : ''}</span>` : ''}
         ${v.drive_link ? `<a href="${esc(v.drive_link)}" target="_blank" class="link-chip">🔗 Drive</a>` : ''}
         ${v.instagram_link ? `<a href="${esc(v.instagram_link)}" target="_blank" class="link-chip">📷 Instagram</a>` : ''}
       </div>
       ${v.note ? `<div class="pc-problem soft">📝 ${esc(v.note)}</div>` : ''}
-      <div class="pc-foot"><div class="muted">📅 ${fmtDate(v.vdate)}${v.approved_by ? ' · ✓ ' + esc(v.approved_by) : ''}</div>
-        <div class="card-actions">${actions}</div></div>
+      <div class="pc-foot"><div class="muted">📅 ${fmtDate(v.vdate)}${who.length ? ' · ' + who.join(' ') : ''}</div>
+        <div class="card-actions">${videoActions(v)}</div></div>
     </div>`;
 }
+
+async function doVideoAction(id, body, msg) {
+  await api(`/api/videos/${id}/action`, { method: 'POST', body: JSON.stringify(body) });
+  closeModal(); toast(msg); render();
+}
+
 function videoActionUI(id, action) {
   if (action === 'accept') {
     const opts = Object.entries(TIERS).map(([k, t]) => `<button class="tier-btn" data-tier="${k}">${t.label}<br><b>${money(t.price)}</b></button>`).join('');
     openModal('Videoni qabul qilish', `<p class="muted" style="margin-bottom:14px">Daraja tanlang — pul avtomatik hisoblanadi:</p><div class="tier-grid">${opts}</div>`, () => {
-      $('#modalBody').querySelectorAll('.tier-btn').forEach((b) => b.addEventListener('click', async () => {
-        await api(`/api/videos/${id}/action`, { method: 'POST', body: JSON.stringify({ action: 'accept', tier: b.dataset.tier }) });
-        closeModal(); toast('✅ Qabul qilindi — pul hisoblandi'); render();
-      }));
+      $('#modalBody').querySelectorAll('.tier-btn').forEach((b) => b.addEventListener('click', () => doVideoAction(id, { action: 'accept', tier: b.dataset.tier }, '✅ Qabul qilindi — pul hisoblandi')));
     });
-  } else if (action === 'return') {
-    openModal('Videoni qaytarish', `<div class="field"><label>Sabab / izoh</label><textarea id="vrnote" placeholder="Nima tuzatish kerak..."></textarea></div><button class="btn-save" id="vrbtn">Qaytarish</button>`, () => {
-      $('#vrbtn').addEventListener('click', async () => {
-        await api(`/api/videos/${id}/action`, { method: 'POST', body: JSON.stringify({ action: 'return', note: $('#vrnote').value }) });
-        closeModal(); toast('↩ Qaytarildi'); render();
-      });
+  } else if (action === 'montaj_done') {
+    openModal('Montajni topshirish', `<div class="field"><label>Drive link (tayyor video)</label><input id="vdl" placeholder="https://drive.google..." /></div><div class="field"><label>Izoh (ixtiyoriy)</label><textarea id="vdn"></textarea></div><button class="btn-save" id="vdb">✓ Montaj qildim · sifatga yuborish</button>`, () => {
+      $('#vdb').addEventListener('click', () => doVideoAction(id, { action: 'montaj_done', drive_link: $('#vdl').value, note: $('#vdn').value }, '🎞 Sifat nazoratiga yuborildi'));
     });
-  } else if (action === 'instagram') {
-    openModal('Instagram link', `<div class="field"><label>Instagram post linki</label><input id="iglink" placeholder="https://instagram.com/..." /></div><button class="btn-save" id="igbtn">Saqlash</button>`, () => {
-      $('#igbtn').addEventListener('click', async () => {
-        await api(`/api/videos/${id}/action`, { method: 'POST', body: JSON.stringify({ action: 'instagram', instagram_link: $('#iglink').value }) });
-        closeModal(); toast('📷 Link saqlandi'); render();
-      });
+  } else if (action === 'qc_ok') {
+    api(`/api/videos/${id}/action`, { method: 'POST', body: JSON.stringify({ action: 'qc_ok' }) }).then(() => { toast('✓ Sifat tasdiqlandi'); render(); });
+  } else if (action === 'qc_return' || action === 'return') {
+    openModal('Videoni qaytarish', `<div class="field"><label>Qaytarish sababi</label><textarea id="vrnote" placeholder="Nima tuzatish kerak..."></textarea></div><button class="btn-save" id="vrbtn">Qaytarish</button>`, () => {
+      $('#vrbtn').addEventListener('click', () => doVideoAction(id, { action, note: $('#vrnote').value }, '↩ Qaytarildi'));
+    });
+  } else if (action === 'posted') {
+    openModal('Instagram\'ga joylash', `<div class="field"><label>Instagram post linki</label><input id="iglink" placeholder="https://instagram.com/..." /></div><button class="btn-save" id="igbtn">✓ Joyladim</button>`, () => {
+      $('#igbtn').addEventListener('click', () => doVideoAction(id, { action: 'posted', instagram_link: $('#iglink').value }, '📷 Instagram\'ga joylandi'));
     });
   }
 }
@@ -463,20 +508,28 @@ function editorCard(e) {
 async function viewCabinet() {
   const c = await api('/api/cabinet');
   DATA.cabinet = c;
-  const grouped = c.byProject.map((p) => `<div class="mrow"><span>${esc(p.project)}</span><b>${p.count} video</b></div>`).join('') || '<div class="muted">Hozircha video yo\'q</div>';
+  const grouped = c.byProject.map((p) => `<div class="mrow"><span>${esc(p.project)}</span><b>${p.count} video</b></div>`).join('') || '<div class="muted">Hozircha tasdiqlangan video yo\'q</div>';
   const pays = c.payments.map((p) => `<div class="pay-row"><div><b>${money(p.amount)}</b><div class="muted">${fmtDate(p.pdate)} · ${esc(p.note) || '—'}</div></div><div class="muted">${esc(p.paid_by)}</div></div>`).join('') || '<div class="muted">To\'lov tarixi yo\'q</div>';
+  const todo = (c.videosList || []).filter((v) => v.status === 'biriktirildi' || v.status === 'qaytarildi');
+  const todoHtml = todo.map((v) => `
+    <div class="ceo-item">
+      <div class="ci-left"><div><div class="ci-name">${esc(v.title)}</div><div class="ci-sub">${esc(v.project)}${v.status === 'qaytarildi' ? ' · ↩ qaytarilgan' : ''}</div></div></div>
+      <button class="mini-btn blue" data-vact="montaj_done" data-id="${v.id}">✓ Montaj qildim</button>
+    </div>`).join('') || '<div class="muted">Yangi topshiriq yo\'q ✓</div>';
   $('#content').innerHTML = `
     <div class="stats-grid">
-      ${statTile('🎬', c.accepted, 'Qabul qilingan', 'blue')}
-      ${statTile('💰', money(c.earned), 'Hisoblangan', 'green')}
-      ${statTile('✓', money(c.paid), 'To\'langan', 'purple')}
-      ${statTile('⏳', money(c.remaining), 'Qolgan', 'orange')}
+      ${statTile('🎬', c.toDo, 'Montaj qilish kerak', 'orange')}
+      ${statTile('⏳', c.inReview, 'Tasdiq jarayonida', 'blue')}
+      ${statTile('💰', money(c.earned), 'Ishlangan', 'green')}
+      ${statTile('₿', money(c.remaining), 'Qolgan to\'lov', 'purple')}
     </div>
+    <div class="panel"><h3>🎬 Montaj qilishim kerak (${todo.length})</h3><div class="ceo-list">${todoHtml}</div></div>
     <div class="ceo-grid">
-      <div class="panel"><h3>📁 Loyihalar bo'yicha</h3><div class="money-rows">${grouped}</div>
-        <div class="ec-stats" style="margin-top:14px"><span>${c.videos} jami</span><span>${c.pending} kutmoqda</span><span>${c.returned} qaytgan</span></div></div>
+      <div class="panel"><h3>📁 Tasdiqlanganlar (loyiha bo'yicha)</h3><div class="money-rows">${grouped}</div>
+        <div class="ec-stats" style="margin-top:14px"><span>${c.videos} jami</span><span>${c.accepted} tasdiqlangan</span><span>${c.returned} qaytgan</span></div></div>
       <div class="panel"><h3>💸 To'lov tarixim</h3>${pays}</div>
     </div>`;
+  bindVideoCards();
 }
 
 // ============================================================
@@ -649,38 +702,36 @@ async function showVersions(sid) {
       ${v.cta ? `<div class="ver-line"><b>CTA:</b> ${esc(v.cta)}</div>` : ''}</div>`).join('') || emptyState('Versiya yo\'q')}</div>`);
 }
 
-// ---- Video modal ----
+// ---- Video biriktirish modal (rahbar montajchiga biriktiradi) ----
 async function openVideoModal() {
-  if (!DATA.projects) DATA.projects = await api('/api/projects');
+  DATA.projects = await api('/api/projects');  // rahbar o'z loyihalari
   if (!DATA.scripts) DATA.scripts = await api('/api/scripts');
   if (!DATA.team) DATA.team = await api('/api/team');
   const editors = DATA.team.filter((u) => u.role === 'editor');
   const projOpts = DATA.projects.map((p) => `<option value="${esc(p.name)}" data-client="${esc(p.client)}">${esc(p.name)} (${esc(p.client)})</option>`).join('');
   const scriptOpts = DATA.scripts.map((s) => `<option value="${s.id}">#${s.id} ${esc(s.title)}</option>`).join('');
-  const editorField = ME.role === 'editor'
-    ? `<input id="vf_editor" value="${esc(ME.name)}" disabled />`
-    : `<select id="vf_editor"><option value="">—</option>${editors.map((e) => `<option>${esc(e.name)}</option>`).join('')}</select>`;
-  openModal('Video topshirish', `
+  openModal('Videoni montajchiga biriktirish', `
     <div class="field"><label>Video nomi</label><input id="vf_title" placeholder="masalan: Nova reels #12" /></div>
     <div class="field-row">
-      <div class="field"><label>Loyiha</label><select id="vf_project"><option value="">—</option>${projOpts}</select></div>
-      <div class="field"><label>Montajchi</label>${editorField}</div>
+      <div class="field"><label>Loyiha (mijoz)</label><select id="vf_project"><option value="">—</option>${projOpts}</select></div>
+      <div class="field"><label>Montajchi (kimga)</label><select id="vf_editor"><option value="">—</option>${editors.map((e) => `<option>${esc(e.name)}</option>`).join('')}</select></div>
     </div>
     <div class="field"><label>Ssenariy (ixtiyoriy — zanjir uchun)</label><select id="vf_script"><option value="">— bog'lanmagan —</option>${scriptOpts}</select></div>
     <div class="field-row">
       <div class="field"><label>Sana</label><input id="vf_date" type="date" /></div>
-      <div class="field"><label>Drive link</label><input id="vf_drive" placeholder="https://drive..." /></div>
+      <div class="field"><label>Material/Drive link</label><input id="vf_drive" placeholder="https://drive..." /></div>
     </div>
-    <div class="field"><label>Izoh</label><textarea id="vf_note"></textarea></div>
-    <div class="modal-actions"><button class="btn-save" id="vf_save">Topshirish</button></div>`,
+    <div class="field"><label>Izoh / topshiriq</label><textarea id="vf_note" placeholder="Montajchiga ko'rsatma..."></textarea></div>
+    <div class="modal-actions"><button class="btn-save" id="vf_save">🎬 Biriktirish</button></div>`,
   () => {
     $('#vf_save').addEventListener('click', async () => {
       const sel = $('#vf_project'); const client = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].dataset.client || '' : '';
+      if (!$('#vf_editor').value) { toast('Montajchini tanlang'); return; }
       const body = { title: $('#vf_title').value.trim() || 'Nomsiz video', project: $('#vf_project').value, client,
-        editor: ME.role === 'editor' ? ME.name : $('#vf_editor').value, script_id: $('#vf_script').value || null,
+        editor: $('#vf_editor').value, script_id: $('#vf_script').value || null,
         vdate: $('#vf_date').value || null, drive_link: $('#vf_drive').value, note: $('#vf_note').value };
       await api('/api/videos', { method: 'POST', body: JSON.stringify(body) });
-      closeModal(); toast('🎬 Topshirildi'); render();
+      closeModal(); toast('🎬 Biriktirildi'); render();
     });
   });
 }
