@@ -30,6 +30,8 @@ let TIERS = {};
 let VIEW = '';
 let FILTER = 'all';
 let SEARCH = '';
+let SCOPE = 'mine'; // rahbarlar uchun: 'mine' (o'z loyihalari) | 'all' (butun jamoa)
+const scopeQ = () => (ME && ME.role === 'lead' && SCOPE === 'all') ? '?all=1' : '';
 const DATA = {}; // cache: projects, scripts, videos, editors, team, clients, finance, audit, cabinet
 
 // ---------- Utils ----------
@@ -195,6 +197,12 @@ async function render() {
 function buildTopbarActions() {
   const a = $('#topbarActions');
   let html = '';
+  const scopeViews = ['dashboard', 'projects', 'scripts', 'videos'];
+  if (ME.role === 'lead' && scopeViews.includes(VIEW)) {
+    html += `<div class="scope-toggle">
+      <button class="${SCOPE === 'mine' ? 'on' : ''}" data-scope="mine">👤 Meniki</button>
+      <button class="${SCOPE === 'all' ? 'on' : ''}" data-scope="all">👥 Jamoa</button></div>`;
+  }
   const canSearch = ['projects', 'scripts', 'videos', 'editors', 'client', 'cscripts', 'cvideos', 'myvideos'].includes(VIEW);
   if (canSearch) html += `<div class="search-box"><span>⌕</span><input id="searchInput" placeholder="Qidirish..." value="${esc(SEARCH)}" /></div>`;
   const role = ME.role;
@@ -203,6 +211,7 @@ function buildTopbarActions() {
   if ((VIEW === 'videos' || VIEW === 'myvideos') && role !== 'client') html += `<button class="btn-primary" data-act="add-video">+ Video</button>`;
   if (VIEW === 'finance') html += `<button class="btn-primary" data-act="add-payment">+ To'lov</button>`;
   a.innerHTML = html;
+  a.querySelectorAll('[data-scope]').forEach((b) => b.addEventListener('click', () => { SCOPE = b.dataset.scope; render(); }));
   if (canSearch) $('#searchInput').addEventListener('input', (e) => { SEARCH = e.target.value.toLowerCase(); render(); });
   a.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
     const act = b.dataset.act;
@@ -224,7 +233,7 @@ function matchSearch(text) { return !SEARCH || (text || '').toLowerCase().includ
 
 // ---------- DASHBOARD (loyihalar + stats) ----------
 async function viewDashboard() {
-  const [stats, projects] = await Promise.all([api('/api/stats'), api('/api/projects')]);
+  const [stats, projects] = await Promise.all([api('/api/stats' + scopeQ()), api('/api/projects' + scopeQ())]);
   DATA.projects = projects;
   const c = $('#content');
   c.innerHTML = `
@@ -241,7 +250,7 @@ async function viewDashboard() {
 
 // ---------- PROJECTS ----------
 async function viewProjects() {
-  const projects = await api('/api/projects');
+  const projects = await api('/api/projects' + scopeQ());
   DATA.projects = projects;
   let list = projects.filter((p) => matchSearch(p.name + ' ' + p.client + ' ' + p.responsible));
   if (FILTER === 'overdue') list = list.filter((p) => p.overdue);
@@ -294,7 +303,7 @@ function bindProjectCards() {
 //  SSENARIYLAR
 // ============================================================
 async function viewScripts() {
-  const [scripts, stats] = await Promise.all([api('/api/scripts'), (ME.role !== 'client' ? api('/api/script-stats') : Promise.resolve([]))]);
+  const [scripts, stats] = await Promise.all([api('/api/scripts' + scopeQ()), (ME.role !== 'client' ? api('/api/script-stats') : Promise.resolve([]))]);
   DATA.scripts = scripts;
   let list = scripts.filter((s) => matchSearch(s.title + ' ' + s.project + ' ' + s.author));
   if (['yozilmoqda', 'tasdiq_kutilmoqda', 'tasdiqlandi', 'qaytarildi'].includes(FILTER)) list = list.filter((s) => s.status === FILTER);
@@ -352,7 +361,7 @@ async function scriptAction(id, action) {
 //  VIDEOLAR (montaj)
 // ============================================================
 async function viewVideos() {
-  const videos = await api('/api/videos');
+  const videos = await api('/api/videos' + (VIEW === 'videos' ? scopeQ() : ''));
   DATA.videos = videos;
   let list = videos.filter((v) => matchSearch(v.title + ' ' + v.project + ' ' + v.editor));
   if (['topshirildi', 'qabul_qilindi', 'qaytarildi'].includes(FILTER)) list = list.filter((v) => v.status === FILTER);

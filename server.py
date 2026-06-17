@@ -545,8 +545,29 @@ def api_delete_project(pid):
     return {"ok": True}
 
 
-def api_stats():
+def lead_project_names(name):
+    """Rahbar javobgar bo'lgan loyiha nomlari to'plami."""
+    conn = get_db()
+    rows = conn.execute("SELECT name FROM projects WHERE responsible=?", (name,)).fetchall()
+    conn.close()
+    return set(r["name"] for r in rows)
+
+
+def visible_projects(user, show_all=False):
+    """Foydalanuvchi rolига qarab ko'rinadigan loyihalar."""
     rows = api_projects()
+    if not user:
+        return rows
+    role = user["role"]
+    if role == "client":
+        return [p for p in rows if p.get("client") == user.get("client_name")]
+    if role == "lead" and not show_all:
+        return [p for p in rows if p.get("responsible") == user["name"]]
+    return rows
+
+
+def api_stats(user=None, show_all=False):
+    rows = visible_projects(user, show_all)
     total = len(rows)
     completed = sum(1 for p in rows if p["fullyDone"])
     overdue = sum(1 for p in rows if p["overdue"])
@@ -554,9 +575,16 @@ def api_stats():
 
     conn = get_db()
     today = uz_today().isoformat()
-    today_tasks = conn.execute(
-        "SELECT COUNT(*) AS n FROM activity WHERE substr(created_at,1,10)=?", (today,)
-    ).fetchone()["n"]
+    if user and user["role"] == "lead" and not show_all:
+        names = set(p["name"] for p in rows)
+        acts = conn.execute(
+            "SELECT project_name FROM activity WHERE substr(created_at,1,10)=?", (today,)
+        ).fetchall()
+        today_tasks = sum(1 for a in acts if a["project_name"] in names)
+    else:
+        today_tasks = conn.execute(
+            "SELECT COUNT(*) AS n FROM activity WHERE substr(created_at,1,10)=?", (today,)
+        ).fetchone()["n"]
     leads = conn.execute(
         "SELECT name FROM users WHERE role IN ('lead','coordinator')"
     ).fetchall()
@@ -565,9 +593,12 @@ def api_stats():
     ).fetchall()
     conn.close()
 
+    # Workload har doim BARCHA loyihalardan (faqat admin team view'da ishlatiladi)
+    allrows = api_projects()
+
     workload = []
     for u in leads:
-        mine = [p for p in rows if p["responsible"] == u["name"]]
+        mine = [p for p in allrows if p["responsible"] == u["name"]]
         workload.append({
             "name": u["name"], "total": len(mine),
             "active": sum(1 for p in mine if not p["fullyDone"]),
@@ -711,7 +742,7 @@ def api_team():
 SCRIPT_STATUSES = ["yozilmoqda", "tasdiq_kutilmoqda", "tasdiqlandi", "qaytarildi"]
 
 
-def api_scripts(user):
+def api_scripts(user, show_all=False):
     conn = get_db()
     if user["role"] == "client":
         rows = conn.execute(
@@ -721,7 +752,11 @@ def api_scripts(user):
     else:
         rows = conn.execute("SELECT * FROM scripts ORDER BY id DESC").fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    result = [dict(r) for r in rows]
+    if user["role"] == "lead" and not show_all:
+        names = lead_project_names(user["name"])
+        result = [r for r in result if r.get("project") in names]
+    return result
 
 
 def api_create_script(user, b):
@@ -858,7 +893,7 @@ def api_script_stats():
 VIDEO_STATUSES = ["topshirildi", "qaytarildi", "qabul_qilindi"]
 
 
-def api_videos(user):
+def api_videos(user, show_all=False):
     conn = get_db()
     if user["role"] == "client":
         rows = conn.execute("SELECT * FROM videos WHERE client=? ORDER BY id DESC", (user.get("client_name") or "",)).fetchall()
@@ -867,7 +902,11 @@ def api_videos(user):
     else:
         rows = conn.execute("SELECT * FROM videos ORDER BY id DESC").fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    result = [dict(r) for r in rows]
+    if user["role"] == "lead" and not show_all:
+        names = lead_project_names(user["name"])
+        result = [r for r in result if r.get("project") in names]
+    return result
 
 
 def api_create_video(user, b):
@@ -1149,6 +1188,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "Avtorizatsiya kerak"}, 401)
         seg = [s for s in path.split("/") if s]
         role = user["role"]
+        show_all = "all=1" in (urlparse(self.path).query or "")
 
         if path == "/api/me":
             return self._json(public_user(user))
@@ -1157,18 +1197,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/clients":
             return self._json(api_clients())
         if path == "/api/projects":
-            rows = api_projects()
-            if role == "client":
-                rows = [p for p in rows if p.get("client") == user.get("client_name")]
-            return self._json(rows)
+            return self._json(visible_projects(user, show_all))
         if path == "/api/stats":
-            return self._json(api_stats())
+            return self._json(api_stats(user, show_all))
         if path == "/api/scripts":
-            return self._json(api_scripts(user))
+            return self._json(api_scripts(user, show_all))
         if path == "/api/script-stats":
             return self._json(api_script_stats())
         if path == "/api/videos":
-            return self._json(api_videos(user))
+            return self._json(api_videos(user, show_all))
         if path == "/api/payments":
             return self._json(api_payments(user))
         if path == "/api/cabinet":
