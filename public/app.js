@@ -33,8 +33,6 @@ let TIERS = {};
 let VIEW = '';
 let FILTER = 'all';
 let SEARCH = '';
-let SCOPE = 'mine'; // rahbarlar uchun: 'mine' (o'z loyihalari) | 'all' (butun jamoa)
-const scopeQ = () => (ME && ME.role === 'lead' && SCOPE === 'all') ? '?all=1' : '';
 const DATA = {}; // cache: projects, scripts, videos, editors, team, clients, finance, audit, cabinet
 
 // ---------- Utils ----------
@@ -134,10 +132,10 @@ const NAV_ITEMS = [
   { view: 'scripts',   icon: '✎', label: 'Ssenariylar',   roles: ['ceo', 'coordinator', 'lead', 'editor'] },
   { view: 'videos',    icon: '►', label: 'Montaj',        roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'qc',        icon: '🔎', label: 'Sifat nazorati', roles: ['ceo', 'coordinator', 'lead'] },
-  { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo', 'coordinator', 'lead'] },
-  { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo', 'coordinator'] },
-  { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo', 'coordinator'] },
-  { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo', 'coordinator'] },
+  { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
+  { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
+  { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
+  { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
 ];
 const NAV_FOR = (role) => NAV_ITEMS.filter((n) => n.roles.includes(role));
 
@@ -206,12 +204,6 @@ async function render() {
 function buildTopbarActions() {
   const a = $('#topbarActions');
   let html = '';
-  const scopeViews = ['dashboard', 'projects', 'scripts', 'videos'];
-  if (ME.role === 'lead' && scopeViews.includes(VIEW)) {
-    html += `<div class="scope-toggle">
-      <button class="${SCOPE === 'mine' ? 'on' : ''}" data-scope="mine">👤 Meniki</button>
-      <button class="${SCOPE === 'all' ? 'on' : ''}" data-scope="all">👥 Jamoa</button></div>`;
-  }
   const canSearch = ['projects', 'scripts', 'videos', 'qc', 'joylash', 'editors', 'client', 'cscripts', 'cvideos', 'myvideos'].includes(VIEW);
   if (canSearch) html += `<div class="search-box"><span>⌕</span><input id="searchInput" placeholder="Qidirish..." value="${esc(SEARCH)}" /></div>`;
   const role = ME.role;
@@ -220,7 +212,6 @@ function buildTopbarActions() {
   if (VIEW === 'videos' && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-video">+ Video biriktirish</button>`;
   if (VIEW === 'finance') html += `<button class="btn-primary" data-act="add-payment">+ To'lov</button>`;
   a.innerHTML = html;
-  a.querySelectorAll('[data-scope]').forEach((b) => b.addEventListener('click', () => { SCOPE = b.dataset.scope; render(); }));
   if (canSearch) $('#searchInput').addEventListener('input', (e) => { SEARCH = e.target.value.toLowerCase(); render(); });
   a.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
     const act = b.dataset.act;
@@ -242,7 +233,7 @@ function matchSearch(text) { return !SEARCH || (text || '').toLowerCase().includ
 
 // ---------- DASHBOARD (loyihalar + stats) ----------
 async function viewDashboard() {
-  const [stats, projects] = await Promise.all([api('/api/stats' + scopeQ()), api('/api/projects' + scopeQ())]);
+  const [stats, projects] = await Promise.all([api('/api/stats'), api('/api/projects')]);
   DATA.projects = projects;
   const c = $('#content');
   c.innerHTML = `
@@ -251,6 +242,8 @@ async function viewDashboard() {
       ${statTile('⏱', stats.overdue, 'Kechikayotgan', 'red')}
       ${statTile('✓', stats.todayTasks, 'Bugun bajarilgan', 'green')}
       ${statTile('⚠', stats.atRisk, 'Xavf ostida', 'orange')}
+      ${statTile('📷', stats.readyToPost || 0, 'Joylash kutmoqda', 'orange')}
+      ${statTile('✅', stats.postedCount || 0, 'Joylandi ✓', 'green')}
     </div>
     <div class="section-head"><h3>Loyihalar</h3></div>
     <div class="cards-grid">${projects.map(projectCard).join('') || emptyState()}</div>`;
@@ -259,7 +252,7 @@ async function viewDashboard() {
 
 // ---------- PROJECTS ----------
 async function viewProjects() {
-  const projects = await api('/api/projects' + scopeQ());
+  const projects = await api('/api/projects' + '');
   DATA.projects = projects;
   let list = projects.filter((p) => matchSearch(p.name + ' ' + p.client + ' ' + p.responsible));
   if (FILTER === 'overdue') list = list.filter((p) => p.overdue);
@@ -312,7 +305,7 @@ function bindProjectCards() {
 //  SSENARIYLAR
 // ============================================================
 async function viewScripts() {
-  const [scripts, stats] = await Promise.all([api('/api/scripts' + scopeQ()), (ME.role !== 'client' ? api('/api/script-stats') : Promise.resolve([]))]);
+  const [scripts, stats] = await Promise.all([api('/api/scripts' + ''), (ME.role !== 'client' ? api('/api/script-stats') : Promise.resolve([]))]);
   DATA.scripts = scripts;
   let list = scripts.filter((s) => matchSearch(s.title + ' ' + s.project + ' ' + s.author));
   if (['yozilmoqda', 'tasdiq_kutilmoqda', 'tasdiqlandi', 'qaytarildi'].includes(FILTER)) list = list.filter((s) => s.status === FILTER);
@@ -370,7 +363,7 @@ async function scriptAction(id, action) {
 //  VIDEOLAR (montaj)
 // ============================================================
 async function viewVideos() {
-  const videos = await api('/api/videos' + (VIEW === 'videos' ? scopeQ() : ''));
+  const videos = await api('/api/videos' + (VIEW === 'videos' ? '' : ''));
   DATA.videos = videos;
   let list = videos.filter((v) => matchSearch(v.title + ' ' + v.project + ' ' + v.editor));
   if (Object.keys(VIDEO_ST).includes(FILTER)) list = list.filter((v) => v.status === FILTER);
@@ -395,7 +388,18 @@ async function viewQC() {
 
 function bindVideoCards() {
   $('#content').querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => { FILTER = c.dataset.f; render(); }));
-  $('#content').querySelectorAll('[data-vact]').forEach((b) => b.addEventListener('click', () => videoActionUI(b.dataset.id, b.dataset.vact)));
+  $('#content').querySelectorAll('[data-vact]').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    videoActionUI(b.dataset.id, b.dataset.vact);
+  }));
+  if (['ceo', 'coordinator', 'lead', 'smm'].includes(ME.role)) {
+    $('#content').querySelectorAll('.video-card.clickable').forEach((card) => {
+      card.addEventListener('click', () => {
+        const v = (DATA.videos || []).find((x) => x.id == card.dataset.vid);
+        if (v) openVideoDetailModal(v);
+      });
+    });
+  }
 }
 
 function videoActions(v) {
@@ -424,14 +428,15 @@ function videoCard(v) {
   if (v.qc_by) who.push('🔎 ' + esc(v.qc_by));
   if (v.approved_by) who.push('✓ ' + esc(v.approved_by));
   if (v.posted_by) who.push('📷 ' + esc(v.posted_by));
+  const isClickable = ['ceo', 'coordinator', 'lead', 'smm'].includes(ME.role);
   return `
-    <div class="video-card">
+    <div class="video-card${isClickable ? ' clickable' : ''}" data-vid="${v.id}">
       <div class="pc-top"><div class="pc-name">${esc(v.title)}</div><span class="pill ${st.cls}">${st.label}</span></div>
       <div class="pc-client">📁 ${esc(v.project) || '—'} · 🎬 ${esc(v.editor) || '—'}</div>
       <div class="video-meta">
         ${v.amount ? `<span class="money-chip">💰 ${money(v.amount)}${v.tier ? ' · ' + (TIERS[v.tier] ? TIERS[v.tier].label : v.tier) : ''}</span>` : ''}
-        ${v.drive_link ? `<a href="${esc(v.drive_link)}" target="_blank" class="link-chip">🔗 Drive</a>` : ''}
-        ${v.instagram_link ? `<a href="${esc(v.instagram_link)}" target="_blank" class="link-chip">📷 Instagram</a>` : ''}
+        ${v.drive_link ? `<span class="link-chip">🔗 Drive</span>` : ''}
+        ${v.instagram_link ? `<span class="link-chip">📷 Instagram</span>` : ''}
       </div>
       ${v.note ? `<div class="pc-problem soft">📝 ${esc(v.note)}</div>` : ''}
       <div class="pc-foot"><div class="muted">📅 ${fmtDate(v.vdate)}${who.length ? ' · ' + who.join(' ') : ''}</div>
@@ -465,6 +470,37 @@ function videoActionUI(id, action) {
       $('#igbtn').addEventListener('click', () => doVideoAction(id, { action: 'posted', instagram_link: $('#iglink').value }, '📷 Instagram\'ga joylandi'));
     });
   }
+}
+
+function openVideoDetailModal(v) {
+  const st = VIDEO_ST[v.status] || VIDEO_ST.biriktirildi;
+  const chain = [];
+  if (v.assigned_by) chain.push(`<div class="mrow"><span>🎬 Biriktirgan</span><b>${esc(v.assigned_by)}</b></div>`);
+  if (v.qc_by) chain.push(`<div class="mrow"><span>🔎 Sifat nazorat</span><b>${esc(v.qc_by)}</b></div>`);
+  if (v.approved_by) chain.push(`<div class="mrow"><span>✓ Qabul qilgan</span><b>${esc(v.approved_by)}</b></div>`);
+  if (v.posted_by) chain.push(`<div class="mrow"><span>📷 Joylagan</span><b>${esc(v.posted_by)}</b></div>`);
+  const driveBtn = v.drive_link
+    ? `<a href="${esc(v.drive_link)}" target="_blank" rel="noopener" class="btn-drive">🎞 Videoni ko'rish (Drive)</a>`
+    : '<div class="muted" style="margin:10px 0">Drive link hali kiritilmagan</div>';
+  const actions = videoActions(v);
+  openModal(v.title, `
+    <div style="margin-bottom:10px"><span class="pill ${st.cls}">${st.label}</span></div>
+    <div class="money-rows" style="margin-bottom:12px">
+      <div class="mrow"><span>📁 Loyiha</span><b>${esc(v.project || '—')}</b></div>
+      <div class="mrow"><span>🎬 Montajchi</span><b>${esc(v.editor || '—')}</b></div>
+      <div class="mrow"><span>📅 Sana</span><b>${fmtDate(v.vdate)}</b></div>
+      ${v.amount ? `<div class="mrow"><span>💰 Haq</span><b>${money(v.amount)}${v.tier ? ' · ' + (TIERS[v.tier] ? TIERS[v.tier].label : v.tier) : ''}</b></div>` : ''}
+      ${chain.join('')}
+    </div>
+    ${v.note ? `<div class="pc-problem soft" style="margin-bottom:12px">📝 ${esc(v.note)}</div>` : ''}
+    ${driveBtn}
+    ${v.instagram_link ? `<a href="${esc(v.instagram_link)}" target="_blank" rel="noopener" class="link-chip" style="display:inline-block;margin-bottom:12px">📷 Instagram post</a>` : ''}
+    ${actions ? `<div class="modal-actions">${actions}</div>` : ''}
+  `, () => {
+    $('#modalBody').querySelectorAll('[data-vact]').forEach((b) =>
+      b.addEventListener('click', () => { closeModal(); videoActionUI(b.dataset.id, b.dataset.vact); })
+    );
+  });
 }
 
 // ============================================================

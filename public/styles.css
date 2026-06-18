@@ -530,3 +530,14 @@ body {
 @media (max-width: 820px) { .scope-toggle button { padding: 7px 9px; font-size: 12px; } }
 
 .pill.st-blue { background: rgba(10,132,255,.16); color: var(--blue); }
+
+.btn-drive {
+  display: block; text-align: center; padding: 13px 16px;
+  background: var(--blue); color: #fff; border-radius: 11px;
+  font-weight: 700; text-decoration: none; margin: 14px 0;
+  font-size: 15px; transition: opacity .15s;
+}
+.btn-drive:hover { opacity: .82; }
+.video-card.clickable { cursor: pointer; }
+.video-card.clickable:hover { border-color: var(--blue); }
+.modal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

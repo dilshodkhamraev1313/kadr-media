@@ -596,6 +596,31 @@ def api_stats(user=None, show_all=False):
     recent = conn.execute(
         "SELECT * FROM activity ORDER BY id DESC LIMIT 15"
     ).fetchall()
+
+    # Joylash statistikasi (rahbar o'z loyihalari bo'yicha, admin hammasi)
+    if user and user["role"] == "lead" and not show_all:
+        proj_names = tuple(p["name"] for p in rows)
+        if proj_names:
+            ph = ",".join(["?"] * len(proj_names))
+            ready_to_post = conn.execute(
+                f"SELECT COUNT(*) AS n FROM videos WHERE status='qabul_qilindi' AND project IN ({ph})",
+                proj_names,
+            ).fetchone()["n"]
+            posted_count = conn.execute(
+                f"SELECT COUNT(*) AS n FROM videos WHERE status='joylandi' AND project IN ({ph})",
+                proj_names,
+            ).fetchone()["n"]
+        else:
+            ready_to_post = 0
+            posted_count = 0
+    else:
+        ready_to_post = conn.execute(
+            "SELECT COUNT(*) AS n FROM videos WHERE status='qabul_qilindi'"
+        ).fetchone()["n"]
+        posted_count = conn.execute(
+            "SELECT COUNT(*) AS n FROM videos WHERE status='joylandi'"
+        ).fetchone()["n"]
+
     conn.close()
 
     # Workload har doim BARCHA loyihalardan (faqat admin team view'da ishlatiladi)
@@ -614,6 +639,7 @@ def api_stats(user=None, show_all=False):
     return {
         "total": total, "active": total - completed, "completed": completed,
         "overdue": overdue, "atRisk": at_risk, "todayTasks": today_tasks,
+        "readyToPost": ready_to_post, "postedCount": posted_count,
         "workload": workload, "recent": [dict(r) for r in recent],
     }
 
