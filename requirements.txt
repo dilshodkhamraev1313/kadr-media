@@ -1,1 +1,14 @@
 psycopg[binary]
+
+# ---- Avto Montaj (ixtiyoriy) ----
+# Subtitr uchun (nutqni matnga aylantirish). Bo'lmasa montaj subtitrsiz chiqadi:
+#   faster-whisper
+# Musiqa ritmiga (beat) moslash uchun (ixtiyoriy):
+#   librosa
+# Referens rangini o'lchash uchun (ixtiyoriy):
+#   pillow
+#   numpy
+#
+# Eslatma: ffmpeg paket emas — tizimga alohida o'rnatiladi:
+#   Ubuntu/Debian:  apt install ffmpeg
+#   Mac:            brew install ffmpeg

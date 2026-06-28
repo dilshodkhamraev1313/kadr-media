@@ -81,6 +81,19 @@ Kompyuterni o'chirsangiz ham jamoa kirsin desangiz, dasturni bepul/arzon serverg
 
 Istalgan joydan kirish uchun to'liq qo'llanma: **`JOYLASH-QOLLANMA.md`** (Render + Neon, 100% bepul).
 
+## 🎬 Avto Montaj (yangi — prototip)
+
+Isxodnik videolarni yuklang → stil tanlang (yoki referens video bering) → tizim
+avtomatik **vertikal Reels** montaj qiladi: sukunatni kesadi, ritmga sinxron kesim,
+9:16 kadrlash, rang gradatsiyasi, fon musiqasi va o'zbekcha **avto-subtitr** (karaoke).
+
+- Sidebardagi **"🎬 Avto Montaj"** havolasi orqali oching (`/montaj.html`)
+- Terminal orqali: `python3 -m autoedit edit --inputs a.mp4 --style trend_fast --out tayyor.mp4`
+- To'liq qo'llanma va o'rnatish: **`autoedit/README.md`**
+
+> ⚠️ Ishlashi uchun serverga **ffmpeg** o'rnatilgan bo'lishi shart
+> (`apt install ffmpeg` / `brew install ffmpeg`). Subtitr uchun: `pip install faster-whisper`.
+
 ## 🛠 Texnik ma'lumot
 
 - **Backend:** Python (standart kutubxona) — `server.py`

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kadr Media — Avto Montaj</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .montaj-wrap { max-width: 760px; margin: 0 auto; padding: 28px 18px 80px; }
+  .m-head { display:flex; align-items:center; justify-content:space-between; margin-bottom: 22px; }
+  .m-title { font-size: 26px; font-weight: 700; letter-spacing:-0.02em; }
+  .m-sub { color: var(--text-2); font-size: 14px; margin-top: 4px; }
+  .card { background: var(--surface); border:1px solid var(--border); border-radius: var(--radius); padding: 20px; margin-bottom: 16px; }
+  .card h3 { font-size: 15px; margin-bottom: 12px; font-weight:600; }
+  label.fld { display:block; font-size: 13px; color: var(--text-2); margin: 14px 0 6px; }
+  input[type=file], select, input[type=text] {
+    width:100%; background: var(--surface-2); color: var(--text);
+    border:1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 11px 12px; font-size: 14px;
+  }
+  .styles-grid { display:grid; grid-template-columns: 1fr; gap: 10px; }
+  .style-opt { border:1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; cursor:pointer; transition: .15s; }
+  .style-opt:hover { border-color: var(--text-3); }
+  .style-opt.sel { border-color: var(--blue); background: rgba(10,132,255,0.08); }
+  .style-opt .so-name { font-weight:600; font-size:14px; }
+  .style-opt .so-desc { color: var(--text-2); font-size:12.5px; margin-top:3px; line-height:1.45; }
+  .btn { background: var(--blue); color:#fff; border:none; border-radius: var(--radius-sm);
+    padding: 13px 18px; font-size:15px; font-weight:600; cursor:pointer; width:100%; }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .btn-ghost { background: var(--surface-2); color: var(--text); border:1px solid var(--border); }
+  .pill { display:inline-block; font-size:12px; padding:4px 10px; border-radius:999px; }
+  .ok { background: rgba(48,209,88,.15); color: var(--green); }
+  .warn { background: rgba(255,159,10,.15); color: var(--orange); }
+  .err { background: rgba(255,69,58,.15); color: var(--red); }
+  .progress { display:flex; align-items:center; gap:10px; font-size:14px; color: var(--text-2); }
+  .spinner { width:18px; height:18px; border:2px solid var(--border); border-top-color: var(--blue);
+    border-radius:50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  video { width:100%; max-width:320px; border-radius: var(--radius-sm); display:block; margin: 8px auto; }
+  .muted { color: var(--text-3); font-size:12.5px; line-height:1.5; }
+  a.link { color: var(--blue); text-decoration:none; }
+</style>
+</head>
+<body>
+<div class="montaj-wrap">
+  <div class="m-head">
+    <div>
+      <div class="m-title">🎬 Avto Montaj</div>
+      <div class="m-sub">Isxodnik yuklang → stil tanlang → tayyor Reels oling</div>
+    </div>
+    <a href="/" class="link">← Dashboard</a>
+  </div>
+
+  <div id="needLogin" class="card hidden">
+    <h3>Avval tizimga kiring</h3>
+    <p class="muted">Montajdan foydalanish uchun <a href="/" class="link">dashboard orqali login qiling</a>, keyin shu sahifaga qayting.</p>
+  </div>
+
+  <div id="toolsCard" class="card hidden">
+    <h3>Tizim holati</h3>
+    <div id="toolsStatus"></div>
+  </div>
+
+  <div id="form" class="hidden">
+    <div class="card">
+      <h3>1. Isxodnik videolar</h3>
+      <input type="file" id="videos" accept="video/*" multiple>
+      <p class="muted" style="margin-top:8px">Bir nechta klip tanlashingiz mumkin. Tizim ularni avtomatik birlashtiradi.</p>
+    </div>
+
+    <div class="card">
+      <h3>2. Montaj stili</h3>
+      <div id="stylesGrid" class="styles-grid"></div>
+      <label class="fld">Yoki referens video (shu uslubda montaj qilinadi) — ixtiyoriy</label>
+      <input type="file" id="reference" accept="video/*">
+    </div>
+
+    <div class="card">
+      <h3>3. Qo'shimcha (ixtiyoriy)</h3>
+      <label class="fld">Fon musiqasi</label>
+      <input type="file" id="music" accept="audio/*">
+      <label class="fld">Video nomi</label>
+      <input type="text" id="title" placeholder="Masalan: Nova School — reels 1">
+      <label class="fld">Subtitr tili</label>
+      <select id="language">
+        <option value="uz">O'zbek</option>
+        <option value="ru">Rus</option>
+        <option value="en">Ingliz</option>
+      </select>
+    </div>
+
+    <button id="startBtn" class="btn">🚀 Montajni boshlash</button>
+  </div>
+
+  <div id="jobCard" class="card hidden">
+    <h3>Montaj jarayoni</h3>
+    <div id="jobBody"></div>
+  </div>
+</div>
+
+<script>
+const TOKEN = localStorage.getItem('km_token');
+let selectedStyle = 'trend_fast';
+let pollTimer = null;
+
+const $ = id => document.getElementById(id);
+
+async function api(path, opts={}) {
+  const r = await fetch(path, { headers: { 'X-Token': TOKEN || '' }, ...opts });
+  return r;
+}
+
+async function init() {
+  if (!TOKEN) { $('needLogin').classList.remove('hidden'); return; }
+  const r = await api('/api/montaj/styles');
+  if (r.status === 401) { $('needLogin').classList.remove('hidden'); return; }
+  if (!r.ok) { $('toolsCard').classList.remove('hidden'); $('toolsStatus').innerHTML =
+      '<span class="pill err">Montaj moduli yuklanmadi</span>'; return; }
+  const data = await r.json();
+  renderTools(data.tools);
+  renderStyles(data.styles);
+  $('form').classList.remove('hidden');
+  $('startBtn').onclick = startJob;
+}
+
+function renderTools(t) {
+  $('toolsCard').classList.remove('hidden');
+  const row = (name, ok, hint) =>
+    `<div style="margin:6px 0"><span class="pill ${ok?'ok':'warn'}">${ok?'✓':'—'} ${name}</span> <span class="muted">${ok?'':hint}</span></div>`;
+  $('toolsStatus').innerHTML =
+    row('ffmpeg', t.ffmpeg, 'Serverda kerak: apt install ffmpeg') +
+    row('Whisper (subtitr)', t.whisper, 'pip install faster-whisper — bo\'lmasa subtitrsiz chiqadi') +
+    row('librosa (beat)', t.librosa, 'Ixtiyoriy — musiqa ritmiga moslash uchun') +
+    (!t.ready ? '<p class="muted" style="margin-top:8px">⚠️ ffmpeg yo\'q — montaj ishlamaydi. Avval serverga ffmpeg o\'rnating.</p>' : '');
+}
+
+function renderStyles(styles) {
+  $('stylesGrid').innerHTML = styles.map(s =>
+    `<div class="style-opt ${s.id===selectedStyle?'sel':''}" data-id="${s.id}">
+       <div class="so-name">${s.label}</div>
+       <div class="so-desc">${s.desc}</div>
+     </div>`).join('');
+  document.querySelectorAll('.style-opt').forEach(el => {
+    el.onclick = () => {
+      selectedStyle = el.dataset.id;
+      document.querySelectorAll('.style-opt').forEach(x => x.classList.remove('sel'));
+      el.classList.add('sel');
+    };
+  });
+}
+
+async function startJob() {
+  const vids = $('videos').files;
+  if (!vids.length) { alert('Kamida bitta video tanlang'); return; }
+  const fd = new FormData();
+  for (const f of vids) fd.append('videos', f);
+  if ($('reference').files[0]) fd.append('reference', $('reference').files[0]);
+  if ($('music').files[0]) fd.append('music', $('music').files[0]);
+  fd.append('style', selectedStyle);
+  fd.append('language', $('language').value);
+  fd.append('title', $('title').value || '');
+
+  $('startBtn').disabled = true;
+  $('startBtn').textContent = 'Yuklanmoqda…';
+  $('jobCard').classList.remove('hidden');
+  $('jobBody').innerHTML = '<div class="progress"><div class="spinner"></div> Fayllar yuklanmoqda…</div>';
+
+  const r = await api('/api/montaj/jobs', { method: 'POST', body: fd });
+  $('startBtn').disabled = false;
+  $('startBtn').textContent = '🚀 Montajni boshlash';
+  if (!r.ok) {
+    const e = await r.json().catch(()=>({error:'Xatolik'}));
+    $('jobBody').innerHTML = `<span class="pill err">${e.error||'Xatolik'}</span>`;
+    return;
+  }
+  const job = await r.json();
+  poll(job.id);
+}
+
+function poll(id) {
+  clearInterval(pollTimer);
+  const tick = async () => {
+    const r = await api('/api/montaj/jobs/' + id);
+    if (!r.ok) return;
+    const j = await r.json();
+    renderJob(j);
+    if (j.status === 'done' || j.status === 'error') clearInterval(pollTimer);
+  };
+  tick();
+  pollTimer = setInterval(tick, 2000);
+}
+
+function renderJob(j) {
+  if (j.status === 'error') {
+    $('jobBody').innerHTML = `<span class="pill err">Xatolik</span><p class="muted" style="margin-top:8px">${j.error||''}</p>`;
+    return;
+  }
+  if (j.status === 'done') {
+    const warns = (j.warnings||[]).map(w=>`<div class="muted">⚠️ ${w}</div>`).join('');
+    const res = j.result || {};
+    $('jobBody').innerHTML =
+      `<span class="pill ok">✓ Tayyor</span>
+       <p class="muted" style="margin:8px 0">Davomiyligi: ${res.duration||'?'}s · kadrlar: ${res.segments||'?'} · subtitr: ${res.subtitled?'ha':'yo\'q'}</p>
+       <video controls src="/api/montaj/jobs/${j.id}/download"></video>
+       <a class="btn" style="display:block;text-align:center;text-decoration:none;margin-top:10px" href="/api/montaj/jobs/${j.id}/download">⬇️ Yuklab olish</a>
+       ${warns}`;
+    return;
+  }
+  $('jobBody').innerHTML = `<div class="progress"><div class="spinner"></div> ${j.progress||'Ishlanmoqda…'}</div>`;
+}
+
+init();
+</script>
+</body>
+</html>

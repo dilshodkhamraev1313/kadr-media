@@ -22,6 +22,22 @@ PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 DB_PATH = os.path.join(BASE_DIR, "kadr-media.db")
 PORT = int(os.environ.get("PORT", 3000))
 
+# --- Avtomatik montaj dvigateli (autoedit paketi) ---
+# Agar paket yoki ffmpeg yo'q bo'lsa ham, asosiy dashboard ishlayveradi.
+MONTAJ_DIR = os.path.join(BASE_DIR, "montaj_out")
+MONTAJ_OK = False
+MONTAJ_IMPORT_ERROR = ""
+try:
+    from autoedit.jobs import JobManager
+    from autoedit.styles import list_styles as montaj_list_styles
+    from autoedit.ffmpeg_utils import tools_status as montaj_tools
+    from autoedit.web import parse_multipart, save_uploads, MAX_UPLOAD
+    MONTAJ = JobManager(MONTAJ_DIR)
+    MONTAJ_OK = True
+except Exception as _e:  # noqa: BLE001
+    MONTAJ = None
+    MONTAJ_IMPORT_ERROR = str(_e)
+
 # Internetda (Render) DATABASE_URL beriladi → Postgres (Neon) ishlatiladi.
 # Mahalliy kompyuterda esa SQLite fayli ishlatiladi (hech narsa o'rnatish shart emas).
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
@@ -1256,6 +1272,58 @@ class Handler(BaseHTTPRequestHandler):
     def _forbid(self):
         return self._json({"error": "Ruxsat yo'q"}, 403)
 
+    def _montaj_create(self, user):
+        """Multipart fayl yuklash → yangi montaj vazifasi yaratish."""
+        if not MONTAJ_OK:
+            return self._json({"error": "Montaj moduli yuklanmadi",
+                               "detail": MONTAJ_IMPORT_ERROR}, 500)
+        ctype = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in ctype:
+            return self._json({"error": "multipart/form-data kerak"}, 400)
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return self._json({"error": "Bo'sh so'rov"}, 400)
+        if length > MAX_UPLOAD:
+            return self._json({"error": "Fayl(lar) juda katta (max 800MB)"}, 413)
+        body = self.rfile.read(length)
+        try:
+            parsed = parse_multipart(body, ctype)
+        except ValueError as e:
+            return self._json({"error": str(e)}, 400)
+
+        upload_dir = os.path.join(MONTAJ_DIR, "upload_" + secrets.token_hex(4))
+        saved = save_uploads(parsed["files"], upload_dir)
+        if not saved["videos"]:
+            return self._json({"error": "Kamida bitta video yuklang"}, 400)
+
+        fields = parsed["fields"]
+        job = MONTAJ.create(
+            inputs=saved["videos"],
+            style_name=fields.get("style"),
+            reference=saved["reference"],
+            music=saved["music"],
+            language=fields.get("language", "uz"),
+            title=fields.get("title") or ("Montaj — " + user["name"]),
+        )
+        return self._json(job, 201)
+
+    def _montaj_download(self, job_id):
+        """Tayyor videoni jo'natadi."""
+        if not MONTAJ_OK:
+            return self._json({"error": "Montaj moduli yuklanmadi"}, 500)
+        path = MONTAJ.output_path(job_id)
+        if not path:
+            return self._json({"error": "Tayyor emas yoki topilmadi"}, 404)
+        with open(path, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Content-Disposition",
+                         f'attachment; filename="kadr-montaj-{job_id}.mp4"')
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
         path = urlparse(self.path).path
         # --- Ochiq (auth shart emas) ---
@@ -1265,6 +1333,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_telegram_test())
         if path == "/api/telegram/digest":
             return self._json(api_telegram_digest())
+        # Tayyor videoni yuklab olish — brauzer havolasi orqali (token sarlavhasiz),
+        # job_id tasodifiy va taxmin qilib bo'lmaydi.
+        if path.startswith("/api/montaj/jobs/") and path.endswith("/download"):
+            jid = path[len("/api/montaj/jobs/"):-len("/download")]
+            return self._montaj_download(jid)
         if not path.startswith("/api/"):
             return self._serve_static(path)
 
@@ -1304,6 +1377,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role not in ADMIN_ROLES else self._json(api_audit())
         if path == "/api/finance":
             return self._forbid() if role not in ADMIN_ROLES else self._json(api_finance())
+        # --- Avtomatik montaj ---
+        if path == "/api/montaj/styles":
+            if not MONTAJ_OK:
+                return self._json({"error": "Montaj moduli yuklanmadi",
+                                   "detail": MONTAJ_IMPORT_ERROR}, 500)
+            return self._json({"styles": montaj_list_styles(), "tools": montaj_tools()})
+        if len(seg) == 4 and seg[1] == "montaj" and seg[2] == "jobs":
+            if not MONTAJ_OK:
+                return self._json({"error": "Montaj moduli yuklanmadi"}, 500)
+            j = MONTAJ.public(seg[3])
+            return self._json(j) if j else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "versions":
             sid = self._int(seg[2])
             return self._json(api_script_versions(sid)) if sid else self._json({"error": "Topilmadi"}, 404)
@@ -1322,6 +1406,9 @@ class Handler(BaseHTTPRequestHandler):
         user = self._auth()
         if not user:
             return self._json({"error": "Avtorizatsiya kerak"}, 401)
+        # Montaj vazifasi — multipart fayl yuklash (JSON body'dan oldin o'qiymiz)
+        if path == "/api/montaj/jobs":
+            return self._montaj_create(user)
         b = self._body()
         seg = [s for s in path.split("/") if s]
         r = user["role"]

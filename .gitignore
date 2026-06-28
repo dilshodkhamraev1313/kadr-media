@@ -1,0 +1,14 @@
+# Ma'lumotlar bazasi (mahalliy)
+kadr-media.db
+
+# Montaj: yuklangan va render qilingan fayllar
+montaj_out/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
