@@ -25,6 +25,12 @@ const VIDEO_ST = {
   qabul_qilindi:  { label: 'Qabul · joylashga', cls: 'st-green' },
   joylandi:       { label: 'Joylandi ✓',       cls: 'st-green' },
   qaytarildi:     { label: 'Qaytarildi',       cls: 'st-red' },
+  bekor_qilindi:  { label: 'Bekor qilindi',    cls: 'st-gray' },
+};
+const VIDEO_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video' };
+const STUDIO_ROOMS_DEFAULT = {
+  white: { label: '1-xona · White', rate: 300000, color: '#0A84FF' },
+  black: { label: '2-xona · Black', rate: 400000, color: '#1C1C1E' },
 };
 
 let ME = null;
@@ -132,12 +138,13 @@ const NAV_ITEMS = [
   { view: 'scripts',   icon: '✎', label: 'Ssenariylar',   roles: ['ceo', 'coordinator', 'lead', 'editor'] },
   { view: 'videos',    icon: '►', label: 'Montaj',        roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'qc',        icon: '🔎', label: 'Sifat nazorati', roles: ['ceo', 'coordinator', 'lead'] },
+  { view: 'studio',    icon: '🎥', label: 'Kadr Studio',   roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Gulmira', 'Xonzoda', 'Said'] },
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
 ];
-const NAV_FOR = (role) => NAV_ITEMS.filter((n) => n.roles.includes(role));
+const NAV_FOR = (role) => NAV_ITEMS.filter((n) => n.roles.includes(role) && (!n.names || (ME && n.names.includes(ME.name))));
 
 function buildNav() {
   const items = NAV_FOR(ME.role);
@@ -165,6 +172,7 @@ const TITLES = {
   scripts:   ['Ssenariylar', 'Yozish, tasdiqlash, versiyalar'],
   videos:    ['Montaj — videolar', 'Biriktirish va qabul qilish'],
   qc:        ['Sifat nazorati', 'Montaj qilingan, tasdiq kutayotgan videolar'],
+  studio:    ['Kadr Studio', 'Syomka xonalari bandligi va bronlar'],
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
   editors:   ['Montajchilar', 'Kabinetlar va hisob-kitob'],
   finance:   ['Moliya', 'Montaj xarajatlari va to\'lovlar'],
@@ -190,6 +198,7 @@ async function render() {
     else if (VIEW === 'videos') await viewVideos();
     else if (VIEW === 'myvideos' || VIEW === 'cvideos' || VIEW === 'joylash') await viewVideos();
     else if (VIEW === 'qc') await viewQC();
+    else if (VIEW === 'studio') await viewStudio();
     else if (VIEW === 'editors') await viewEditors();
     else if (VIEW === 'finance') await viewFinance();
     else if (VIEW === 'team') await viewTeam();
@@ -211,6 +220,10 @@ function buildTopbarActions() {
   if ((VIEW === 'scripts') && role !== 'client') html += `<button class="btn-primary" data-act="add-script">+ Ssenariy</button>`;
   if (VIEW === 'videos' && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-video">+ Video biriktirish</button>`;
   if (VIEW === 'finance') html += `<button class="btn-primary" data-act="add-payment">+ To'lov</button>`;
+  if (VIEW === 'studio') {
+    if (role === 'ceo') html += `<button class="btn-ghost" data-act="studio-finance">💰 Pul hisoboti</button>`;
+    html += `<button class="btn-primary" data-act="add-booking">+ Bron qilish</button>`;
+  }
   a.innerHTML = html;
   if (canSearch) $('#searchInput').addEventListener('input', (e) => { SEARCH = e.target.value.toLowerCase(); render(); });
   a.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
@@ -219,6 +232,8 @@ function buildTopbarActions() {
     if (act === 'add-script') openScriptModal(null);
     if (act === 'add-video') openVideoModal();
     if (act === 'add-payment') openPaymentModal();
+    if (act === 'add-booking') openStudioBookingModal();
+    if (act === 'studio-finance') openStudioFinanceModal();
   }));
 }
 
@@ -408,6 +423,8 @@ function videoActions(v) {
   const b = [];
   if ((v.editor === ME.name || ['ceo', 'coordinator'].includes(role)) && (v.status === 'biriktirildi' || v.status === 'qaytarildi'))
     b.push(`<button class="mini-btn blue" data-vact="montaj_done" data-id="${v.id}">✓ Montaj qildim</button>`);
+  if (isApprover && (v.status === 'biriktirildi' || v.status === 'qaytarildi'))
+    b.push(`<button class="mini-btn gray" data-vact="cancel" data-id="${v.id}">🚫 Bekor qilish</button>`);
   if (isApprover && v.status === 'montaj_qilindi') {
     b.push(`<button class="mini-btn green" data-vact="qc_ok" data-id="${v.id}">✓ Sifat OK</button>`);
     b.push(`<button class="mini-btn red" data-vact="qc_return" data-id="${v.id}">↩ Qaytar</button>`);
@@ -434,6 +451,7 @@ function videoCard(v) {
       <div class="pc-top"><div class="pc-name">${esc(v.title)}</div><span class="pill ${st.cls}">${st.label}</span></div>
       <div class="pc-client">📁 ${esc(v.project) || '—'} · 🎬 ${esc(v.editor) || '—'}</div>
       <div class="video-meta">
+        <span class="link-chip">🎞 ${esc(VIDEO_TYPE_LABEL[v.vtype] || 'Reels')}</span>
         ${v.amount ? `<span class="money-chip">💰 ${money(v.amount)}${v.tier ? ' · ' + (TIERS[v.tier] ? TIERS[v.tier].label : v.tier) : ''}</span>` : ''}
         ${v.drive_link ? `<span class="link-chip">🔗 Drive</span>` : ''}
         ${v.instagram_link ? `<span class="link-chip">📷 Instagram</span>` : ''}
@@ -451,9 +469,17 @@ async function doVideoAction(id, body, msg) {
 
 function videoActionUI(id, action) {
   if (action === 'accept') {
-    const opts = Object.entries(TIERS).map(([k, t]) => `<button class="tier-btn" data-tier="${k}">${t.label}<br><b>${money(t.price)}</b></button>`).join('');
-    openModal('Videoni qabul qilish', `<p class="muted" style="margin-bottom:14px">Daraja tanlang — pul avtomatik hisoblanadi:</p><div class="tier-grid">${opts}</div>`, () => {
+    const v = (DATA.videos || []).find((x) => x.id == id) || {};
+    const vtype = v.vtype || 'reels';
+    const entries = Object.entries(TIERS).filter(([, t]) => (t.type || 'reels') === vtype);
+    const list = entries.length ? entries : Object.entries(TIERS);
+    const opts = list.map(([k, t]) => `<button class="tier-btn" data-tier="${k}">${t.label}<br><b>${money(t.price)}</b></button>`).join('');
+    openModal('Videoni qabul qilish', `<p class="muted" style="margin-bottom:14px">🎞 ${esc(VIDEO_TYPE_LABEL[vtype] || 'Reels')} — daraja tanlang, pul avtomatik hisoblanadi:</p><div class="tier-grid">${opts}</div>`, () => {
       $('#modalBody').querySelectorAll('.tier-btn').forEach((b) => b.addEventListener('click', () => doVideoAction(id, { action: 'accept', tier: b.dataset.tier }, '✅ Qabul qilindi — pul hisoblandi')));
+    });
+  } else if (action === 'cancel') {
+    openModal('Biriktirishni bekor qilish', `<p class="muted" style="margin-bottom:12px">Bu video "Bekor qilindi" deb belgilanadi (yozuv tarixda qoladi).</p><div class="field"><label>Sabab (ixtiyoriy)</label><textarea id="vcnote" placeholder="Nega bekor qilinmoqda..."></textarea></div><button class="btn-save" id="vcbtn" style="background:var(--red)">🚫 Bekor qilish</button>`, () => {
+      $('#vcbtn').addEventListener('click', () => doVideoAction(id, { action: 'cancel', note: $('#vcnote').value }, '🚫 Bekor qilindi'));
     });
   } else if (action === 'montaj_done') {
     openModal('Montajni topshirish', `<div class="field"><label>Drive link (tayyor video)</label><input id="vdl" placeholder="https://drive.google..." /></div><div class="field"><label>Izoh (ixtiyoriy)</label><textarea id="vdn"></textarea></div><button class="btn-save" id="vdb">✓ Montaj qildim · sifatga yuborish</button>`, () => {
@@ -487,6 +513,7 @@ function openVideoDetailModal(v) {
     <div style="margin-bottom:10px"><span class="pill ${st.cls}">${st.label}</span></div>
     <div class="money-rows" style="margin-bottom:12px">
       <div class="mrow"><span>📁 Loyiha</span><b>${esc(v.project || '—')}</b></div>
+      <div class="mrow"><span>🎞 Video turi</span><b>${esc(VIDEO_TYPE_LABEL[v.vtype] || 'Reels')}</b></div>
       <div class="mrow"><span>🎬 Montajchi</span><b>${esc(v.editor || '—')}</b></div>
       <div class="mrow"><span>📅 Sana</span><b>${fmtDate(v.vdate)}</b></div>
       ${v.amount ? `<div class="mrow"><span>💰 Haq</span><b>${money(v.amount)}${v.tier ? ' · ' + (TIERS[v.tier] ? TIERS[v.tier].label : v.tier) : ''}</b></div>` : ''}
@@ -501,6 +528,172 @@ function openVideoDetailModal(v) {
       b.addEventListener('click', () => { closeModal(); videoActionUI(b.dataset.id, b.dataset.vact); })
     );
   });
+}
+
+// ============================================================
+//  KADR STUDIO — syomka bronlari (kalendar)
+// ============================================================
+let STUDIO_MONTH = null;
+
+function studioHours(start, end) {
+  if (!start || !end) return 0;
+  const [sh, sm] = start.split(':').map(Number);
+  const [eh, em] = end.split(':').map(Number);
+  let mins = (eh * 60 + em) - (sh * 60 + sm);
+  if (mins <= 0) mins += 1440;
+  return Math.round(mins / 60 * 100) / 100;
+}
+
+async function viewStudio() {
+  const data = await api('/api/studio');
+  DATA.studio = data;
+  const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
+  if (!STUDIO_MONTH) { const t = new Date(); STUDIO_MONTH = { y: t.getFullYear(), m: t.getMonth() }; }
+  const { y, m } = STUDIO_MONTH;
+  const UZ_MONTH_FULL = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
+  const byDate = {};
+  data.bookings.forEach((b) => { (byDate[b.bdate] = byDate[b.bdate] || []).push(b); });
+  const first = new Date(y, m, 1);
+  const startDow = (first.getDay() + 6) % 7; // dushanba = 0
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const now = new Date();
+  const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const legend = Object.entries(rooms).map(([, r]) =>
+    `<span class="room-tag"><i style="background:${r.color}"></i>${esc(r.label)} · ${money(r.rate)}/soat</span>`).join('');
+  const wd = ['Du', 'Se', 'Cho', 'Pa', 'Ju', 'Sha', 'Ya'];
+  let cells = wd.map((d) => `<div class="cal-wd">${d}</div>`).join('');
+  for (let i = 0; i < startDow; i++) cells += `<div class="cal-cell empty"></div>`;
+  for (let day = 1; day <= daysInMonth; day++) {
+    const iso = `${y}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const list = (byDate[iso] || []).slice().sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+    const pills = list.map((b) => {
+      const rc = (rooms[b.room] || {}).color || '#888';
+      return `<div class="cal-ev${b.paid ? '' : ' unpaid'}" data-bk="${b.id}" style="background:${rc}" title="${esc(b.client_name || '')}">${esc((b.start_time || '').slice(0, 5))} ${esc(b.client_name || '')}</div>`;
+    }).join('');
+    cells += `<div class="cal-cell${iso === todayISO ? ' today' : ''}" data-day="${iso}"><div class="cal-daynum">${day}</div>${pills}</div>`;
+  }
+  $('#content').innerHTML = `
+    <div class="cal-toolbar">
+      <button class="btn-ghost" data-cal="prev">‹</button>
+      <h3 class="cal-title">${UZ_MONTH_FULL[m]} ${y}</h3>
+      <button class="btn-ghost" data-cal="next">›</button>
+      <button class="btn-ghost" data-cal="today">Bugun</button>
+      <div class="cal-legend">${legend}</div>
+    </div>
+    <div class="cal-grid">${cells}</div>
+    <p class="muted" style="margin-top:12px">📌 Bo'sh kunga bron qo'shish uchun kun ustiga bosing. Bron tafsiloti uchun bronni bosing.</p>`;
+  $('#content').querySelectorAll('[data-cal]').forEach((b) => b.addEventListener('click', () => {
+    const a = b.dataset.cal;
+    if (a === 'prev') { STUDIO_MONTH.m--; if (STUDIO_MONTH.m < 0) { STUDIO_MONTH.m = 11; STUDIO_MONTH.y--; } }
+    else if (a === 'next') { STUDIO_MONTH.m++; if (STUDIO_MONTH.m > 11) { STUDIO_MONTH.m = 0; STUDIO_MONTH.y++; } }
+    else if (a === 'today') { const t = new Date(); STUDIO_MONTH = { y: t.getFullYear(), m: t.getMonth() }; }
+    render();
+  }));
+  $('#content').querySelectorAll('.cal-cell[data-day]').forEach((c) => c.addEventListener('click', (e) => {
+    if (e.target.closest('.cal-ev')) return;
+    openStudioBookingModal(c.dataset.day);
+  }));
+  $('#content').querySelectorAll('.cal-ev').forEach((ev) => ev.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const b = data.bookings.find((x) => x.id == ev.dataset.bk);
+    if (b) openStudioDetailModal(b);
+  }));
+}
+
+function openStudioBookingModal(presetDate) {
+  const rooms = (DATA.studio && DATA.studio.rooms) || STUDIO_ROOMS_DEFAULT;
+  const roomOpts = Object.entries(rooms).map(([k, r]) => `<option value="${k}">${esc(r.label)} — ${money(r.rate)}/soat</option>`).join('');
+  openModal('Kadr Studio — bron qilish', `
+    <div class="field"><label>Mijoz ismi</label><input id="sb_name" placeholder="Mijoz ismi" /></div>
+    <div class="field-row">
+      <div class="field"><label>Telefon</label><input id="sb_phone" placeholder="+998 90 123 45 67" /></div>
+      <div class="field"><label>Xona</label><select id="sb_room">${roomOpts}</select></div>
+    </div>
+    <div class="field"><label>Sana</label><input id="sb_date" type="date" value="${presetDate || ''}" /></div>
+    <div class="field-row">
+      <div class="field"><label>Boshlanish</label><input id="sb_start" type="time" value="10:00" /></div>
+      <div class="field"><label>Tugash</label><input id="sb_end" type="time" value="12:00" /></div>
+    </div>
+    <div class="field"><label>Izoh (syomka turi)</label><textarea id="sb_note" placeholder="masalan: podcast syomka, 2 kishi"></textarea></div>
+    <label class="check-row"><input type="checkbox" id="sb_paid" /> To'lov qilingan</label>
+    <div id="sb_calc" class="calc-line"></div>
+    <div class="modal-actions"><button class="btn-save" id="sb_save">🎥 Bron qilish</button></div>`,
+  () => {
+    const calc = () => {
+      const room = rooms[$('#sb_room').value] || { rate: 0 };
+      const h = studioHours($('#sb_start').value, $('#sb_end').value);
+      $('#sb_calc').innerHTML = h > 0
+        ? `⏱ ${h} soat × ${money(room.rate)} = <b>${money(Math.round(h * room.rate))}</b>`
+        : `<span class="muted">Vaqtni to'g'ri kiriting</span>`;
+    };
+    ['sb_room', 'sb_start', 'sb_end'].forEach((id) => $('#' + id).addEventListener('input', calc));
+    calc();
+    $('#sb_save').addEventListener('click', async () => {
+      const name = $('#sb_name').value.trim();
+      if (!name) { toast('Mijoz ismini kiriting'); return; }
+      const bdate = $('#sb_date').value;
+      if (!bdate) { toast('Sanani tanlang'); return; }
+      const body = {
+        client_name: name, phone: $('#sb_phone').value, room: $('#sb_room').value,
+        bdate, start_time: $('#sb_start').value, end_time: $('#sb_end').value,
+        note: $('#sb_note').value, paid: $('#sb_paid').checked,
+      };
+      await api('/api/studio', { method: 'POST', body: JSON.stringify(body) });
+      closeModal(); toast('🎥 Bron saqlandi'); render();
+    });
+  });
+}
+
+function openStudioDetailModal(b) {
+  const rooms = (DATA.studio && DATA.studio.rooms) || STUDIO_ROOMS_DEFAULT;
+  const room = rooms[b.room] || { label: b.room };
+  openModal(`Bron · ${esc(b.client_name || '')}`, `
+    <div class="money-rows" style="margin-bottom:12px">
+      <div class="mrow"><span>🏠 Xona</span><b>${esc(room.label)}</b></div>
+      <div class="mrow"><span>📅 Sana</span><b>${fmtDate(b.bdate)}</b></div>
+      <div class="mrow"><span>⏱ Vaqt</span><b>${esc((b.start_time || '').slice(0, 5))}–${esc((b.end_time || '').slice(0, 5))} · ${b.hours} soat</b></div>
+      <div class="mrow"><span>💰 Summa</span><b>${money(b.amount)}</b></div>
+      <div class="mrow"><span>📞 Telefon</span><b>${esc(b.phone || '—')}</b></div>
+      <div class="mrow"><span>💳 To'lov</span><b>${b.paid ? "✅ To'langan" : "⏳ To'lanmagan"}</b></div>
+      <div class="mrow"><span>👤 Bron qildi</span><b>${esc(b.created_by || '—')}</b></div>
+    </div>
+    ${b.note ? `<div class="pc-problem soft" style="margin-bottom:12px">📝 ${esc(b.note)}</div>` : ''}
+    <div class="modal-actions">
+      <button class="mini-btn ${b.paid ? 'gray' : 'green'}" id="sb_paidbtn">${b.paid ? "↩ To'lovni qaytar" : "✅ To'landi"}</button>
+      <button class="mini-btn red" id="sb_delbtn">🗑 O'chirish</button>
+    </div>`,
+  () => {
+    $('#sb_paidbtn').addEventListener('click', async () => {
+      await api(`/api/studio/${b.id}/paid`, { method: 'POST', body: '{}' });
+      closeModal(); toast('To\'lov holati yangilandi'); render();
+    });
+    $('#sb_delbtn').addEventListener('click', async () => {
+      if (!confirm('Bronni o\'chirasizmi?')) return;
+      await api(`/api/studio/${b.id}`, { method: 'DELETE' });
+      closeModal(); toast('Bron o\'chirildi'); render();
+    });
+  });
+}
+
+async function openStudioFinanceModal() {
+  const f = await api('/api/studio/finance');
+  const rooms = f.rooms || STUDIO_ROOMS_DEFAULT;
+  const rows = f.months.map((mo) => `
+    <div class="fin-month">
+      <div class="fm-head"><b>${esc(mo.month)}</b><span class="muted">${mo.count} bron</span></div>
+      <div class="mrow"><span>${esc(rooms.white.label)}</span><b>${money(mo.white)}</b></div>
+      <div class="mrow"><span>${esc(rooms.black.label)}</span><b>${money(mo.black)}</b></div>
+      <div class="mrow" style="border-top:1px solid var(--border);padding-top:6px"><span>Jami</span><b>${money(mo.total)}</b></div>
+      <div class="mrow"><span style="color:var(--green)">To'langan</span><b style="color:var(--green)">${money(mo.paid)}</b></div>
+      <div class="mrow"><span style="color:var(--orange)">Qarz</span><b style="color:var(--orange)">${money(mo.debt)}</b></div>
+    </div>`).join('') || '<div class="muted">Hali bron yo\'q</div>';
+  openModal('🎥 Kadr Studio — pul hisoboti', `
+    <div class="stats-grid" style="margin-bottom:14px">
+      ${statTile('💰', money(f.totalAll), 'Jami daromad', 'blue')}
+      ${statTile('✓', money(f.paidAll), 'To\'langan', 'green')}
+      ${statTile('⏳', money(f.debtAll), 'Qarz', 'orange')}
+    </div>
+    <div class="fin-months">${rows}</div>`);
 }
 
 // ============================================================
@@ -749,8 +942,15 @@ async function openVideoModal() {
   openModal('Videoni montajchiga biriktirish', `
     <div class="field"><label>Video nomi</label><input id="vf_title" placeholder="masalan: Nova reels #12" /></div>
     <div class="field-row">
-      <div class="field"><label>Loyiha (mijoz)</label><select id="vf_project"><option value="">—</option>${projOpts}</select></div>
+      <div class="field"><label>Video turi</label><select id="vf_vtype">
+        <option value="reels">Reels (25–50 ming)</option>
+        <option value="podcast">Podcast (200 ming)</option>
+        <option value="youtube">YouTube video (25–50 ming)</option>
+      </select></div>
       <div class="field"><label>Montajchi (kimga)</label><select id="vf_editor"><option value="">—</option>${editors.map((e) => `<option>${esc(e.name)}</option>`).join('')}</select></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Loyiha (mijoz)</label><select id="vf_project"><option value="">—</option>${projOpts}</select></div>
     </div>
     <div class="field"><label>Ssenariy (ixtiyoriy — zanjir uchun)</label><select id="vf_script"><option value="">— bog'lanmagan —</option>${scriptOpts}</select></div>
     <div class="field-row">
@@ -764,7 +964,7 @@ async function openVideoModal() {
       const sel = $('#vf_project'); const client = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].dataset.client || '' : '';
       if (!$('#vf_editor').value) { toast('Montajchini tanlang'); return; }
       const body = { title: $('#vf_title').value.trim() || 'Nomsiz video', project: $('#vf_project').value, client,
-        editor: $('#vf_editor').value, script_id: $('#vf_script').value || null,
+        vtype: $('#vf_vtype').value, editor: $('#vf_editor').value, script_id: $('#vf_script').value || null,
         vdate: $('#vf_date').value || null, drive_link: $('#vf_drive').value, note: $('#vf_note').value };
       await api('/api/videos', { method: 'POST', body: JSON.stringify(body) });
       closeModal(); toast('🎬 Biriktirildi'); render();
