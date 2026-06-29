@@ -70,6 +70,57 @@ STUDIO_ROOMS = {
 # Kadr Studio bo'limini ko'ra oladiganlar (ism bo'yicha). Pul hisoboti faqat CEO'da.
 STUDIO_USERS = ("Dilshod Khamraev", "Gulmira", "Xonzoda", "Said")
 
+# Montajyor lavozimlari (o'yin rank tizimi). Har lavozimga o'tish uchun
+# RANK_STEP ta muvaffaqiyatli qabul qilingan video kerak.
+RANK_STEP = 100
+RANKS = [
+    {"key": "junior",  "label": "Junior",  "icon": "🥉"},
+    {"key": "pro",     "label": "Pro",     "icon": "🥈"},
+    {"key": "elite",   "label": "Elite",   "icon": "🥇"},
+    {"key": "master",  "label": "Master",  "icon": "💎"},
+    {"key": "legenda", "label": "Legenda", "icon": "👑"},
+    {"key": "titan",   "label": "Titan",   "icon": "🔱"},
+]
+# Lavozim + video turi bo'yicha montajyor haqi (so'm). Pul shu jadval bo'yicha
+# avtomatik hisoblanadi — montajyor lavozimi qancha baland bo'lsa, haqi shuncha ko'p.
+RANK_PRICES = {
+    "junior":  {"reels": 25000, "podcast": 200000, "youtube": 25000},
+    "pro":     {"reels": 35000, "podcast": 250000, "youtube": 35000},
+    "elite":   {"reels": 50000, "podcast": 300000, "youtube": 50000},
+    "master":  {"reels": 60000, "podcast": 350000, "youtube": 60000},
+    "legenda": {"reels": 70000, "podcast": 400000, "youtube": 70000},
+    "titan":   {"reels": 80000, "podcast": 450000, "youtube": 80000},
+}
+
+
+def rank_for_count(count):
+    """Qabul qilingan video soniga qarab lavozim indeksi (0=Junior ... 5=Titan)."""
+    return min(int(count) // RANK_STEP, len(RANKS) - 1)
+
+
+def rank_info(count):
+    """Lavozim + keyingi lavozimga progress ma'lumoti."""
+    count = int(count or 0)
+    idx = rank_for_count(count)
+    rk = RANKS[idx]
+    nxt = RANKS[idx + 1] if idx + 1 < len(RANKS) else None
+    in_rank = count - idx * RANK_STEP          # joriy lavozimdagi qabul soni
+    to_next = (RANK_STEP - (count % RANK_STEP)) if nxt else 0
+    pct = 100 if not nxt else round(in_rank / RANK_STEP * 100)
+    return {
+        "rank_key": rk["key"], "rank_label": rk["label"], "rank_icon": rk["icon"],
+        "rank_index": idx, "next_label": (nxt["label"] if nxt else None),
+        "in_rank": in_rank, "to_next": to_next, "rank_pct": pct,
+    }
+
+
+def editor_pay(count, vtype):
+    """Montajyor lavozimi (count bo'yicha) va video turiga qarab haq (so'm) + lavozim kaliti."""
+    idx = rank_for_count(count)
+    rk = RANKS[idx]["key"]
+    vt = vtype if vtype in ("reels", "podcast", "youtube") else "reels"
+    return RANK_PRICES[rk][vt], rk
+
 # Mijoz bilan kelishilgan oylik video reja (har bir bosqich uchun shu son).
 CLIENT_PLAN = {
     "Nova School": 40,
@@ -961,6 +1012,36 @@ DONE_STATUSES = ("qabul_qilindi", "joylandi")  # pul hisoblanadigan holatlar
 SMM_ROLES = ("smm", "ceo", "coordinator")
 
 
+def _editor_accepted_counts(conn):
+    """Har montajyor uchun qabul qilingan video soni (lavozim hisobi uchun)."""
+    counts = {}
+    for r in conn.execute(
+        "SELECT editor, COUNT(*) AS n FROM videos WHERE status IN ('qabul_qilindi','joylandi') GROUP BY editor"
+    ).fetchall():
+        counts[r["editor"] or ""] = r["n"]
+    return counts
+
+
+def decorate_video(d, counts, role, username):
+    """Videoga montajyor lavozimini qo'shadi va pulni faqat CEO/o'z montajyoriga ko'rsatadi."""
+    ed = d.get("editor") or ""
+    cnt = counts.get(ed, 0)
+    info = rank_info(cnt)
+    d["editor_rank"] = info["rank_key"]
+    d["editor_rank_label"] = info["rank_label"]
+    d["editor_rank_icon"] = info["rank_icon"]
+    own = (role == "editor" and ed == username)
+    if role == "ceo" or own:
+        # Hali qabul qilinmagan bo'lsa — lavozim+tur bo'yicha prognoz haq ko'rsatiladi
+        if d.get("status") not in DONE_STATUSES:
+            d["amount"] = editor_pay(cnt, d.get("vtype") or "reels")[0]
+        d["pay_visible"] = True
+    else:
+        d["amount"] = None
+        d["pay_visible"] = False
+    return d
+
+
 def api_videos(user, show_all=False):
     conn = get_db()
     role = user["role"]
@@ -975,8 +1056,9 @@ def api_videos(user, show_all=False):
         ).fetchall()
     else:
         rows = conn.execute("SELECT * FROM videos ORDER BY id DESC").fetchall()
+    counts = _editor_accepted_counts(conn)
     conn.close()
-    result = [dict(r) for r in rows]
+    result = [decorate_video(dict(r), counts, role, user["name"]) for r in rows]
     if role == "lead" and not show_all:
         names = lead_project_names(user["name"])
         result = [r for r in result if r.get("project") in names]
@@ -987,8 +1069,9 @@ def api_qc(user):
     """Sifat nazorati uchun — montaj qilingan, tasdiq kutayotgan videolar (hammasi)."""
     conn = get_db()
     rows = conn.execute("SELECT * FROM videos WHERE status='montaj_qilindi' ORDER BY id DESC").fetchall()
+    counts = _editor_accepted_counts(conn)
     conn.close()
-    return [dict(r) for r in rows]
+    return [decorate_video(dict(r), counts, user["role"], user["name"]) for r in rows]
 
 
 def api_create_video(user, b):
@@ -1049,17 +1132,23 @@ def api_video_action(user, vid, b):
         log_audit(conn, user["name"], "sifat qaytardi", f"#{vid} {ex['title']}")
         send_telegram(f"↩️ <b>Sifatdan qaytarildi</b>\n{ex['title']}\n👤 {ex['editor']}\n👮 {user['name']}")
     elif action == "accept" and role in APPROVER_ROLES:
-        tier = b.get("tier") if b.get("tier") in TIERS else "standart"
-        amount = TIERS[tier]["price"]
+        # Montajyor lavozimiga (shu paytgacha qabul qilingan video soni) qarab pul avtomatik hisoblanadi
+        prev_accepted = conn.execute(
+            "SELECT COUNT(*) AS n FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi')",
+            (ex["editor"],),
+        ).fetchone()["n"]
+        vt = ex.get("vtype") or "reels"
+        amount, rk = editor_pay(prev_accepted, vt)
+        rk_label = next((r["label"] for r in RANKS if r["key"] == rk), rk)
         conn.execute(
             "UPDATE videos SET status='qabul_qilindi', tier=?, amount=?, approved_by=?, approved_at=? WHERE id=?",
-            (tier, amount, user["name"], now_local(), vid),
+            (rk, amount, user["name"], now_local(), vid),
         )
-        log_audit(conn, user["name"], "video qabul qildi", f"#{vid} {ex['title']} · {TIERS[tier]['label']} · {amount} so'm")
-        log_audit(conn, "Tizim", "pul hisoblandi", f"#{vid} {ex['editor']} +{amount} so'm")
+        log_audit(conn, user["name"], "video qabul qildi", f"#{vid} {ex['title']} · {VIDEO_TYPES.get(vt, vt)} · {rk_label}")
+        log_audit(conn, "Tizim", "pul hisoblandi", f"#{vid} {ex['editor']} ({rk_label}) +{amount} so'm")
         send_telegram(
-            f"✅ <b>Video QABUL QILINDI</b>\n{ex['title']}\n👤 {ex['editor']}\n"
-            f"💰 {TIERS[tier]['label']} — {amount:,} so'm hisoblandi\n👮 Tasdiqladi: {user['name']}\n→ Joylashga".replace(",", " ")
+            f"✅ <b>Video QABUL QILINDI</b>\n{ex['title']}\n👤 {ex['editor']} · {rk_label}\n"
+            f"💰 {VIDEO_TYPES.get(vt, vt)} — {amount:,} so'm hisoblandi\n👮 Tasdiqladi: {user['name']}\n→ Joylashga".replace(",", " ")
         )
     elif action == "return" and role in APPROVER_ROLES:
         conn.execute(
@@ -1111,10 +1200,12 @@ def editor_summary(conn, name):
     by_project = {}
     for v in accepted:
         by_project[v["project"]] = by_project.get(v["project"], 0) + 1
+    rinfo = rank_info(len(accepted))
     return {
         "name": name,
         "videos": len(vids),
         "accepted": len(accepted),
+        **rinfo,
         # montaj qilishi kerak: biriktirilgan + qaytarilgan
         "toDo": sum(1 for v in vids if v["status"] in ("biriktirildi", "qaytarildi")),
         # tasdiq jarayonida: montaj qilingan + sifat o'tgan
@@ -1231,6 +1322,11 @@ def api_finance():
 
 def api_tiers():
     return TIERS
+
+
+def api_ranks():
+    """Lavozim tizimi: ketma-ketlik, narxlar va o'tish sharti — frontend ko'rsatishi uchun."""
+    return {"ranks": RANKS, "prices": RANK_PRICES, "step": RANK_STEP}
 
 
 # ------------------------------------------------------------
@@ -1422,6 +1518,8 @@ class Handler(BaseHTTPRequestHandler):
         # --- Ochiq (auth shart emas) ---
         if path == "/api/tiers":
             return self._json(api_tiers())
+        if path == "/api/ranks":
+            return self._json(api_ranks())
         if path == "/api/telegram/test":
             return self._json(api_telegram_test())
         if path == "/api/telegram/digest":

@@ -36,6 +36,10 @@ const STUDIO_ROOMS_DEFAULT = {
 let ME = null;
 let TOKEN = localStorage.getItem('km_token') || null;
 let TIERS = {};
+let RANKS = { ranks: [], prices: {}, step: 100 };
+// Lavozim chipi (montajyor rangi/darajasi)
+const rankChip = (v) => v && v.editor_rank_label
+  ? `<span class="rank-chip rank-${esc(v.editor_rank)}">${v.editor_rank_icon || '🎖'} ${esc(v.editor_rank_label)}</span>` : '';
 let VIEW = '';
 let FILTER = 'all';
 let SEARCH = '';
@@ -114,6 +118,7 @@ async function startApp() {
   $('#meAvatar').textContent = initials(ME.name);
   $('#meAvatar').style.background = ME.color || colorFor(ME.name);
   try { TIERS = await api('/api/tiers'); } catch (e) { TIERS = {}; }
+  try { RANKS = await api('/api/ranks'); } catch (e) { RANKS = { ranks: [], prices: {}, step: 100 }; }
   buildNav();
   VIEW = NAV_FOR(ME.role)[0].view;
   render();
@@ -452,7 +457,8 @@ function videoCard(v) {
       <div class="pc-client">📁 ${esc(v.project) || '—'} · 🎬 ${esc(v.editor) || '—'}</div>
       <div class="video-meta">
         <span class="link-chip">🎞 ${esc(VIDEO_TYPE_LABEL[v.vtype] || 'Reels')}</span>
-        ${v.amount ? `<span class="money-chip">💰 ${money(v.amount)}${v.tier ? ' · ' + (TIERS[v.tier] ? TIERS[v.tier].label : v.tier) : ''}</span>` : ''}
+        ${rankChip(v)}
+        ${(v.pay_visible && v.amount) ? `<span class="money-chip">💰 ${money(v.amount)}</span>` : ''}
         ${v.drive_link ? `<span class="link-chip">🔗 Drive</span>` : ''}
         ${v.instagram_link ? `<span class="link-chip">📷 Instagram</span>` : ''}
       </div>
@@ -471,11 +477,21 @@ function videoActionUI(id, action) {
   if (action === 'accept') {
     const v = (DATA.videos || []).find((x) => x.id == id) || {};
     const vtype = v.vtype || 'reels';
-    const entries = Object.entries(TIERS).filter(([, t]) => (t.type || 'reels') === vtype);
-    const list = entries.length ? entries : Object.entries(TIERS);
-    const opts = list.map(([k, t]) => `<button class="tier-btn" data-tier="${k}">${t.label}<br><b>${money(t.price)}</b></button>`).join('');
-    openModal('Videoni qabul qilish', `<p class="muted" style="margin-bottom:14px">🎞 ${esc(VIDEO_TYPE_LABEL[vtype] || 'Reels')} — daraja tanlang, pul avtomatik hisoblanadi:</p><div class="tier-grid">${opts}</div>`, () => {
-      $('#modalBody').querySelectorAll('.tier-btn').forEach((b) => b.addEventListener('click', () => doVideoAction(id, { action: 'accept', tier: b.dataset.tier }, '✅ Qabul qilindi — pul hisoblandi')));
+    const rankLine = v.editor_rank_label
+      ? `<div class="mrow"><span>🎖 Montajyor lavozimi</span><b>${v.editor_rank_icon || ''} ${esc(v.editor_rank_label)}</b></div>` : '';
+    const payLine = (v.pay_visible && v.amount)
+      ? `<div class="mrow"><span>💰 Hisoblanadigan haq</span><b>${money(v.amount)}</b></div>`
+      : `<div class="muted" style="margin:8px 0">Pul montajyor lavozimiga qarab avtomatik hisoblanadi.</div>`;
+    openModal('Videoni qabul qilish', `
+      <p class="muted" style="margin-bottom:12px">Tasdiqlasangiz, pul montajyorga avtomatik yoziladi.</p>
+      <div class="money-rows" style="margin-bottom:14px">
+        <div class="mrow"><span>🎬 Montajchi</span><b>${esc(v.editor || '—')}</b></div>
+        <div class="mrow"><span>🎞 Video turi</span><b>${esc(VIDEO_TYPE_LABEL[vtype] || 'Reels')}</b></div>
+        ${rankLine}
+        ${payLine}
+      </div>
+      <button class="btn-save" id="vaccept" style="background:var(--green)">✓ Qabul qilish</button>`, () => {
+      $('#vaccept').addEventListener('click', () => doVideoAction(id, { action: 'accept' }, '✅ Qabul qilindi — pul hisoblandi'));
     });
   } else if (action === 'cancel') {
     openModal('Biriktirishni bekor qilish', `<p class="muted" style="margin-bottom:12px">Bu video "Bekor qilindi" deb belgilanadi (yozuv tarixda qoladi).</p><div class="field"><label>Sabab (ixtiyoriy)</label><textarea id="vcnote" placeholder="Nega bekor qilinmoqda..."></textarea></div><button class="btn-save" id="vcbtn" style="background:var(--red)">🚫 Bekor qilish</button>`, () => {
@@ -514,9 +530,9 @@ function openVideoDetailModal(v) {
     <div class="money-rows" style="margin-bottom:12px">
       <div class="mrow"><span>📁 Loyiha</span><b>${esc(v.project || '—')}</b></div>
       <div class="mrow"><span>🎞 Video turi</span><b>${esc(VIDEO_TYPE_LABEL[v.vtype] || 'Reels')}</b></div>
-      <div class="mrow"><span>🎬 Montajchi</span><b>${esc(v.editor || '—')}</b></div>
+      <div class="mrow"><span>🎬 Montajchi</span><b>${esc(v.editor || '—')}${v.editor_rank_label ? ` · ${v.editor_rank_icon || ''} ${esc(v.editor_rank_label)}` : ''}</b></div>
       <div class="mrow"><span>📅 Sana</span><b>${fmtDate(v.vdate)}</b></div>
-      ${v.amount ? `<div class="mrow"><span>💰 Haq</span><b>${money(v.amount)}${v.tier ? ' · ' + (TIERS[v.tier] ? TIERS[v.tier].label : v.tier) : ''}</b></div>` : ''}
+      ${(v.pay_visible && v.amount) ? `<div class="mrow"><span>💰 Haq (lavozim bo'yicha)</span><b>${money(v.amount)}</b></div>` : ''}
       ${chain.join('')}
     </div>
     ${v.note ? `<div class="pc-problem soft" style="margin-bottom:12px">📝 ${esc(v.note)}</div>` : ''}
@@ -715,12 +731,25 @@ async function viewEditors() {
     </div>
     <div class="cards-grid">${list.map(editorCard).join('') || emptyState()}</div>`;
 }
+function rankProgressBar(e) {
+  const nextTxt = e.next_label
+    ? `Keyingi: ${esc(e.next_label)} — yana <b>${e.to_next}</b> qabul`
+    : 'Eng yuqori lavozim! 🔱';
+  return `
+    <div class="rank-box">
+      <div class="rank-top"><span class="rank-chip rank-${esc(e.rank_key)}">${e.rank_icon || '🎖'} ${esc(e.rank_label)}</span>
+        <span class="muted">${e.accepted} qabul</span></div>
+      <div class="rank-meter"><div class="rank-fill" style="width:${e.rank_pct || 0}%"></div></div>
+      <div class="rank-next">${nextTxt}</div>
+    </div>`;
+}
 function editorCard(e) {
   const proj = e.byProject.slice(0, 3).map((p) => `${esc(p.project)}: ${p.count}`).join(' · ');
   return `
     <div class="team-card">
       <div class="team-head"><div class="team-av" style="background:${e.color || colorFor(e.name)}">${initials(e.name)}</div>
         <div><div class="team-name">${esc(e.name)}</div><div class="team-role">${e.accepted} video · ${proj || 'hozircha yo\'q'}</div></div></div>
+      ${rankProgressBar(e)}
       <div class="money-rows">
         <div class="mrow"><span>Hisoblangan</span><b>${money(e.earned)}</b></div>
         <div class="mrow"><span>To'langan</span><b style="color:var(--green)">${money(e.paid)}</b></div>
@@ -745,7 +774,23 @@ async function viewCabinet() {
       <div class="ci-left"><div><div class="ci-name">${esc(v.title)}</div><div class="ci-sub">${esc(v.project)}${v.status === 'qaytarildi' ? ' · ↩ qaytarilgan' : ''}</div></div></div>
       <button class="mini-btn blue" data-vact="montaj_done" data-id="${v.id}">✓ Montaj qildim</button>
     </div>`).join('') || '<div class="muted">Yangi topshiriq yo\'q ✓</div>';
+  const nextTxt = c.next_label
+    ? `<b>${esc(c.next_label)}</b> lavozimiga yana <b>${c.to_next}</b> ta qabul qilingan video kerak`
+    : 'Tabriklaymiz — eng yuqori lavozimga yetdingiz! 🔱';
+  const rankHero = `
+    <div class="rank-hero rank-${esc(c.rank_key)}">
+      <div class="rh-left">
+        <div class="rh-icon">${c.rank_icon || '🎖'}</div>
+        <div><div class="rh-label">${esc(c.rank_label)}</div>
+          <div class="rh-sub">${c.accepted} ta muvaffaqiyatli montaj</div></div>
+      </div>
+      <div class="rh-prog">
+        <div class="rank-meter big"><div class="rank-fill" style="width:${c.rank_pct || 0}%"></div></div>
+        <div class="rh-next">${nextTxt}</div>
+      </div>
+    </div>`;
   $('#content').innerHTML = `
+    ${rankHero}
     <div class="stats-grid">
       ${statTile('🎬', c.toDo, 'Montaj qilish kerak', 'orange')}
       ${statTile('⏳', c.inReview, 'Tasdiq jarayonida', 'blue')}

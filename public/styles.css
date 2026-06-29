@@ -546,6 +546,42 @@ body {
 .pill.st-gray { background: rgba(140,140,150,.18); color: var(--text-2); }
 .mini-btn.gray { background: rgba(140,140,150,.18); color: var(--text-2); }
 
+/* ===== Montajyor lavozimlari (rank) ===== */
+.rank-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700;
+  padding: 4px 10px; border-radius: 8px; white-space: nowrap;
+  background: rgba(140,140,150,.16); color: var(--text-2); }
+.rank-junior  { background: rgba(205,127,50,.18);  color: #d8965a; }
+.rank-pro     { background: rgba(170,180,191,.20); color: #c4ccd6; }
+.rank-elite   { background: rgba(255,214,10,.18);  color: var(--yellow); }
+.rank-master  { background: rgba(100,210,255,.18); color: #64d2ff; }
+.rank-legenda { background: rgba(191,90,242,.20);  color: var(--purple); }
+.rank-titan   { background: rgba(255,69,58,.20);   color: #ff6b5e; }
+
+.rank-box { background: var(--bg); border: 1px solid var(--border-soft); border-radius: 12px; padding: 10px 12px; margin: 10px 0; }
+.rank-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.rank-meter { height: 8px; background: var(--border); border-radius: 6px; overflow: hidden; }
+.rank-meter.big { height: 12px; }
+.rank-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--blue), var(--green)); transition: width .5s; }
+.rank-next { font-size: 12px; color: var(--text-2); margin-top: 7px; }
+
+/* Montajyor kabineti — lavozim hero kartasi */
+.rank-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 18px;
+  background: linear-gradient(135deg, var(--surface), var(--surface-2));
+  border: 1px solid var(--border); border-radius: 18px; padding: 18px 20px; margin-bottom: 18px; }
+.rank-hero .rh-left { display: flex; align-items: center; gap: 14px; }
+.rank-hero .rh-icon { font-size: 42px; line-height: 1; }
+.rank-hero .rh-label { font-size: 24px; font-weight: 800; }
+.rank-hero .rh-sub { font-size: 13px; color: var(--text-2); }
+.rank-hero .rh-prog { flex: 1; min-width: 220px; }
+.rank-hero .rh-next { font-size: 13px; color: var(--text-2); margin-top: 8px; }
+.rank-hero.rank-junior  { border-color: rgba(205,127,50,.5); }
+.rank-hero.rank-pro     { border-color: rgba(170,180,191,.5); }
+.rank-hero.rank-elite   { border-color: rgba(255,214,10,.5); }
+.rank-hero.rank-master  { border-color: rgba(100,210,255,.5); }
+.rank-hero.rank-legenda { border-color: rgba(191,90,242,.5); }
+.rank-hero.rank-titan   { border-color: rgba(255,69,58,.5); }
+@media (max-width: 600px) { .rank-hero .rh-icon { font-size: 34px; } .rank-hero .rh-label { font-size: 20px; } }
+
 /* ===== Kadr Studio kalendar ===== */
 .btn-ghost { background: var(--surface); border: 1px solid var(--border); color: var(--text);
   border-radius: 11px; padding: 9px 14px; font-family: inherit; font-weight: 600; font-size: 14px; cursor: pointer; }
