@@ -988,9 +988,9 @@ async function openVideoModal() {
     <div class="field"><label>Video nomi</label><input id="vf_title" placeholder="masalan: Nova reels #12" /></div>
     <div class="field-row">
       <div class="field"><label>Video turi</label><select id="vf_vtype">
-        <option value="reels">Reels (25–50 ming)</option>
-        <option value="podcast">Podcast (200 ming)</option>
-        <option value="youtube">YouTube video (25–50 ming)</option>
+        <option value="reels">Reels</option>
+        <option value="podcast">Podcast</option>
+        <option value="youtube">YouTube video</option>
       </select></div>
       <div class="field"><label>Montajchi (kimga)</label><select id="vf_editor"><option value="">—</option>${editors.map((e) => `<option>${esc(e.name)}</option>`).join('')}</select></div>
     </div>

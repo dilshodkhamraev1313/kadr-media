@@ -93,6 +93,16 @@ RANK_PRICES = {
 }
 
 
+# Ba'zi montajyorlar yuqori lavozimdan boshlanadi — qabul soniga qo'shiladigan bonus.
+# Oygul Pro lavozimidan boshlanib hisoblanadi (1 lavozim = RANK_STEP qabul).
+EDITOR_RANK_BASE = {"Oygul": RANK_STEP}
+
+
+def eff_count(name, accepted):
+    """Lavozim hisobida ishlatiladigan samarali qabul soni (bazaviy bonus bilan)."""
+    return int(accepted or 0) + EDITOR_RANK_BASE.get(name, 0)
+
+
 def rank_for_count(count):
     """Qabul qilingan video soniga qarab lavozim indeksi (0=Junior ... 5=Titan)."""
     return min(int(count) // RANK_STEP, len(RANKS) - 1)
@@ -1025,7 +1035,7 @@ def _editor_accepted_counts(conn):
 def decorate_video(d, counts, role, username):
     """Videoga montajyor lavozimini qo'shadi va pulni faqat CEO/o'z montajyoriga ko'rsatadi."""
     ed = d.get("editor") or ""
-    cnt = counts.get(ed, 0)
+    cnt = eff_count(ed, counts.get(ed, 0))
     info = rank_info(cnt)
     d["editor_rank"] = info["rank_key"]
     d["editor_rank_label"] = info["rank_label"]
@@ -1138,7 +1148,7 @@ def api_video_action(user, vid, b):
             (ex["editor"],),
         ).fetchone()["n"]
         vt = ex.get("vtype") or "reels"
-        amount, rk = editor_pay(prev_accepted, vt)
+        amount, rk = editor_pay(eff_count(ex["editor"], prev_accepted), vt)
         rk_label = next((r["label"] for r in RANKS if r["key"] == rk), rk)
         conn.execute(
             "UPDATE videos SET status='qabul_qilindi', tier=?, amount=?, approved_by=?, approved_at=? WHERE id=?",
@@ -1200,7 +1210,7 @@ def editor_summary(conn, name):
     by_project = {}
     for v in accepted:
         by_project[v["project"]] = by_project.get(v["project"], 0) + 1
-    rinfo = rank_info(len(accepted))
+    rinfo = rank_info(eff_count(name, len(accepted)))
     return {
         "name": name,
         "videos": len(vids),

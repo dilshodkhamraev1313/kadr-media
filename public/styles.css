@@ -574,12 +574,35 @@ body {
 .rank-hero .rh-sub { font-size: 13px; color: var(--text-2); }
 .rank-hero .rh-prog { flex: 1; min-width: 220px; }
 .rank-hero .rh-next { font-size: 13px; color: var(--text-2); margin-top: 8px; }
-.rank-hero.rank-junior  { border-color: rgba(205,127,50,.5); }
-.rank-hero.rank-pro     { border-color: rgba(170,180,191,.5); }
-.rank-hero.rank-elite   { border-color: rgba(255,214,10,.5); }
-.rank-hero.rank-master  { border-color: rgba(100,210,255,.5); }
-.rank-hero.rank-legenda { border-color: rgba(191,90,242,.5); }
-.rank-hero.rank-titan   { border-color: rgba(255,69,58,.5); }
+/* Har lavozim — alohida rang, fon va porlash (motivatsiya uchun) */
+.rank-hero.rank-junior  { background: linear-gradient(135deg, rgba(205,127,50,.20), rgba(205,127,50,.03)); border-color: rgba(205,127,50,.6); }
+.rank-hero.rank-pro     { background: linear-gradient(135deg, rgba(170,180,191,.22), rgba(170,180,191,.03)); border-color: rgba(170,180,191,.6); }
+.rank-hero.rank-elite   { background: linear-gradient(135deg, rgba(255,214,10,.20), rgba(255,214,10,.03)); border-color: rgba(255,214,10,.6); }
+.rank-hero.rank-master  { background: linear-gradient(135deg, rgba(100,210,255,.20), rgba(100,210,255,.03)); border-color: rgba(100,210,255,.6); }
+.rank-hero.rank-legenda { background: linear-gradient(135deg, rgba(191,90,242,.22), rgba(191,90,242,.04)); border-color: rgba(191,90,242,.6); }
+.rank-hero.rank-titan   { background: linear-gradient(135deg, rgba(255,69,58,.22), rgba(255,159,10,.06)); border-color: rgba(255,69,58,.65); box-shadow: 0 0 30px rgba(255,69,58,.18); }
+
+.rank-hero.rank-junior  .rh-label { color: #d8965a; }
+.rank-hero.rank-pro     .rh-label { color: #c4ccd6; }
+.rank-hero.rank-elite   .rh-label { color: var(--yellow); }
+.rank-hero.rank-master  .rh-label { color: #64d2ff; }
+.rank-hero.rank-legenda .rh-label { color: var(--purple); }
+.rank-hero.rank-titan   .rh-label { color: #ff6b5e; }
+
+.rank-hero .rh-icon { filter: drop-shadow(0 0 10px currentColor); }
+.rank-hero.rank-junior  .rh-icon { color: #cd7f32; }
+.rank-hero.rank-pro     .rh-icon { color: #aab4bf; }
+.rank-hero.rank-elite   .rh-icon { color: var(--yellow); }
+.rank-hero.rank-master  .rh-icon { color: #64d2ff; }
+.rank-hero.rank-legenda .rh-icon { color: var(--purple); }
+.rank-hero.rank-titan   .rh-icon { color: var(--red); }
+
+.rank-hero.rank-junior  .rank-fill { background: linear-gradient(90deg,#a9692b,#e0a060); }
+.rank-hero.rank-pro     .rank-fill { background: linear-gradient(90deg,#8c96a3,#c4ccd6); }
+.rank-hero.rank-elite   .rank-fill { background: linear-gradient(90deg,#d4a800,#ffe14d); }
+.rank-hero.rank-master  .rank-fill { background: linear-gradient(90deg,#2aa8e0,#9ce4ff); }
+.rank-hero.rank-legenda .rank-fill { background: linear-gradient(90deg,#9b3ed6,#d89cff); }
+.rank-hero.rank-titan   .rank-fill { background: linear-gradient(90deg,#ff453a,#ff9f0a); }
 @media (max-width: 600px) { .rank-hero .rh-icon { font-size: 34px; } .rank-hero .rh-label { font-size: 20px; } }
 
 /* ===== Kadr Studio kalendar ===== */
