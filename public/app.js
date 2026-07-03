@@ -595,7 +595,7 @@ async function viewStudio() {
   const now = new Date();
   const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const legend = Object.entries(rooms).map(([, r]) =>
-    `<span class="room-tag"><i style="background:${r.color}"></i>${esc(r.label)} · ${money(r.rate)}/soat</span>`).join('');
+    `<span class="room-tag"><i style="background:${r.color}"></i>${esc(r.label)}</span>`).join('');
   const wd = ['Du', 'Se', 'Cho', 'Pa', 'Ju', 'Sha', 'Ya'];
   let cells = wd.map((d) => `<div class="cal-wd">${d}</div>`).join('');
   for (let i = 0; i < startDow; i++) cells += `<div class="cal-cell empty"></div>`;
@@ -638,7 +638,7 @@ async function viewStudio() {
 
 function openStudioBookingModal(presetDate) {
   const rooms = (DATA.studio && DATA.studio.rooms) || STUDIO_ROOMS_DEFAULT;
-  const roomOpts = Object.entries(rooms).map(([k, r]) => `<option value="${k}">${esc(r.label)} — ${money(r.rate)}/soat</option>`).join('');
+  const roomOpts = Object.entries(rooms).map(([k, r]) => `<option value="${k}">${esc(r.label)}</option>`).join('');
   openModal('Kadr Studio — bron qilish', `
     <div class="field"><label>Mijoz ismi</label><input id="sb_name" placeholder="Mijoz ismi" /></div>
     <div class="field-row">
@@ -650,29 +650,28 @@ function openStudioBookingModal(presetDate) {
       <div class="field"><label>Boshlanish</label><input id="sb_start" type="time" value="10:00" /></div>
       <div class="field"><label>Tugash</label><input id="sb_end" type="time" value="12:00" /></div>
     </div>
+    <div id="sb_hours" class="calc-line"></div>
+    <div class="field"><label>Umumiy to'lov (so'm)</label><input id="sb_amount" type="number" inputmode="numeric" placeholder="masalan: 900000" /></div>
     <div class="field"><label>Izoh (syomka turi)</label><textarea id="sb_note" placeholder="masalan: podcast syomka, 2 kishi"></textarea></div>
     <label class="check-row"><input type="checkbox" id="sb_paid" /> To'lov qilingan</label>
-    <div id="sb_calc" class="calc-line"></div>
     <div class="modal-actions"><button class="btn-save" id="sb_save">🎥 Bron qilish</button></div>`,
   () => {
-    const calc = () => {
-      const room = rooms[$('#sb_room').value] || { rate: 0 };
+    const showHours = () => {
       const h = studioHours($('#sb_start').value, $('#sb_end').value);
-      $('#sb_calc').innerHTML = h > 0
-        ? `⏱ ${h} soat × ${money(room.rate)} = <b>${money(Math.round(h * room.rate))}</b>`
-        : `<span class="muted">Vaqtni to'g'ri kiriting</span>`;
+      $('#sb_hours').innerHTML = h > 0 ? `⏱ Soati — <b>${h} soat</b>` : `<span class="muted">Vaqtni to'g'ri kiriting</span>`;
     };
-    ['sb_room', 'sb_start', 'sb_end'].forEach((id) => $('#' + id).addEventListener('input', calc));
-    calc();
+    ['sb_start', 'sb_end'].forEach((id) => $('#' + id).addEventListener('input', showHours));
+    showHours();
     $('#sb_save').addEventListener('click', async () => {
       const name = $('#sb_name').value.trim();
       if (!name) { toast('Mijoz ismini kiriting'); return; }
       const bdate = $('#sb_date').value;
       if (!bdate) { toast('Sanani tanlang'); return; }
+      const amount = parseInt($('#sb_amount').value || '0', 10);
       const body = {
         client_name: name, phone: $('#sb_phone').value, room: $('#sb_room').value,
         bdate, start_time: $('#sb_start').value, end_time: $('#sb_end').value,
-        note: $('#sb_note').value, paid: $('#sb_paid').checked,
+        amount, note: $('#sb_note').value, paid: $('#sb_paid').checked,
       };
       await api('/api/studio', { method: 'POST', body: JSON.stringify(body) });
       closeModal(); toast('🎥 Bron saqlandi'); render();

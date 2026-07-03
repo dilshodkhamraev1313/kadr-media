@@ -62,10 +62,11 @@ TIERS = {
     "yt_full":  {"label": "YouTube (to'liq)","price": 50000,  "type": "youtube"},
 }
 
-# Kadr Studio — syomka xonalari va soatlik narxi (so'm)
+# Kadr Studio — syomka xonalari. To'lov har mijoz bilan alohida kelishilib,
+# qo'lda kiritiladi (belgilangan soatlik narx yo'q).
 STUDIO_ROOMS = {
-    "white": {"label": "1-xona · White", "rate": 300000, "color": "#0A84FF"},
-    "black": {"label": "2-xona · Black", "rate": 400000, "color": "#1C1C1E"},
+    "white": {"label": "1-xona · White", "color": "#0A84FF"},
+    "black": {"label": "2-xona · Black", "color": "#1C1C1E"},
 }
 # Kadr Studio bo'limini ko'ra oladiganlar (ism bo'yicha). Pul hisoboti faqat CEO'da.
 STUDIO_USERS = ("Dilshod Khamraev", "Gulmira", "Xonzoda", "Said")
@@ -1376,11 +1377,14 @@ def api_studio(user):
 
 def api_create_studio_booking(user, b):
     room = b.get("room") if b.get("room") in STUDIO_ROOMS else "white"
-    rate = STUDIO_ROOMS[room]["rate"]
     start = b.get("start_time") or "10:00"
     end = b.get("end_time") or "11:00"
     hours = _calc_hours(start, end)
-    amount = int(round(hours * rate))
+    # Umumiy to'lov qo'lda kiritiladi (har mijoz bilan alohida kelishiladi)
+    try:
+        amount = int(b.get("amount") or 0)
+    except (ValueError, TypeError):
+        amount = 0
     bdate = b.get("bdate") or uz_today().isoformat()
     conn = get_db()
     sql = """INSERT INTO studio_bookings
