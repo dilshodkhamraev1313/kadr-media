@@ -542,6 +542,15 @@ body {
 .video-card.clickable:hover { border-color: var(--blue); }
 .modal-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 
+/* ===== Mobil "Ko'proq" menyusi ===== */
+.more-menu { display: flex; flex-direction: column; gap: 8px; }
+.more-item { display: flex; align-items: center; gap: 12px; background: var(--surface);
+  border: 1px solid var(--border-soft); color: var(--text); border-radius: 12px;
+  padding: 14px 16px; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; text-align: left; }
+.more-item .ic { font-size: 18px; width: 24px; text-align: center; }
+.more-item.active { border-color: var(--blue); color: var(--blue); }
+.more-item:hover { border-color: var(--blue); }
+
 /* ===== Bekor / gray holatlar ===== */
 .pill.st-gray { background: rgba(140,140,150,.18); color: var(--text-2); }
 .mini-btn.gray { background: rgba(140,140,150,.18); color: var(--text-2); }

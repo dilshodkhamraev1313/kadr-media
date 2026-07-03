@@ -151,21 +151,41 @@ const NAV_ITEMS = [
 ];
 const NAV_FOR = (role) => NAV_ITEMS.filter((n) => n.roles.includes(role) && (!n.names || (ME && n.names.includes(ME.name))));
 
+const navMBtn = (n) => `<button class="m-btn" data-view="${n.view}"><span>${n.icon}</span>${n.label}</button>`;
+
 function buildNav() {
   const items = NAV_FOR(ME.role);
   $('#navMenu').innerHTML = items.map((n) =>
     `<button class="nav-btn" data-view="${n.view}"><span class="ic">${n.icon}</span> ${n.label}</button>`
   ).join('');
-  // mobil pastki menyu (5 tagacha)
-  $('#mobileNav').innerHTML = items.slice(0, 5).map((n) =>
-    `<button class="m-btn" data-view="${n.view}"><span>${n.icon}</span>${n.label}</button>`
-  ).join('');
-  document.querySelectorAll('.nav-btn, .m-btn').forEach((b) =>
+  // mobil pastki menyu: 5 tadan ko'p bo'lsa — 4 ta + "Ko'proq" (qolgan bo'limlar shu yerda)
+  $('#mobileNav').innerHTML = items.length <= 5
+    ? items.map(navMBtn).join('')
+    : items.slice(0, 4).map(navMBtn).join('') + `<button class="m-btn" data-more="1"><span>⋯</span>Ko'proq</button>`;
+  document.querySelectorAll('.nav-btn, .m-btn[data-view]').forEach((b) =>
     b.addEventListener('click', () => { VIEW = b.dataset.view; FILTER = 'all'; SEARCH = ''; render(); })
   );
+  const moreBtn = document.querySelector('#mobileNav .m-btn[data-more]');
+  if (moreBtn) moreBtn.addEventListener('click', openMoreMenu);
+}
+function openMoreMenu() {
+  const items = NAV_FOR(ME.role);
+  const list = items.map((n) =>
+    `<button class="more-item${VIEW === n.view ? ' active' : ''}" data-view="${n.view}"><span class="ic">${n.icon}</span> ${n.label}</button>`
+  ).join('');
+  openModal('Menyu', `<div class="more-menu">${list}</div>`, () => {
+    $('#modalBody').querySelectorAll('.more-item').forEach((b) => b.addEventListener('click', () => {
+      VIEW = b.dataset.view; FILTER = 'all'; SEARCH = ''; closeModal(); render();
+    }));
+  });
 }
 function setActiveNav() {
   document.querySelectorAll('.nav-btn, .m-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === VIEW));
+  const more = document.querySelector('#mobileNav .m-btn[data-more]');
+  if (more) {
+    const visible = Array.from(document.querySelectorAll('#mobileNav .m-btn[data-view]')).some((b) => b.dataset.view === VIEW);
+    more.classList.toggle('active', !visible);
+  }
 }
 
 // ============================================================
