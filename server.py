@@ -357,6 +357,10 @@ def init_db():
         bdate TEXT, start_time TEXT, end_time TEXT, hours REAL DEFAULT 0,
         amount INTEGER DEFAULT 0, paid INTEGER DEFAULT 0, note TEXT DEFAULT '',
         created_by TEXT, created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS shoots (
+        id {pk}, project_id INTEGER, project TEXT, shoot_type TEXT DEFAULT 'reels',
+        operator TEXT DEFAULT '', operator_pay INTEGER DEFAULT 0, sdate TEXT,
+        status TEXT DEFAULT 'active', note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
 
     # users jadvaliga login ustunlarini qo'shish (idempotent)
     add_column_if_missing(conn, "users", "username", "TEXT")
@@ -1554,6 +1558,85 @@ def api_studio_finance(user):
 
 
 # ------------------------------------------------------------
+#  KADR MEDIA SYOMKALARI (loyiha syomkalari, operator puli bilan)
+# ------------------------------------------------------------
+def api_shoots(user, show_all=False):
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM shoots ORDER BY sdate DESC, id DESC").fetchall()]
+    conn.close()
+    if user["role"] == "lead" and not show_all:
+        names = lead_project_names(user["name"])
+        rows = [r for r in rows if r.get("project") in names]
+    # Operator daromadi (bekor qilinganlar hisobga olinmaydi)
+    op_totals = {}
+    for r in rows:
+        if (r.get("status") or "active") != "bekor_qilindi" and r.get("operator"):
+            op_totals[r["operator"]] = op_totals.get(r["operator"], 0) + (r.get("operator_pay") or 0)
+    return {
+        "operators": list(STUDIO_OPERATORS),
+        "shootTypes": SHOOT_TYPES,
+        "operatorPay": OPERATOR_PAY,
+        "operatorTotals": op_totals,
+        "shoots": rows,
+    }
+
+
+def api_create_shoot(user, b):
+    """Loyiha rahbari loyihaga syomka belgilaydi — operator va turga qarab operator puli avtomatik."""
+    shoot_type = b.get("shoot_type") if b.get("shoot_type") in SHOOT_TYPES else "reels"
+    operator = b.get("operator") if b.get("operator") in STUDIO_OPERATORS else ""
+    operator_pay = _op_pay(operator, shoot_type)
+    sdate = b.get("sdate") or uz_today().isoformat()
+    conn = get_db()
+    sql = """INSERT INTO shoots (project_id, project, shoot_type, operator, operator_pay, sdate, status, note, created_by)
+             VALUES (?,?,?,?,?,?,?,?,?)"""
+    params = (b.get("project_id"), b.get("project") or "", shoot_type, operator,
+              operator_pay, sdate, "active", b.get("note") or "", user["name"])
+    if IS_PG:
+        sid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        sid = conn.execute(sql, params).lastrowid
+    log_audit(conn, user["name"], "syomka belgiladi",
+              f"#{sid} {b.get('project')} · {SHOOT_TYPES[shoot_type]}"
+              + (f" · {operator} (+{operator_pay})" if operator else ""))
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM shoots WHERE id=?", (sid,)).fetchone())
+    conn.close()
+    send_telegram(
+        f"🎬 <b>Syomka belgilandi</b>\n📁 {b.get('project') or '—'}\n🎥 {SHOOT_TYPES[shoot_type]}"
+        + (f"\n👤 Operator: {operator} (+{operator_pay:,} so'm)".replace(",", " ") if operator else "")
+        + f"\n📅 {sdate}\n👮 {user['name']}"
+    )
+    return row
+
+
+def api_cancel_shoot(user, sid):
+    """Syomkani bekor qilish — operator puli hisoblanmaydi, tarixda qizil qoladi."""
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM shoots WHERE id=?", (sid,)).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    ex = dict(ex)
+    conn.execute("UPDATE shoots SET status='bekor_qilindi' WHERE id=?", (sid,))
+    log_audit(conn, user["name"], "syomka bekor qildi", f"#{sid} {ex['project']}")
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM shoots WHERE id=?", (sid,)).fetchone())
+    conn.close()
+    send_telegram(f"🚫 <b>Syomka bekor qilindi</b>\n📁 {ex['project']}\n👮 {user['name']}")
+    return row
+
+
+def api_delete_shoot(user, sid):
+    conn = get_db()
+    conn.execute("DELETE FROM shoots WHERE id=?", (sid,))
+    log_audit(conn, user["name"], "syomka o'chirdi", f"#{sid}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------
 #  HTTP Handler
 # ------------------------------------------------------------
 CONTENT_TYPES = {
@@ -1666,6 +1749,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if not can_view_studio(user) else self._json(api_studio(user))
         if path == "/api/studio/finance":
             return self._forbid() if role != "ceo" else self._json(api_studio_finance(user))
+        if path == "/api/shoots":
+            return self._forbid() if role not in APPROVER_ROLES else self._json(api_shoots(user, show_all))
         if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "versions":
             sid = self._int(seg[2])
             return self._json(api_script_versions(sid)) if sid else self._json({"error": "Topilmadi"}, 404)
@@ -1725,6 +1810,16 @@ class Handler(BaseHTTPRequestHandler):
             bid = self._int(seg[2])
             res = api_cancel_studio_booking(user, bid) if bid else None
             return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
+        if path == "/api/shoots":
+            if r not in APPROVER_ROLES:
+                return self._forbid()
+            return self._json(api_create_shoot(user, b), 201)
+        if len(seg) == 4 and seg[1] == "shoots" and seg[3] == "cancel":
+            if r not in APPROVER_ROLES:
+                return self._forbid()
+            sid = self._int(seg[2])
+            res = api_cancel_shoot(user, sid) if sid else None
+            return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "action":
             sid = self._int(seg[2])
             res = api_script_action(user, sid, b) if sid else None
@@ -1777,6 +1872,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             bid = self._int(seg[2])
             return self._json(api_delete_studio_booking(user, bid)) if bid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 3 and seg[1] == "shoots":
+            if r not in APPROVER_ROLES:
+                return self._forbid()
+            sid = self._int(seg[2])
+            return self._json(api_delete_shoot(user, sid)) if sid else self._json({"error": "Topilmadi"}, 404)
         return self._json({"error": "Topilmadi"}, 404)
 
     def log_message(self, *args):

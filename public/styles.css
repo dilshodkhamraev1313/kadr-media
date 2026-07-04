@@ -649,6 +649,8 @@ body {
 .dr-time { font-size: 12px; font-weight: 700; color: var(--text-2); white-space: nowrap; }
 .dr-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
 .dr-main { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shoot-cancelled { opacity: .68; }
+.shoot-cancelled .pc-name { text-decoration: line-through; }
 .check-row { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600;
   color: var(--text-2); margin: 6px 0 4px; cursor: pointer; }
 .check-row input { width: 18px; height: 18px; accent-color: var(--blue); }

@@ -146,6 +146,7 @@ const NAV_ITEMS = [
   { view: 'scripts',   icon: '✎', label: 'Ssenariylar',   roles: ['ceo', 'coordinator', 'lead', 'editor'] },
   { view: 'videos',    icon: '►', label: 'Montaj',        roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'qc',        icon: '🔎', label: 'Sifat nazorati', roles: ['ceo', 'coordinator', 'lead'] },
+  { view: 'shoots',    icon: '📹', label: 'Syomkalar',     roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'studio',    icon: '🎥', label: 'Kadr Studio',   roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Gulmira', 'Xonzoda', 'Said'] },
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
@@ -200,6 +201,7 @@ const TITLES = {
   scripts:   ['Ssenariylar', 'Yozish, tasdiqlash, versiyalar'],
   videos:    ['Montaj — videolar', 'Biriktirish va qabul qilish'],
   qc:        ['Sifat nazorati', 'Montaj qilingan, tasdiq kutayotgan videolar'],
+  shoots:    ['Syomkalar', 'Loyiha syomkalari — operator va pul'],
   studio:    ['Kadr Studio', 'Syomka xonalari bandligi va bronlar'],
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
   editors:   ['Montajchilar', 'Kabinetlar va hisob-kitob'],
@@ -226,6 +228,7 @@ async function render() {
     else if (VIEW === 'videos') await viewVideos();
     else if (VIEW === 'myvideos' || VIEW === 'cvideos' || VIEW === 'joylash') await viewVideos();
     else if (VIEW === 'qc') await viewQC();
+    else if (VIEW === 'shoots') await viewShoots();
     else if (VIEW === 'studio') await viewStudio();
     else if (VIEW === 'editors') await viewEditors();
     else if (VIEW === 'finance') await viewFinance();
@@ -241,12 +244,13 @@ async function render() {
 function buildTopbarActions() {
   const a = $('#topbarActions');
   let html = '';
-  const canSearch = ['projects', 'scripts', 'videos', 'qc', 'joylash', 'editors', 'client', 'cscripts', 'cvideos', 'myvideos'].includes(VIEW);
+  const canSearch = ['projects', 'scripts', 'videos', 'qc', 'shoots', 'joylash', 'editors', 'client', 'cscripts', 'cvideos', 'myvideos'].includes(VIEW);
   if (canSearch) html += `<div class="search-box"><span>⌕</span><input id="searchInput" placeholder="Qidirish..." value="${esc(SEARCH)}" /></div>`;
   const role = ME.role;
   if ((VIEW === 'projects') && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-project">+ Loyiha</button>`;
   if ((VIEW === 'scripts') && role !== 'client') html += `<button class="btn-primary" data-act="add-script">+ Ssenariy</button>`;
   if (VIEW === 'videos' && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-video">+ Video biriktirish</button>`;
+  if (VIEW === 'shoots' && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-shoot">+ Syomka</button>`;
   if (VIEW === 'finance') html += `<button class="btn-primary" data-act="add-payment">+ To'lov</button>`;
   if (VIEW === 'studio') {
     if (role === 'ceo') html += `<button class="btn-ghost" data-act="studio-finance">💰 Pul hisoboti</button>`;
@@ -259,6 +263,7 @@ function buildTopbarActions() {
     if (act === 'add-project') openProjectModal(null);
     if (act === 'add-script') openScriptModal(null);
     if (act === 'add-video') openVideoModal();
+    if (act === 'add-shoot') openShootModal();
     if (act === 'add-payment') openPaymentModal();
     if (act === 'add-booking') openStudioBookingModal();
     if (act === 'studio-finance') openStudioFinanceModal();
@@ -820,6 +825,123 @@ async function openStudioFinanceModal() {
       ${statTile('⏳', money(f.debtAll), 'Qarz', 'orange')}
     </div>
     <div class="fin-months">${rows}</div>`);
+}
+
+// ============================================================
+//  KADR MEDIA SYOMKALARI (loyiha syomkalari)
+// ============================================================
+async function viewShoots() {
+  const data = await api('/api/shoots');
+  DATA.shoots = data;
+  let list = (data.shoots || []).filter((s) => matchSearch((s.project || '') + ' ' + (s.operator || '') + ' ' + (SHOOT_TYPE_LABEL[s.shoot_type] || '')));
+  if (['active', 'bekor_qilindi'].includes(FILTER)) list = list.filter((s) => (s.status || 'active') === FILTER);
+  const activeCount = (data.shoots || []).filter((s) => (s.status || 'active') !== 'bekor_qilindi').length;
+  const opStats = Object.entries(data.operatorTotals || {}).map(([n, v]) => statTile('👤', money(v), n + ' — operator puli', 'purple')).join('');
+  const chips = [['all', 'Hammasi'], ['active', 'Aktiv'], ['bekor_qilindi', 'Bekor qilingan']];
+  $('#content').innerHTML = `
+    <div class="stats-grid">
+      ${statTile('🎬', activeCount, 'Aktiv syomkalar', 'blue')}
+      ${opStats}
+    </div>
+    <div class="filter-row">${chips.map(([k, l]) => `<button class="chip ${FILTER === k ? 'active' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
+    <div class="cards-grid">${list.map(shootCard).join('') || emptyState('Syomka yo\'q')}</div>`;
+  $('#content').querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => { FILTER = c.dataset.f; render(); }));
+  $('#content').querySelectorAll('.shoot-card').forEach((card) => card.addEventListener('click', () => {
+    const s = (data.shoots || []).find((x) => x.id == card.dataset.sid);
+    if (s) openShootDetailModal(s);
+  }));
+}
+
+function shootCard(s) {
+  const cancelled = (s.status || 'active') === 'bekor_qilindi';
+  const st = SHOOT_TYPE_LABEL[s.shoot_type] || s.shoot_type;
+  return `
+    <div class="video-card clickable shoot-card${cancelled ? ' shoot-cancelled' : ''}" data-sid="${s.id}">
+      <div class="pc-top"><div class="pc-name">📁 ${esc(s.project || '—')}</div>
+        <span class="pill ${cancelled ? 'st-red' : 'st-blue'}">${cancelled ? 'Bekor qilindi' : 'Aktiv'}</span></div>
+      <div class="video-meta">
+        <span class="link-chip">🎥 ${esc(st)}</span>
+        ${s.operator ? `<span class="link-chip">👤 ${esc(s.operator)}</span>` : ''}
+        ${(s.operator && !cancelled) ? `<span class="money-chip">💰 ${money(s.operator_pay)}</span>` : ''}
+      </div>
+      ${s.note ? `<div class="pc-problem soft">📝 ${esc(s.note)}</div>` : ''}
+      <div class="pc-foot"><div class="muted">📅 ${fmtDate(s.sdate)} · 👮 ${esc(s.created_by || '')}</div></div>
+    </div>`;
+}
+
+async function openShootModal() {
+  const data = DATA.shoots || {};
+  if (!DATA.projects) DATA.projects = await api('/api/projects');
+  const operators = data.operators || ['Said', 'Umid'];
+  const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
+  const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000 };
+  const projOpts = (DATA.projects || []).map((p) => `<option value="${esc(p.name)}" data-id="${p.id}">${esc(p.name)}</option>`).join('');
+  const typeOpts = Object.entries(shootTypes).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('');
+  const opOpts = `<option value="">— operator yo'q —</option>` + operators.map((o) => `<option>${esc(o)}</option>`).join('');
+  openModal('Loyihaga syomka belgilash', `
+    <div class="field"><label>Loyiha</label><select id="sh_proj">${projOpts}</select></div>
+    <div class="field-row">
+      <div class="field"><label>Syomka turi</label><select id="sh_type">${typeOpts}</select></div>
+      <div class="field"><label>Operator</label><select id="sh_op">${opOpts}</select></div>
+    </div>
+    <div id="sh_oppay" class="calc-line"></div>
+    <div class="field"><label>Sana</label><input id="sh_date" type="date" /></div>
+    <div class="field"><label>Izoh</label><textarea id="sh_note" placeholder="masalan: mijoz manzilida, 2 lokatsiya"></textarea></div>
+    <div class="modal-actions"><button class="btn-save" id="sh_save">🎬 Belgilash</button></div>`,
+  () => {
+    const showPay = () => {
+      const op = $('#sh_op').value; const t = $('#sh_type').value;
+      $('#sh_oppay').innerHTML = op
+        ? `👤 ${esc(op)} operatorga hisoblanadi: <b>${money(opPay[t] || 0)}</b>`
+        : `<span class="muted">Operator tanlanmasa — operator puli hisoblanmaydi</span>`;
+    };
+    ['sh_op', 'sh_type'].forEach((id) => $('#' + id).addEventListener('change', showPay));
+    showPay();
+    $('#sh_save').addEventListener('click', async () => {
+      const sel = $('#sh_proj'); const opt = sel.options[sel.selectedIndex];
+      if (!sel.value) { toast('Loyihani tanlang'); return; }
+      const body = {
+        project: sel.value, project_id: opt ? opt.dataset.id : null,
+        shoot_type: $('#sh_type').value, operator: $('#sh_op').value,
+        sdate: $('#sh_date').value || null, note: $('#sh_note').value,
+      };
+      await api('/api/shoots', { method: 'POST', body: JSON.stringify(body) });
+      closeModal(); toast('🎬 Syomka belgilandi'); render();
+    });
+  });
+}
+
+function openShootDetailModal(s) {
+  const cancelled = (s.status || 'active') === 'bekor_qilindi';
+  const st = SHOOT_TYPE_LABEL[s.shoot_type] || s.shoot_type;
+  const actions = cancelled
+    ? `<button class="mini-btn red" id="sh_del">🗑 O'chirish</button>`
+    : `<button class="mini-btn gray" id="sh_cancel">🚫 Bekor qilish</button><button class="mini-btn red" id="sh_del">🗑 O'chirish</button>`;
+  openModal(`Syomka · ${esc(s.project || '')}`, `
+    ${cancelled ? `<div class="pill st-red" style="display:inline-block;margin-bottom:10px">🚫 Bekor qilindi</div>` : ''}
+    <div class="money-rows" style="margin-bottom:12px">
+      <div class="mrow"><span>📁 Loyiha</span><b>${esc(s.project || '—')}</b></div>
+      <div class="mrow"><span>🎥 Syomka turi</span><b>${esc(st)}</b></div>
+      ${s.operator ? `<div class="mrow"><span>👤 Operator</span><b>${esc(s.operator)}${cancelled ? '' : ` · ${money(s.operator_pay)}`}</b></div>` : ''}
+      <div class="mrow"><span>📅 Sana</span><b>${fmtDate(s.sdate)}</b></div>
+      <div class="mrow"><span>👮 Belgiladi</span><b>${esc(s.created_by || '—')}</b></div>
+    </div>
+    ${s.note ? `<div class="pc-problem soft" style="margin-bottom:12px">📝 ${esc(s.note)}</div>` : ''}
+    <div class="modal-actions">${actions}</div>`,
+  () => {
+    const cn = $('#sh_cancel');
+    if (cn) cn.addEventListener('click', async () => {
+      if (!confirm('Syomkani bekor qilasizmi? Operatorga pul hisoblanmaydi.')) return;
+      await api(`/api/shoots/${s.id}/cancel`, { method: 'POST', body: '{}' });
+      closeModal(); toast('🚫 Bekor qilindi'); render();
+    });
+    const del = $('#sh_del');
+    if (del) del.addEventListener('click', async () => {
+      if (!confirm('Butunlay o\'chirasizmi?')) return;
+      await api(`/api/shoots/${s.id}`, { method: 'DELETE' });
+      closeModal(); toast('O\'chirildi'); render();
+    });
+  });
 }
 
 // ============================================================
