@@ -148,6 +148,7 @@ const NAV_ITEMS = [
   { view: 'qc',        icon: '🔎', label: 'Sifat nazorati', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'shoots',    icon: '📹', label: 'Syomkalar',     roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'studio',    icon: '🎥', label: 'Kadr Studio',   roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Gulmira', 'Xonzoda', 'Said'] },
+  { view: 'myscripts', icon: '✍️', label: 'Ssenariylarim', roles: ['coordinator', 'editor', 'lead'], names: ['Xonzoda', 'Umida'] },
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
@@ -202,6 +203,7 @@ const TITLES = {
   videos:    ['Montaj — videolar', 'Biriktirish va qabul qilish'],
   qc:        ['Sifat nazorati', 'Montaj qilingan, tasdiq kutayotgan videolar'],
   shoots:    ['Syomkalar', 'Loyiha syomkalari — operator va pul'],
+  myscripts: ['Ssenariylarim', 'Tasdiqlangan ssenariylar va hisoblangan pul'],
   studio:    ['Kadr Studio', 'Syomka xonalari bandligi va bronlar'],
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
   editors:   ['Montajchilar', 'Kabinetlar va hisob-kitob'],
@@ -229,6 +231,7 @@ async function render() {
     else if (VIEW === 'myvideos' || VIEW === 'cvideos' || VIEW === 'joylash') await viewVideos();
     else if (VIEW === 'qc') await viewQC();
     else if (VIEW === 'shoots') await viewShoots();
+    else if (VIEW === 'myscripts') await viewScenarist();
     else if (VIEW === 'studio') await viewStudio();
     else if (VIEW === 'editors') await viewEditors();
     else if (VIEW === 'finance') await viewFinance();
@@ -251,6 +254,7 @@ function buildTopbarActions() {
   if ((VIEW === 'scripts') && role !== 'client') html += `<button class="btn-primary" data-act="add-script">+ Ssenariy</button>`;
   if (VIEW === 'videos' && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-video">+ Video biriktirish</button>`;
   if (VIEW === 'shoots' && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-shoot">+ Syomka</button>`;
+  if (VIEW === 'myscripts') html += `<button class="btn-primary" data-act="add-scenarist">+ Ssenariy</button>`;
   if (VIEW === 'finance') html += `<button class="btn-primary" data-act="add-payment">+ To'lov</button>`;
   if (VIEW === 'studio') {
     if (role === 'ceo') html += `<button class="btn-ghost" data-act="studio-finance">💰 Pul hisoboti</button>`;
@@ -264,6 +268,7 @@ function buildTopbarActions() {
     if (act === 'add-script') openScriptModal(null);
     if (act === 'add-video') openVideoModal();
     if (act === 'add-shoot') openShootModal();
+    if (act === 'add-scenarist') openScenaristModal();
     if (act === 'add-payment') openPaymentModal();
     if (act === 'add-booking') openStudioBookingModal();
     if (act === 'studio-finance') openStudioFinanceModal();
@@ -940,6 +945,68 @@ function openShootDetailModal(s) {
       if (!confirm('Butunlay o\'chirasizmi?')) return;
       await api(`/api/shoots/${s.id}`, { method: 'DELETE' });
       closeModal(); toast('O\'chirildi'); render();
+    });
+  });
+}
+
+// ============================================================
+//  SSENARIST KABINETI
+// ============================================================
+async function viewScenarist() {
+  const data = await api('/api/scenarist');
+  DATA.scenarist = data;
+  const list = (data.scripts || []).filter((s) => matchSearch((s.title || '') + ' ' + (s.project || '')));
+  const rows = list.map((s) => {
+    const cancelled = (s.status || 'active') === 'bekor_qilindi';
+    return `
+      <div class="video-card scenarist-card${cancelled ? ' shoot-cancelled' : ''}" data-scid="${s.id}">
+        <div class="pc-top"><div class="pc-name">✍️ ${esc(s.title || 'Nomsiz')}</div>
+          <span class="pill ${cancelled ? 'st-red' : 'st-green'}">${cancelled ? 'Bekor · minus' : money(s.amount)}</span></div>
+        <div class="pc-client">📁 ${esc(s.project || '—')}${s.client ? ' · ' + esc(s.client) : ''}</div>
+        ${s.note ? `<div class="pc-problem soft">📝 ${esc(s.note)}</div>` : ''}
+        <div class="pc-foot"><div class="muted">📅 ${fmtDate(s.sdate)}</div>
+          <div class="card-actions">${cancelled ? '' : `<button class="mini-btn gray" data-sccancel="${s.id}">🚫 Bekor</button>`}
+            <button class="mini-btn red" data-scdel="${s.id}">🗑</button></div></div>
+      </div>`;
+  }).join('') || emptyState('Hali ssenariy kiritilmagan');
+  $('#content').innerHTML = `
+    <div class="stats-grid">
+      ${statTile('✅', data.count, 'Tasdiqlangan ssenariy', 'green')}
+      ${statTile('💰', money(data.earned), 'Hisoblangan pul', 'blue')}
+      ${statTile('✍️', money(data.rate), 'Har ssenariy uchun', 'purple')}
+    </div>
+    <div class="cards-grid">${rows}</div>`;
+  $('#content').querySelectorAll('[data-sccancel]').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!confirm('Mijoz bekor qildimi? Pul kabinetdan minus bo\'ladi.')) return;
+    await api(`/api/scenarist/${b.dataset.sccancel}/cancel`, { method: 'POST', body: '{}' });
+    toast('🚫 Bekor qilindi — pul minus'); render();
+  }));
+  $('#content').querySelectorAll('[data-scdel]').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!confirm('Butunlay o\'chirasizmi?')) return;
+    await api(`/api/scenarist/${b.dataset.scdel}`, { method: 'DELETE' });
+    toast('O\'chirildi'); render();
+  }));
+}
+
+function openScenaristModal() {
+  openModal('Tasdiqlangan ssenariy kiritish', `
+    <p class="muted" style="margin-bottom:12px">Mijoz tasdiqlagan ssenariyni kiriting — pul avtomatik hisoblanadi.</p>
+    <div class="field"><label>Ssenariy nomi</label><input id="sc_title" placeholder="masalan: Nova reels #12 — hook" /></div>
+    <div class="field-row">
+      <div class="field"><label>Loyiha</label><input id="sc_proj" placeholder="Loyiha nomi" /></div>
+      <div class="field"><label>Sana</label><input id="sc_date" type="date" /></div>
+    </div>
+    <div class="field"><label>Izoh (ixtiyoriy)</label><textarea id="sc_note"></textarea></div>
+    <div class="modal-actions"><button class="btn-save" id="sc_save">✍️ Kiritish</button></div>`,
+  () => {
+    $('#sc_save').addEventListener('click', async () => {
+      const title = $('#sc_title').value.trim();
+      if (!title) { toast('Ssenariy nomini kiriting'); return; }
+      const body = { title, project: $('#sc_proj').value, sdate: $('#sc_date').value || null, note: $('#sc_note').value };
+      await api('/api/scenarist', { method: 'POST', body: JSON.stringify(body) });
+      closeModal(); toast('✍️ Ssenariy kiritildi — pul hisoblandi'); render();
     });
   });
 }

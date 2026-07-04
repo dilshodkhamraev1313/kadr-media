@@ -78,6 +78,10 @@ SHOOT_TYPES = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video
 OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 200000}
 STUDIO_OPERATORS = ("Said", "Umid")
 
+# Ssenaristlar va har tasdiqlangan ssenariy uchun haq (so'm).
+# Ssenarist o'z kabinetidan tasdiqlangan ssenariyni kiritadi — pul avtomatik hisoblanadi.
+SCENARIST_PAY = {"Xonzoda": 100000, "Umida": 50000}
+
 # Montajyor lavozimlari (o'yin rank tizimi). Har lavozimga o'tish uchun
 # RANK_STEP ta muvaffaqiyatli qabul qilingan video kerak.
 RANK_STEP = 100
@@ -361,6 +365,10 @@ def init_db():
         id {pk}, project_id INTEGER, project TEXT, shoot_type TEXT DEFAULT 'reels',
         operator TEXT DEFAULT '', operator_pay INTEGER DEFAULT 0, sdate TEXT,
         status TEXT DEFAULT 'active', note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS scenarist_scripts (
+        id {pk}, author TEXT, project TEXT DEFAULT '', client TEXT DEFAULT '', title TEXT,
+        amount INTEGER DEFAULT 0, status TEXT DEFAULT 'active', sdate TEXT,
+        note TEXT DEFAULT '', created_at {ts})""")
 
     # users jadvaliga login ustunlarini qo'shish (idempotent)
     add_column_if_missing(conn, "users", "username", "TEXT")
@@ -1637,6 +1645,79 @@ def api_delete_shoot(user, sid):
 
 
 # ------------------------------------------------------------
+#  SSENARIST KABINETI (tasdiqlangan ssenariy uchun pul)
+# ------------------------------------------------------------
+def is_scenarist(user):
+    return bool(user) and user["name"] in SCENARIST_PAY
+
+
+def api_scenarist(user):
+    """Ssenaristning o'z kabineti — tasdiqlangan ssenariylar va hisoblangan pul."""
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM scenarist_scripts WHERE author=? ORDER BY id DESC", (user["name"],)
+    ).fetchall()]
+    conn.close()
+    active = [r for r in rows if (r.get("status") or "active") != "bekor_qilindi"]
+    rate = SCENARIST_PAY.get(user["name"], 0)
+    return {
+        "rate": rate,
+        "count": len(active),
+        "earned": sum(r.get("amount") or 0 for r in active),
+        "scripts": rows,
+    }
+
+
+def api_create_scenarist_script(user, b):
+    rate = SCENARIST_PAY.get(user["name"], 0)
+    sdate = b.get("sdate") or uz_today().isoformat()
+    conn = get_db()
+    sql = """INSERT INTO scenarist_scripts (author, project, client, title, amount, status, sdate, note)
+             VALUES (?,?,?,?,?,?,?,?)"""
+    params = (user["name"], b.get("project") or "", b.get("client") or "",
+              b.get("title") or "Nomsiz ssenariy", rate, "active", sdate, b.get("note") or "")
+    if IS_PG:
+        sid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        sid = conn.execute(sql, params).lastrowid
+    log_audit(conn, user["name"], "ssenariy kiritdi", f"#{sid} {b.get('title')} (+{rate})")
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM scenarist_scripts WHERE id=?", (sid,)).fetchone())
+    conn.close()
+    send_telegram(
+        f"✍️ <b>Ssenariy kiritildi</b>\n{b.get('title') or ''}\n"
+        f"👤 {user['name']} (+{rate:,} so'm)".replace(",", " ")
+        + (f"\n📁 {b.get('project')}" if b.get("project") else "")
+    )
+    return row
+
+
+def api_cancel_scenarist_script(user, sid):
+    """Mijoz bekor qilsa — pul kabinetdan minus bo'ladi (bekor qilindi holati)."""
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM scenarist_scripts WHERE id=? AND author=?", (sid, user["name"])).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    ex = dict(ex)
+    conn.execute("UPDATE scenarist_scripts SET status='bekor_qilindi' WHERE id=?", (sid,))
+    log_audit(conn, user["name"], "ssenariy bekor qildi", f"#{sid} {ex['title']} (−{ex['amount']})")
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM scenarist_scripts WHERE id=?", (sid,)).fetchone())
+    conn.close()
+    return row
+
+
+def api_delete_scenarist_script(user, sid):
+    conn = get_db()
+    conn.execute("DELETE FROM scenarist_scripts WHERE id=? AND author=?", (sid, user["name"]))
+    log_audit(conn, user["name"], "ssenariy o'chirdi", f"#{sid}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------
 #  HTTP Handler
 # ------------------------------------------------------------
 CONTENT_TYPES = {
@@ -1751,6 +1832,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role != "ceo" else self._json(api_studio_finance(user))
         if path == "/api/shoots":
             return self._forbid() if role not in APPROVER_ROLES else self._json(api_shoots(user, show_all))
+        if path == "/api/scenarist":
+            return self._forbid() if not is_scenarist(user) else self._json(api_scenarist(user))
         if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "versions":
             sid = self._int(seg[2])
             return self._json(api_script_versions(sid)) if sid else self._json({"error": "Topilmadi"}, 404)
@@ -1820,6 +1903,16 @@ class Handler(BaseHTTPRequestHandler):
             sid = self._int(seg[2])
             res = api_cancel_shoot(user, sid) if sid else None
             return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
+        if path == "/api/scenarist":
+            if not is_scenarist(user):
+                return self._forbid()
+            return self._json(api_create_scenarist_script(user, b), 201)
+        if len(seg) == 4 and seg[1] == "scenarist" and seg[3] == "cancel":
+            if not is_scenarist(user):
+                return self._forbid()
+            sid = self._int(seg[2])
+            res = api_cancel_scenarist_script(user, sid) if sid else None
+            return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "action":
             sid = self._int(seg[2])
             res = api_script_action(user, sid, b) if sid else None
@@ -1877,6 +1970,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             sid = self._int(seg[2])
             return self._json(api_delete_shoot(user, sid)) if sid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 3 and seg[1] == "scenarist":
+            if not is_scenarist(user):
+                return self._forbid()
+            sid = self._int(seg[2])
+            return self._json(api_delete_scenarist_script(user, sid)) if sid else self._json({"error": "Topilmadi"}, 404)
         return self._json({"error": "Topilmadi"}, 404)
 
     def log_message(self, *args):
