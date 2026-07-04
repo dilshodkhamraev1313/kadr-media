@@ -635,7 +635,20 @@ body {
 .cal-ev { font-size: 11px; font-weight: 600; color: #fff; padding: 3px 6px; border-radius: 6px;
   margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .cal-ev.unpaid { box-shadow: inset 0 0 0 1.5px var(--orange); }
+.cal-ev.cancelled { text-decoration: line-through; opacity: .65; box-shadow: none; }
 .cal-ev:hover { filter: brightness(1.15); }
+
+/* Kun ro'yxati (chislo bosilganda) */
+.day-list { display: flex; flex-direction: column; gap: 8px; }
+.day-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: var(--surface); border: 1px solid var(--border-soft); border-radius: 12px;
+  padding: 11px 13px; font-family: inherit; color: var(--text); cursor: pointer; }
+.day-row:hover { border-color: var(--blue); }
+.day-row.cancelled { opacity: .6; }
+.day-row.cancelled .dr-main b { text-decoration: line-through; }
+.dr-time { font-size: 12px; font-weight: 700; color: var(--text-2); white-space: nowrap; }
+.dr-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.dr-main { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .check-row { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600;
   color: var(--text-2); margin: 6px 0 4px; cursor: pointer; }
 .check-row input { width: 18px; height: 18px; accent-color: var(--blue); }

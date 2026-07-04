@@ -68,8 +68,15 @@ STUDIO_ROOMS = {
     "white": {"label": "1-xona · White", "color": "#0A84FF"},
     "black": {"label": "2-xona · Black", "color": "#1C1C1E"},
 }
-# Kadr Studio bo'limini ko'ra oladiganlar (ism bo'yicha). Pul hisoboti faqat CEO'da.
-STUDIO_USERS = ("Dilshod Khamraev", "Gulmira", "Xonzoda", "Said")
+# Kadr Studio: bron KIRITA oladiganlar (Dilshod + Gulmira). KO'RISH — barcha loyiha
+# rahbarlari va CEO. Pul hisoboti faqat CEO'da.
+STUDIO_EDIT_USERS = ("Dilshod Khamraev", "Gulmira")
+
+# Syomka turlari va OPERATORGA to'lanadigan pul (mijoz to'lovidan ALOHIDA).
+# Bu Kadr Studio bronlarida ham, Kadr Media loyiha syomkalarida ham ishlatiladi.
+SHOOT_TYPES = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video", "vebinar": "Vebinar"}
+OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 200000}
+STUDIO_OPERATORS = ("Said", "Umid")
 
 # Montajyor lavozimlari (o'yin rank tizimi). Har lavozimga o'tish uchun
 # RANK_STEP ta muvaffaqiyatli qabul qilingan video kerak.
@@ -365,6 +372,12 @@ def init_db():
         add_column_if_missing(conn, "videos", col, "TEXT")
     # videos: video turi (reels/podcast/youtube)
     add_column_if_missing(conn, "videos", "vtype", "TEXT DEFAULT 'reels'")
+    # studio_bookings: operator, syomka turi, operator puli, avans, holat
+    add_column_if_missing(conn, "studio_bookings", "operator", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "studio_bookings", "shoot_type", "TEXT DEFAULT 'reels'")
+    add_column_if_missing(conn, "studio_bookings", "operator_pay", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "studio_bookings", "paid_amount", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "studio_bookings", "status", "TEXT DEFAULT 'active'")
     conn.commit()
 
     # Seed (faqat bo'sh bo'lsa)
@@ -1343,9 +1356,21 @@ def api_ranks():
 # ------------------------------------------------------------
 #  KADR STUDIO — syomka bronlari va xona daromadi
 # ------------------------------------------------------------
-def is_studio_user(user):
-    """Studio bo'limini ko'rish/bron qilish huquqi (ism bo'yicha) yoki CEO."""
-    return bool(user) and (user["role"] == "ceo" or user["name"] in STUDIO_USERS)
+def can_view_studio(user):
+    """Studio kalendarini ko'rish — barcha loyiha rahbarlari, koordinator va CEO."""
+    return bool(user) and user["role"] in ("ceo", "coordinator", "lead")
+
+
+def can_edit_studio(user):
+    """Studio broni kiritish/o'zgartirish — faqat Dilshod va Gulmira."""
+    return bool(user) and user["name"] in STUDIO_EDIT_USERS
+
+
+def _op_pay(operator, shoot_type):
+    """Operator belgilangan bo'lsa — syomka turiga qarab operator puli."""
+    if not operator:
+        return 0
+    return OPERATOR_PAY.get(shoot_type if shoot_type in SHOOT_TYPES else "reels", 0)
 
 
 def _calc_hours(start, end):
@@ -1369,7 +1394,11 @@ def api_studio(user):
     conn.close()
     return {
         "rooms": STUDIO_ROOMS,
+        "operators": list(STUDIO_OPERATORS),
+        "shootTypes": SHOOT_TYPES,
+        "operatorPay": OPERATOR_PAY,
         "canFinance": user["role"] == "ceo",
+        "canEdit": can_edit_studio(user),
         "me": user["name"],
         "bookings": [dict(r) for r in rows],
     }
@@ -1380,19 +1409,29 @@ def api_create_studio_booking(user, b):
     start = b.get("start_time") or "10:00"
     end = b.get("end_time") or "11:00"
     hours = _calc_hours(start, end)
-    # Umumiy to'lov qo'lda kiritiladi (har mijoz bilan alohida kelishiladi)
+    operator = b.get("operator") if b.get("operator") in STUDIO_OPERATORS else ""
+    shoot_type = b.get("shoot_type") if b.get("shoot_type") in SHOOT_TYPES else "reels"
+    operator_pay = _op_pay(operator, shoot_type)
+    # Umumiy to'lov va to'langan (avans) qo'lda kiritiladi
     try:
         amount = int(b.get("amount") or 0)
     except (ValueError, TypeError):
         amount = 0
+    try:
+        paid_amount = int(b.get("paid_amount") or 0)
+    except (ValueError, TypeError):
+        paid_amount = 0
+    fully_paid = 1 if (amount > 0 and paid_amount >= amount) else 0
     bdate = b.get("bdate") or uz_today().isoformat()
     conn = get_db()
     sql = """INSERT INTO studio_bookings
-             (room, client_name, phone, bdate, start_time, end_time, hours, amount, paid, note, created_by)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?)"""
+             (room, client_name, phone, bdate, start_time, end_time, hours, amount,
+              paid, paid_amount, operator, shoot_type, operator_pay, status, note, created_by)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
     params = (
         room, b.get("client_name") or "Mijoz", b.get("phone") or "", bdate,
-        start, end, hours, amount, 1 if b.get("paid") else 0,
+        start, end, hours, amount, fully_paid, paid_amount,
+        operator, shoot_type, operator_pay, "active",
         b.get("note") or "", user["name"],
     )
     if IS_PG:
@@ -1400,32 +1439,67 @@ def api_create_studio_booking(user, b):
     else:
         bid = conn.execute(sql, params).lastrowid
     log_audit(conn, user["name"], "studio bron qildi",
-              f"#{bid} {b.get('client_name')} · {STUDIO_ROOMS[room]['label']} · {bdate} {start}-{end}")
+              f"#{bid} {b.get('client_name')} · {STUDIO_ROOMS[room]['label']} · {SHOOT_TYPES[shoot_type]}"
+              + (f" · operator {operator} (+{operator_pay})" if operator else ""))
     conn.commit()
     row = conn.execute("SELECT * FROM studio_bookings WHERE id=?", (bid,)).fetchone()
     conn.close()
     send_telegram(
         f"🎥 <b>Studio bron</b>\n{b.get('client_name') or 'Mijoz'}\n"
-        f"🏠 {STUDIO_ROOMS[room]['label']}\n📅 {bdate}  {start}–{end}  ({hours} soat)\n"
-        f"💰 {amount:,} so'm".replace(",", " ")
+        f"🏠 {STUDIO_ROOMS[room]['label']} · 🎬 {SHOOT_TYPES[shoot_type]}\n"
+        + (f"👤 Operator: {operator} (+{operator_pay:,} so'm)\n".replace(",", " ") if operator else "")
+        + f"📅 {bdate}  {start}–{end}  ({hours} soat)\n"
+        f"💰 Umumiy: {amount:,} so'm · To'langan: {paid_amount:,} so'm".replace(",", " ")
+        + ("\n✅ <b>To'liq to'landi</b>" if fully_paid else "")
     )
     return dict(row)
 
 
-def api_studio_toggle_paid(user, bid):
+def api_studio_pay(user, bid, b):
+    """Bronga to'lov qo'shish (avansdan keyin qolganini). To'liq to'lansa — guruhga xabar."""
+    try:
+        add = int(b.get("amount") or 0)
+    except (ValueError, TypeError):
+        add = 0
     conn = get_db()
     ex = conn.execute("SELECT * FROM studio_bookings WHERE id=?", (bid,)).fetchone()
     if not ex:
         conn.close()
         return None
-    newp = 0 if ex["paid"] else 1
-    conn.execute("UPDATE studio_bookings SET paid=? WHERE id=?", (newp, bid))
-    log_audit(conn, user["name"], "studio to'lov holati",
-              f"#{bid} " + ("to'landi" if newp else "qarz"))
+    ex = dict(ex)
+    new_paid = (ex.get("paid_amount") or 0) + add
+    total = ex.get("amount") or 0
+    fully = 1 if (total > 0 and new_paid >= total) else 0
+    was_full = ex.get("paid") or 0
+    conn.execute("UPDATE studio_bookings SET paid_amount=?, paid=? WHERE id=?", (new_paid, fully, bid))
+    log_audit(conn, user["name"], "studio to'lov qo'shdi", f"#{bid} +{add} so'm (jami {new_paid}/{total})")
     conn.commit()
-    row = conn.execute("SELECT * FROM studio_bookings WHERE id=?", (bid,)).fetchone()
+    row = dict(conn.execute("SELECT * FROM studio_bookings WHERE id=?", (bid,)).fetchone())
     conn.close()
-    return dict(row)
+    if fully and not was_full:
+        send_telegram(
+            f"✅ <b>Studio to'lov yakunlandi</b>\n{ex['client_name']}\n"
+            f"💰 To'liq to'landi: {new_paid:,} so'm\n👤 {user['name']}".replace(",", " ")
+        )
+    return row
+
+
+def api_cancel_studio_booking(user, bid):
+    """Syomkani bekor qilish — o'chirilmaydi, tarixda qizil 'bekor qilindi' bo'lib qoladi.
+    Bekor bo'lganda operatorga pul hisoblanmaydi (hisobotdan chiqadi)."""
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM studio_bookings WHERE id=?", (bid,)).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    ex = dict(ex)
+    conn.execute("UPDATE studio_bookings SET status='bekor_qilindi' WHERE id=?", (bid,))
+    log_audit(conn, user["name"], "studio bron bekor qildi", f"#{bid} {ex['client_name']}")
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM studio_bookings WHERE id=?", (bid,)).fetchone())
+    conn.close()
+    send_telegram(f"🚫 <b>Studio bron bekor qilindi</b>\n{ex['client_name']}\n👮 {user['name']}")
+    return row
 
 
 def api_delete_studio_booking(user, bid):
@@ -1438,33 +1512,44 @@ def api_delete_studio_booking(user, bid):
 
 
 def api_studio_finance(user):
-    """Faqat CEO — oyma-oy xona daromadi, to'langan va qarz."""
+    """Faqat CEO — oyma-oy tushum, operator puli, sof foyda, to'langan va qarz.
+    Bekor qilingan bronlar hisobga OLINMAYDI."""
     conn = get_db()
     rows = [dict(r) for r in conn.execute("SELECT * FROM studio_bookings").fetchall()]
     conn.close()
+    active = [r for r in rows if (r.get("status") or "active") != "bekor_qilindi"]
     months = {}
-    for r in rows:
+    for r in active:
         ym = (r.get("bdate") or "")[:7] or "—"
         m = months.setdefault(ym, {
-            "month": ym, "total": 0, "paid": 0, "debt": 0,
+            "month": ym, "total": 0, "operatorPay": 0, "net": 0, "paid": 0, "debt": 0,
             "count": 0, "white": 0, "black": 0,
         })
         amt = r["amount"] or 0
+        pa = r.get("paid_amount") or 0
+        op = r.get("operator_pay") or 0
         m["total"] += amt
+        m["operatorPay"] += op
+        m["paid"] += pa
+        m["debt"] += max(amt - pa, 0)
         m["count"] += 1
-        if r["paid"]:
-            m["paid"] += amt
-        else:
-            m["debt"] += amt
         if r["room"] in ("white", "black"):
             m[r["room"]] += amt
+    for m in months.values():
+        # Sof foyda = tushum − operator puli (− xarajatlar 3-bosqichda qo'shiladi)
+        m["net"] = m["total"] - m["operatorPay"]
+    total_all = sum(r["amount"] or 0 for r in active)
+    op_all = sum(r.get("operator_pay") or 0 for r in active)
+    paid_all = sum(r.get("paid_amount") or 0 for r in active)
     return {
         "rooms": STUDIO_ROOMS,
         "months": sorted(months.values(), key=lambda x: x["month"], reverse=True),
-        "totalAll": sum(r["amount"] or 0 for r in rows),
-        "paidAll": sum(r["amount"] or 0 for r in rows if r["paid"]),
-        "debtAll": sum(r["amount"] or 0 for r in rows if not r["paid"]),
-        "count": len(rows),
+        "totalAll": total_all,
+        "operatorPayAll": op_all,
+        "netAll": total_all - op_all,
+        "paidAll": paid_all,
+        "debtAll": max(total_all - paid_all, 0),
+        "count": len(active),
     }
 
 
@@ -1578,7 +1663,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/finance":
             return self._forbid() if role not in ADMIN_ROLES else self._json(api_finance())
         if path == "/api/studio":
-            return self._forbid() if not is_studio_user(user) else self._json(api_studio(user))
+            return self._forbid() if not can_view_studio(user) else self._json(api_studio(user))
         if path == "/api/studio/finance":
             return self._forbid() if role != "ceo" else self._json(api_studio_finance(user))
         if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "versions":
@@ -1625,14 +1710,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             return self._json(api_create_payment(user, b), 201)
         if path == "/api/studio":
-            if not is_studio_user(user):
+            if not can_edit_studio(user):
                 return self._forbid()
             return self._json(api_create_studio_booking(user, b), 201)
-        if len(seg) == 4 and seg[1] == "studio" and seg[3] == "paid":
-            if not is_studio_user(user):
+        if len(seg) == 4 and seg[1] == "studio" and seg[3] == "pay":
+            if not can_edit_studio(user):
                 return self._forbid()
             bid = self._int(seg[2])
-            res = api_studio_toggle_paid(user, bid) if bid else None
+            res = api_studio_pay(user, bid, b) if bid else None
+            return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "studio" and seg[3] == "cancel":
+            if not can_edit_studio(user):
+                return self._forbid()
+            bid = self._int(seg[2])
+            res = api_cancel_studio_booking(user, bid) if bid else None
             return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "action":
             sid = self._int(seg[2])
@@ -1682,7 +1773,7 @@ class Handler(BaseHTTPRequestHandler):
             vid = self._int(seg[2])
             return self._json(api_delete_video(user, vid)) if vid else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 3 and seg[1] == "studio":
-            if not is_studio_user(user):
+            if not can_edit_studio(user):
                 return self._forbid()
             bid = self._int(seg[2])
             return self._json(api_delete_studio_booking(user, bid)) if bid else self._json({"error": "Topilmadi"}, 404)

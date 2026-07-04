@@ -29,9 +29,12 @@ const VIDEO_ST = {
 };
 const VIDEO_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video' };
 const STUDIO_ROOMS_DEFAULT = {
-  white: { label: '1-xona · White', rate: 300000, color: '#0A84FF' },
-  black: { label: '2-xona · Black', rate: 400000, color: '#1C1C1E' },
+  white: { label: '1-xona · White', color: '#0A84FF' },
+  black: { label: '2-xona · Black', color: '#1C1C1E' },
 };
+const SHOOT_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video', vebinar: 'Vebinar' };
+// Studio broni kirita oladiganlar (faqat Dilshod va Gulmira)
+const studioCanEdit = () => !!ME && ['Dilshod Khamraev', 'Gulmira'].includes(ME.name);
 
 let ME = null;
 let TOKEN = localStorage.getItem('km_token') || null;
@@ -247,7 +250,7 @@ function buildTopbarActions() {
   if (VIEW === 'finance') html += `<button class="btn-primary" data-act="add-payment">+ To'lov</button>`;
   if (VIEW === 'studio') {
     if (role === 'ceo') html += `<button class="btn-ghost" data-act="studio-finance">💰 Pul hisoboti</button>`;
-    html += `<button class="btn-primary" data-act="add-booking">+ Bron qilish</button>`;
+    if (studioCanEdit()) html += `<button class="btn-primary" data-act="add-booking">+ Bron qilish</button>`;
   }
   a.innerHTML = html;
   if (canSearch) $('#searchInput').addEventListener('input', (e) => { SEARCH = e.target.value.toLowerCase(); render(); });
@@ -603,8 +606,9 @@ async function viewStudio() {
     const iso = `${y}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const list = (byDate[iso] || []).slice().sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
     const pills = list.map((b) => {
-      const rc = (rooms[b.room] || {}).color || '#888';
-      return `<div class="cal-ev${b.paid ? '' : ' unpaid'}" data-bk="${b.id}" style="background:${rc}" title="${esc(b.client_name || '')}">${esc((b.start_time || '').slice(0, 5))} ${esc(b.client_name || '')}</div>`;
+      const cancelled = b.status === 'bekor_qilindi';
+      const rc = cancelled ? '#6b6b72' : ((rooms[b.room] || {}).color || '#888');
+      return `<div class="cal-ev${b.paid ? '' : ' unpaid'}${cancelled ? ' cancelled' : ''}" data-bk="${b.id}" style="background:${rc}" title="${esc(b.client_name || '')}">${esc((b.start_time || '').slice(0, 5))} ${esc(b.client_name || '')}</div>`;
     }).join('');
     cells += `<div class="cal-cell${iso === todayISO ? ' today' : ''}" data-day="${iso}"><div class="cal-daynum">${day}</div>${pills}</div>`;
   }
@@ -617,7 +621,7 @@ async function viewStudio() {
       <div class="cal-legend">${legend}</div>
     </div>
     <div class="cal-grid">${cells}</div>
-    <p class="muted" style="margin-top:12px">📌 Bo'sh kunga bron qo'shish uchun kun ustiga bosing. Bron tafsiloti uchun bronni bosing.</p>`;
+    <p class="muted" style="margin-top:12px">📌 Kun ustiga bossangiz — o'sha kundagi bronlar ro'yxati ochiladi. Bron ustiga bossangiz — tafsiloti.</p>`;
   $('#content').querySelectorAll('[data-cal]').forEach((b) => b.addEventListener('click', () => {
     const a = b.dataset.cal;
     if (a === 'prev') { STUDIO_MONTH.m--; if (STUDIO_MONTH.m < 0) { STUDIO_MONTH.m = 11; STUDIO_MONTH.y--; } }
@@ -627,7 +631,7 @@ async function viewStudio() {
   }));
   $('#content').querySelectorAll('.cal-cell[data-day]').forEach((c) => c.addEventListener('click', (e) => {
     if (e.target.closest('.cal-ev')) return;
-    openStudioBookingModal(c.dataset.day);
+    openStudioDayModal(c.dataset.day);
   }));
   $('#content').querySelectorAll('.cal-ev').forEach((ev) => ev.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -636,42 +640,93 @@ async function viewStudio() {
   }));
 }
 
+// Kun ustiga bosilganda — o'sha kundagi bronlar ro'yxati
+function openStudioDayModal(iso) {
+  const data = DATA.studio || { bookings: [], rooms: STUDIO_ROOMS_DEFAULT };
+  const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
+  const list = (data.bookings || []).filter((b) => b.bdate === iso)
+    .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+  const rows = list.map((b) => {
+    const room = rooms[b.room] || {};
+    const cancelled = b.status === 'bekor_qilindi';
+    const st = SHOOT_TYPE_LABEL[b.shoot_type] || '';
+    const badge = cancelled ? ['red', 'bekor'] : (b.paid ? ['green', "to'landi"] : ['orange', 'qarz']);
+    return `<button class="day-row${cancelled ? ' cancelled' : ''}" data-bk="${b.id}">
+      <span class="dr-time">${esc((b.start_time || '').slice(0, 5))}–${esc((b.end_time || '').slice(0, 5))}</span>
+      <span class="dr-dot" style="background:${cancelled ? '#6b6b72' : (room.color || '#888')}"></span>
+      <span class="dr-main"><b>${esc(b.client_name || '')}</b><span class="muted"> · ${esc(st)}${b.operator ? ' · 👤 ' + esc(b.operator) : ''}</span></span>
+      <span class="pill ${badge[0]}">${badge[1]}</span>
+    </button>`;
+  }).join('') || '<div class="muted" style="padding:10px 0">Bu kunda bron yo\'q</div>';
+  const addBtn = studioCanEdit() ? `<button class="btn-save" id="day_add" style="margin-top:14px">+ Yangi bron</button>` : '';
+  openModal(`📅 ${fmtDate(iso)} — bronlar (${list.length})`, `<div class="day-list">${rows}</div>${addBtn}`, () => {
+    $('#modalBody').querySelectorAll('.day-row').forEach((r) => r.addEventListener('click', () => {
+      const b = (data.bookings || []).find((x) => x.id == r.dataset.bk);
+      if (b) openStudioDetailModal(b);
+    }));
+    const add = $('#day_add');
+    if (add) add.addEventListener('click', () => openStudioBookingModal(iso));
+  });
+}
+
 function openStudioBookingModal(presetDate) {
-  const rooms = (DATA.studio && DATA.studio.rooms) || STUDIO_ROOMS_DEFAULT;
+  const data = DATA.studio || {};
+  const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
+  const operators = data.operators || ['Said', 'Umid'];
+  const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
+  const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000 };
   const roomOpts = Object.entries(rooms).map(([k, r]) => `<option value="${k}">${esc(r.label)}</option>`).join('');
+  const typeOpts = Object.entries(shootTypes).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('');
+  const opOpts = `<option value="">— operator yo'q —</option>` + operators.map((o) => `<option>${esc(o)}</option>`).join('');
   openModal('Kadr Studio — bron qilish', `
     <div class="field"><label>Mijoz ismi</label><input id="sb_name" placeholder="Mijoz ismi" /></div>
     <div class="field-row">
       <div class="field"><label>Telefon</label><input id="sb_phone" placeholder="+998 90 123 45 67" /></div>
       <div class="field"><label>Xona</label><select id="sb_room">${roomOpts}</select></div>
     </div>
+    <div class="field-row">
+      <div class="field"><label>Syomka turi</label><select id="sb_type">${typeOpts}</select></div>
+      <div class="field"><label>Operator</label><select id="sb_op">${opOpts}</select></div>
+    </div>
+    <div id="sb_oppay" class="calc-line"></div>
     <div class="field"><label>Sana</label><input id="sb_date" type="date" value="${presetDate || ''}" /></div>
     <div class="field-row">
       <div class="field"><label>Boshlanish</label><input id="sb_start" type="time" value="10:00" /></div>
       <div class="field"><label>Tugash</label><input id="sb_end" type="time" value="12:00" /></div>
     </div>
     <div id="sb_hours" class="calc-line"></div>
-    <div class="field"><label>Umumiy to'lov (so'm)</label><input id="sb_amount" type="number" inputmode="numeric" placeholder="masalan: 900000" /></div>
-    <div class="field"><label>Izoh (syomka turi)</label><textarea id="sb_note" placeholder="masalan: podcast syomka, 2 kishi"></textarea></div>
-    <label class="check-row"><input type="checkbox" id="sb_paid" /> To'lov qilingan</label>
+    <div class="field-row">
+      <div class="field"><label>Umumiy to'lov (so'm)</label><input id="sb_amount" type="number" inputmode="numeric" placeholder="masalan: 900000" /></div>
+      <div class="field"><label>To'langan / avans (so'm)</label><input id="sb_paidamt" type="number" inputmode="numeric" placeholder="0" /></div>
+    </div>
+    <div class="field"><label>Izoh</label><textarea id="sb_note" placeholder="masalan: 2 kishi, rekvizit kerak"></textarea></div>
     <div class="modal-actions"><button class="btn-save" id="sb_save">🎥 Bron qilish</button></div>`,
   () => {
     const showHours = () => {
       const h = studioHours($('#sb_start').value, $('#sb_end').value);
       $('#sb_hours').innerHTML = h > 0 ? `⏱ Soati — <b>${h} soat</b>` : `<span class="muted">Vaqtni to'g'ri kiriting</span>`;
     };
+    const showOpPay = () => {
+      const op = $('#sb_op').value; const t = $('#sb_type').value;
+      $('#sb_oppay').innerHTML = op
+        ? `👤 ${esc(op)} operatorga hisoblanadi: <b>${money(opPay[t] || 0)}</b>`
+        : `<span class="muted">Operator tanlanmasa — operator puli hisoblanmaydi</span>`;
+    };
     ['sb_start', 'sb_end'].forEach((id) => $('#' + id).addEventListener('input', showHours));
-    showHours();
+    ['sb_op', 'sb_type'].forEach((id) => $('#' + id).addEventListener('change', showOpPay));
+    showHours(); showOpPay();
     $('#sb_save').addEventListener('click', async () => {
       const name = $('#sb_name').value.trim();
       if (!name) { toast('Mijoz ismini kiriting'); return; }
       const bdate = $('#sb_date').value;
       if (!bdate) { toast('Sanani tanlang'); return; }
-      const amount = parseInt($('#sb_amount').value || '0', 10);
       const body = {
         client_name: name, phone: $('#sb_phone').value, room: $('#sb_room').value,
+        shoot_type: $('#sb_type').value, operator: $('#sb_op').value,
         bdate, start_time: $('#sb_start').value, end_time: $('#sb_end').value,
-        amount, note: $('#sb_note').value, paid: $('#sb_paid').checked,
+        amount: parseInt($('#sb_amount').value || '0', 10),
+        paid_amount: parseInt($('#sb_paidamt').value || '0', 10),
+        note: $('#sb_note').value,
       };
       await api('/api/studio', { method: 'POST', body: JSON.stringify(body) });
       closeModal(); toast('🎥 Bron saqlandi'); render();
@@ -680,32 +735,65 @@ function openStudioBookingModal(presetDate) {
 }
 
 function openStudioDetailModal(b) {
-  const rooms = (DATA.studio && DATA.studio.rooms) || STUDIO_ROOMS_DEFAULT;
+  const data = DATA.studio || {};
+  const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
   const room = rooms[b.room] || { label: b.room };
+  const cancelled = b.status === 'bekor_qilindi';
+  const total = b.amount || 0; const paid = b.paid_amount || 0; const rem = Math.max(total - paid, 0);
+  const st = (data.shootTypes && data.shootTypes[b.shoot_type]) || SHOOT_TYPE_LABEL[b.shoot_type] || '—';
+  const canEdit = studioCanEdit();
+  let actions = '';
+  if (canEdit && cancelled) {
+    actions = `<button class="mini-btn red" id="sb_delbtn">🗑 O'chirish</button>`;
+  } else if (canEdit) {
+    actions = `${rem > 0 ? `<button class="mini-btn green" id="sb_paybtn">+ To'lov qo'shish</button>` : ''}
+      <button class="mini-btn gray" id="sb_cancelbtn">🚫 Bekor qilish</button>
+      <button class="mini-btn red" id="sb_delbtn">🗑 O'chirish</button>`;
+  }
   openModal(`Bron · ${esc(b.client_name || '')}`, `
+    ${cancelled ? `<div class="pill st-red" style="display:inline-block;margin-bottom:10px">🚫 Bekor qilindi</div>` : ''}
     <div class="money-rows" style="margin-bottom:12px">
       <div class="mrow"><span>🏠 Xona</span><b>${esc(room.label)}</b></div>
+      <div class="mrow"><span>🎬 Syomka turi</span><b>${esc(st)}</b></div>
+      ${b.operator ? `<div class="mrow"><span>👤 Operator</span><b>${esc(b.operator)}${cancelled ? '' : ` · ${money(b.operator_pay)}`}</b></div>` : ''}
       <div class="mrow"><span>📅 Sana</span><b>${fmtDate(b.bdate)}</b></div>
       <div class="mrow"><span>⏱ Vaqt</span><b>${esc((b.start_time || '').slice(0, 5))}–${esc((b.end_time || '').slice(0, 5))} · ${b.hours} soat</b></div>
-      <div class="mrow"><span>💰 Summa</span><b>${money(b.amount)}</b></div>
       <div class="mrow"><span>📞 Telefon</span><b>${esc(b.phone || '—')}</b></div>
-      <div class="mrow"><span>💳 To'lov</span><b>${b.paid ? "✅ To'langan" : "⏳ To'lanmagan"}</b></div>
-      <div class="mrow"><span>👤 Bron qildi</span><b>${esc(b.created_by || '—')}</b></div>
+      <div class="mrow" style="border-top:1px solid var(--border);padding-top:6px"><span>💰 Umumiy</span><b>${money(total)}</b></div>
+      <div class="mrow"><span style="color:var(--green)">To'langan</span><b style="color:var(--green)">${money(paid)}</b></div>
+      <div class="mrow"><span style="color:var(--orange)">Qolgan</span><b style="color:var(--orange)">${money(rem)}</b></div>
+      <div class="mrow"><span>👮 Bron qildi</span><b>${esc(b.created_by || '—')}</b></div>
     </div>
     ${b.note ? `<div class="pc-problem soft" style="margin-bottom:12px">📝 ${esc(b.note)}</div>` : ''}
-    <div class="modal-actions">
-      <button class="mini-btn ${b.paid ? 'gray' : 'green'}" id="sb_paidbtn">${b.paid ? "↩ To'lovni qaytar" : "✅ To'landi"}</button>
-      <button class="mini-btn red" id="sb_delbtn">🗑 O'chirish</button>
-    </div>`,
+    ${actions ? `<div class="modal-actions">${actions}</div>` : ''}`,
   () => {
-    $('#sb_paidbtn').addEventListener('click', async () => {
-      await api(`/api/studio/${b.id}/paid`, { method: 'POST', body: '{}' });
-      closeModal(); toast('To\'lov holati yangilandi'); render();
+    const pay = $('#sb_paybtn');
+    if (pay) pay.addEventListener('click', () => openStudioPayModal(b, rem));
+    const cn = $('#sb_cancelbtn');
+    if (cn) cn.addEventListener('click', async () => {
+      if (!confirm('Syomkani bekor qilasizmi? Operatorga pul hisoblanmaydi.')) return;
+      await api(`/api/studio/${b.id}/cancel`, { method: 'POST', body: '{}' });
+      closeModal(); toast('🚫 Bekor qilindi'); render();
     });
-    $('#sb_delbtn').addEventListener('click', async () => {
-      if (!confirm('Bronni o\'chirasizmi?')) return;
+    const del = $('#sb_delbtn');
+    if (del) del.addEventListener('click', async () => {
+      if (!confirm('Butunlay o\'chirasizmi?')) return;
       await api(`/api/studio/${b.id}`, { method: 'DELETE' });
-      closeModal(); toast('Bron o\'chirildi'); render();
+      closeModal(); toast('O\'chirildi'); render();
+    });
+  });
+}
+
+function openStudioPayModal(b, rem) {
+  openModal('To\'lov qo\'shish', `
+    <p class="muted" style="margin-bottom:10px">Qolgan summa: <b>${money(rem)}</b></p>
+    <div class="field"><label>Qo'shiladigan to'lov (so'm)</label><input id="pay_amt" type="number" inputmode="numeric" value="${rem}" /></div>
+    <button class="btn-save" id="pay_ok">✅ To'lovni qo'shish</button>`, () => {
+    $('#pay_ok').addEventListener('click', async () => {
+      const a = parseInt($('#pay_amt').value || '0', 10);
+      if (a <= 0) { toast('Summani kiriting'); return; }
+      await api(`/api/studio/${b.id}/pay`, { method: 'POST', body: JSON.stringify({ amount: a }) });
+      closeModal(); toast('💰 To\'lov qo\'shildi'); render();
     });
   });
 }
@@ -718,14 +806,17 @@ async function openStudioFinanceModal() {
       <div class="fm-head"><b>${esc(mo.month)}</b><span class="muted">${mo.count} bron</span></div>
       <div class="mrow"><span>${esc(rooms.white.label)}</span><b>${money(mo.white)}</b></div>
       <div class="mrow"><span>${esc(rooms.black.label)}</span><b>${money(mo.black)}</b></div>
-      <div class="mrow" style="border-top:1px solid var(--border);padding-top:6px"><span>Jami</span><b>${money(mo.total)}</b></div>
+      <div class="mrow" style="border-top:1px solid var(--border);padding-top:6px"><span>Tushum</span><b>${money(mo.total)}</b></div>
+      <div class="mrow"><span style="color:var(--pink)">Operator puli</span><b style="color:var(--pink)">−${money(mo.operatorPay)}</b></div>
+      <div class="mrow"><span>Sof foyda</span><b>${money(mo.net)}</b></div>
       <div class="mrow"><span style="color:var(--green)">To'langan</span><b style="color:var(--green)">${money(mo.paid)}</b></div>
       <div class="mrow"><span style="color:var(--orange)">Qarz</span><b style="color:var(--orange)">${money(mo.debt)}</b></div>
     </div>`).join('') || '<div class="muted">Hali bron yo\'q</div>';
   openModal('🎥 Kadr Studio — pul hisoboti', `
     <div class="stats-grid" style="margin-bottom:14px">
-      ${statTile('💰', money(f.totalAll), 'Jami daromad', 'blue')}
-      ${statTile('✓', money(f.paidAll), 'To\'langan', 'green')}
+      ${statTile('💰', money(f.totalAll), 'Jami tushum', 'blue')}
+      ${statTile('👤', money(f.operatorPayAll), 'Operator puli', 'purple')}
+      ${statTile('📈', money(f.netAll), 'Sof foyda', 'green')}
       ${statTile('⏳', money(f.debtAll), 'Qarz', 'orange')}
     </div>
     <div class="fin-months">${rows}</div>`);
