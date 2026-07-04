@@ -82,6 +82,12 @@ STUDIO_OPERATORS = ("Said", "Umid")
 # Ssenarist o'z kabinetidan tasdiqlangan ssenariyni kiritadi — pul avtomatik hisoblanadi.
 SCENARIST_PAY = {"Xonzoda": 100000, "Umida": 50000}
 
+# Kadr Studio xarajatlari uchun tayyor nomlar (+ "Boshqa" izoh bilan).
+STUDIO_EXPENSE_NAMES = [
+    "Studio ijarasi", "WiFi", "Kommunalka", "Kunlik tushlik", "Suv",
+    "Shirinliklar", "Kofe", "Shakar", "Quruq Sut", "Salfetka",
+]
+
 # Montajyor lavozimlari (o'yin rank tizimi). Har lavozimga o'tish uchun
 # RANK_STEP ta muvaffaqiyatli qabul qilingan video kerak.
 RANK_STEP = 100
@@ -369,6 +375,9 @@ def init_db():
         id {pk}, author TEXT, project TEXT DEFAULT '', client TEXT DEFAULT '', title TEXT,
         amount INTEGER DEFAULT 0, status TEXT DEFAULT 'active', sdate TEXT,
         note TEXT DEFAULT '', created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS studio_expenses (
+        id {pk}, name TEXT, amount INTEGER DEFAULT 0, edate TEXT,
+        note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
 
     # users jadvaliga login ustunlarini qo'shish (idempotent)
     add_column_if_missing(conn, "users", "username", "TEXT")
@@ -1409,7 +1418,7 @@ def api_studio(user):
         "operators": list(STUDIO_OPERATORS),
         "shootTypes": SHOOT_TYPES,
         "operatorPay": OPERATOR_PAY,
-        "canFinance": user["role"] == "ceo",
+        "canFinance": can_edit_studio(user),
         "canEdit": can_edit_studio(user),
         "me": user["name"],
         "bookings": [dict(r) for r in rows],
@@ -1524,45 +1533,99 @@ def api_delete_studio_booking(user, bid):
 
 
 def api_studio_finance(user):
-    """Faqat CEO — oyma-oy tushum, operator puli, sof foyda, to'langan va qarz.
-    Bekor qilingan bronlar hisobga OLINMAYDI."""
+    """Dilshod+Gulmira — oyma-oy tushum, operator puli, xarajat, sof foyda.
+    Bekor qilingan bronlar hisobga OLINMAYDI. Sof foyda = tushum − operator puli − xarajatlar."""
     conn = get_db()
     rows = [dict(r) for r in conn.execute("SELECT * FROM studio_bookings").fetchall()]
+    exps = [dict(r) for r in conn.execute("SELECT * FROM studio_expenses").fetchall()]
     conn.close()
     active = [r for r in rows if (r.get("status") or "active") != "bekor_qilindi"]
     months = {}
-    for r in active:
-        ym = (r.get("bdate") or "")[:7] or "—"
-        m = months.setdefault(ym, {
-            "month": ym, "total": 0, "operatorPay": 0, "net": 0, "paid": 0, "debt": 0,
-            "count": 0, "white": 0, "black": 0,
+
+    def M(ym):
+        return months.setdefault(ym or "—", {
+            "month": ym or "—", "total": 0, "operatorPay": 0, "expenses": 0, "net": 0,
+            "paid": 0, "debt": 0, "count": 0, "white": 0, "black": 0,
         })
+
+    for r in active:
+        m = M((r.get("bdate") or "")[:7])
         amt = r["amount"] or 0
         pa = r.get("paid_amount") or 0
-        op = r.get("operator_pay") or 0
         m["total"] += amt
-        m["operatorPay"] += op
+        m["operatorPay"] += r.get("operator_pay") or 0
         m["paid"] += pa
         m["debt"] += max(amt - pa, 0)
         m["count"] += 1
         if r["room"] in ("white", "black"):
             m[r["room"]] += amt
+    for e in exps:
+        M((e.get("edate") or "")[:7])["expenses"] += e.get("amount") or 0
     for m in months.values():
-        # Sof foyda = tushum − operator puli (− xarajatlar 3-bosqichda qo'shiladi)
-        m["net"] = m["total"] - m["operatorPay"]
+        m["net"] = m["total"] - m["operatorPay"] - m["expenses"]
+
     total_all = sum(r["amount"] or 0 for r in active)
     op_all = sum(r.get("operator_pay") or 0 for r in active)
     paid_all = sum(r.get("paid_amount") or 0 for r in active)
+    exp_all = sum(e.get("amount") or 0 for e in exps)
     return {
         "rooms": STUDIO_ROOMS,
         "months": sorted(months.values(), key=lambda x: x["month"], reverse=True),
         "totalAll": total_all,
         "operatorPayAll": op_all,
-        "netAll": total_all - op_all,
+        "expensesAll": exp_all,
+        "netAll": total_all - op_all - exp_all,
         "paidAll": paid_all,
         "debtAll": max(total_all - paid_all, 0),
         "count": len(active),
     }
+
+
+def api_studio_expenses(user):
+    """Kadr Studio xarajatlari — Dilshod+Gulmira ko'radi va kiritadi."""
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM studio_expenses ORDER BY edate DESC, id DESC").fetchall()]
+    conn.close()
+    by_month = {}
+    for r in rows:
+        ym = (r.get("edate") or "")[:7] or "—"
+        by_month[ym] = by_month.get(ym, 0) + (r.get("amount") or 0)
+    return {
+        "names": STUDIO_EXPENSE_NAMES,
+        "expenses": rows,
+        "totalAll": sum(r.get("amount") or 0 for r in rows),
+        "byMonth": [{"month": k, "total": v} for k, v in sorted(by_month.items(), reverse=True)],
+    }
+
+
+def api_create_studio_expense(user, b):
+    try:
+        amount = int(b.get("amount") or 0)
+    except (ValueError, TypeError):
+        amount = 0
+    name = (b.get("name") or "Boshqa").strip() or "Boshqa"
+    edate = b.get("edate") or uz_today().isoformat()
+    conn = get_db()
+    sql = "INSERT INTO studio_expenses (name, amount, edate, note, created_by) VALUES (?,?,?,?,?)"
+    params = (name, amount, edate, b.get("note") or "", user["name"])
+    if IS_PG:
+        eid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        eid = conn.execute(sql, params).lastrowid
+    log_audit(conn, user["name"], "studio xarajat kiritdi", f"#{eid} {name} · {amount} so'm")
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM studio_expenses WHERE id=?", (eid,)).fetchone())
+    conn.close()
+    return row
+
+
+def api_delete_studio_expense(user, eid):
+    conn = get_db()
+    conn.execute("DELETE FROM studio_expenses WHERE id=?", (eid,))
+    log_audit(conn, user["name"], "studio xarajat o'chirdi", f"#{eid}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 # ------------------------------------------------------------
@@ -1829,7 +1892,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/studio":
             return self._forbid() if not can_view_studio(user) else self._json(api_studio(user))
         if path == "/api/studio/finance":
-            return self._forbid() if role != "ceo" else self._json(api_studio_finance(user))
+            return self._forbid() if not can_edit_studio(user) else self._json(api_studio_finance(user))
+        if path == "/api/studio/expenses":
+            return self._forbid() if not can_edit_studio(user) else self._json(api_studio_expenses(user))
         if path == "/api/shoots":
             return self._forbid() if role not in APPROVER_ROLES else self._json(api_shoots(user, show_all))
         if path == "/api/scenarist":
@@ -1881,6 +1946,10 @@ class Handler(BaseHTTPRequestHandler):
             if not can_edit_studio(user):
                 return self._forbid()
             return self._json(api_create_studio_booking(user, b), 201)
+        if path == "/api/studio/expenses":
+            if not can_edit_studio(user):
+                return self._forbid()
+            return self._json(api_create_studio_expense(user, b), 201)
         if len(seg) == 4 and seg[1] == "studio" and seg[3] == "pay":
             if not can_edit_studio(user):
                 return self._forbid()
@@ -1960,6 +2029,11 @@ class Handler(BaseHTTPRequestHandler):
         if len(seg) == 3 and seg[1] == "videos":
             vid = self._int(seg[2])
             return self._json(api_delete_video(user, vid)) if vid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "studio" and seg[2] == "expenses":
+            if not can_edit_studio(user):
+                return self._forbid()
+            eid = self._int(seg[3])
+            return self._json(api_delete_studio_expense(user, eid)) if eid else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 3 and seg[1] == "studio":
             if not can_edit_studio(user):
                 return self._forbid()

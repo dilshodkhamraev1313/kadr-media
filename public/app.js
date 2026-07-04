@@ -257,7 +257,8 @@ function buildTopbarActions() {
   if (VIEW === 'myscripts') html += `<button class="btn-primary" data-act="add-scenarist">+ Ssenariy</button>`;
   if (VIEW === 'finance') html += `<button class="btn-primary" data-act="add-payment">+ To'lov</button>`;
   if (VIEW === 'studio') {
-    if (role === 'ceo') html += `<button class="btn-ghost" data-act="studio-finance">💰 Pul hisoboti</button>`;
+    if (studioCanEdit()) html += `<button class="btn-ghost" data-act="studio-expenses">🧾 Xarajatlar</button>`;
+    if (studioCanEdit()) html += `<button class="btn-ghost" data-act="studio-finance">💰 Pul hisoboti</button>`;
     if (studioCanEdit()) html += `<button class="btn-primary" data-act="add-booking">+ Bron qilish</button>`;
   }
   a.innerHTML = html;
@@ -272,6 +273,7 @@ function buildTopbarActions() {
     if (act === 'add-payment') openPaymentModal();
     if (act === 'add-booking') openStudioBookingModal();
     if (act === 'studio-finance') openStudioFinanceModal();
+    if (act === 'studio-expenses') openStudioExpensesModal();
   }));
 }
 
@@ -818,6 +820,7 @@ async function openStudioFinanceModal() {
       <div class="mrow"><span>${esc(rooms.black.label)}</span><b>${money(mo.black)}</b></div>
       <div class="mrow" style="border-top:1px solid var(--border);padding-top:6px"><span>Tushum</span><b>${money(mo.total)}</b></div>
       <div class="mrow"><span style="color:var(--pink)">Operator puli</span><b style="color:var(--pink)">−${money(mo.operatorPay)}</b></div>
+      <div class="mrow"><span style="color:var(--pink)">Xarajatlar</span><b style="color:var(--pink)">−${money(mo.expenses)}</b></div>
       <div class="mrow"><span>Sof foyda</span><b>${money(mo.net)}</b></div>
       <div class="mrow"><span style="color:var(--green)">To'langan</span><b style="color:var(--green)">${money(mo.paid)}</b></div>
       <div class="mrow"><span style="color:var(--orange)">Qarz</span><b style="color:var(--orange)">${money(mo.debt)}</b></div>
@@ -826,10 +829,55 @@ async function openStudioFinanceModal() {
     <div class="stats-grid" style="margin-bottom:14px">
       ${statTile('💰', money(f.totalAll), 'Jami tushum', 'blue')}
       ${statTile('👤', money(f.operatorPayAll), 'Operator puli', 'purple')}
+      ${statTile('🧾', money(f.expensesAll || 0), 'Xarajatlar', 'orange')}
       ${statTile('📈', money(f.netAll), 'Sof foyda', 'green')}
-      ${statTile('⏳', money(f.debtAll), 'Qarz', 'orange')}
     </div>
     <div class="fin-months">${rows}</div>`);
+}
+
+async function openStudioExpensesModal() {
+  const f = await api('/api/studio/expenses');
+  const names = f.names || [];
+  const nameOpts = names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('') + `<option value="__other">Boshqa harajat...</option>`;
+  const list = (f.expenses || []).map((e) => `
+    <div class="day-row" style="cursor:default">
+      <span class="dr-main"><b>${esc(e.name)}</b>${e.note ? `<span class="muted"> · ${esc(e.note)}</span>` : ''}<div class="muted" style="font-size:12px">📅 ${fmtDate(e.edate)} · ${esc(e.created_by || '')}</div></span>
+      <b style="color:var(--pink)">−${money(e.amount)}</b>
+      <button class="mini-btn red" data-expdel="${e.id}">🗑</button>
+    </div>`).join('') || '<div class="muted" style="padding:8px 0">Hali xarajat yo\'q</div>';
+  openModal('🧾 Kadr Studio — xarajatlar', `
+    <div class="stats-grid" style="margin-bottom:14px">
+      ${statTile('🧾', money(f.totalAll), 'Jami xarajat', 'orange')}
+    </div>
+    <div class="panel" style="margin-bottom:14px">
+      <div class="field"><label>Xarajat nomi</label><select id="ex_name">${nameOpts}</select></div>
+      <div id="ex_otherwrap" class="field" style="display:none"><label>Boshqa nomi</label><input id="ex_other" placeholder="masalan: taksi" /></div>
+      <div class="field-row">
+        <div class="field"><label>Summa (so'm)</label><input id="ex_amt" type="number" inputmode="numeric" placeholder="masalan: 200000" /></div>
+        <div class="field"><label>Sana</label><input id="ex_date" type="date" /></div>
+      </div>
+      <div class="field"><label>Izoh (ixtiyoriy)</label><input id="ex_note" /></div>
+      <button class="btn-save" id="ex_save">+ Xarajat qo'shish</button>
+    </div>
+    <div class="day-list">${list}</div>`,
+  () => {
+    $('#ex_name').addEventListener('change', () => {
+      $('#ex_otherwrap').style.display = $('#ex_name').value === '__other' ? '' : 'none';
+    });
+    $('#ex_save').addEventListener('click', async () => {
+      let name = $('#ex_name').value;
+      if (name === '__other') name = $('#ex_other').value.trim() || 'Boshqa';
+      const amount = parseInt($('#ex_amt').value || '0', 10);
+      if (amount <= 0) { toast('Summani kiriting'); return; }
+      await api('/api/studio/expenses', { method: 'POST', body: JSON.stringify({ name, amount, edate: $('#ex_date').value || null, note: $('#ex_note').value }) });
+      toast('🧾 Xarajat qo\'shildi'); openStudioExpensesModal();
+    });
+    $('#modalBody').querySelectorAll('[data-expdel]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Xarajatni o\'chirasizmi?')) return;
+      await api(`/api/studio/expenses/${b.dataset.expdel}`, { method: 'DELETE' });
+      toast('O\'chirildi'); openStudioExpensesModal();
+    }));
+  });
 }
 
 // ============================================================
