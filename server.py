@@ -2277,11 +2277,20 @@ def is_attend_user(user):
 
 
 def _ontime_days(conn, name, today):
+    """Shu oyda o'z vaqtida kelgan ish kunlari (yakshanba hisobga olinmaydi)."""
     ym = today.strftime("%Y-%m")
-    return conn.execute(
-        "SELECT COUNT(*) AS n FROM attendance WHERE person=? AND adate LIKE ? AND on_time=1",
+    rows = conn.execute(
+        "SELECT adate FROM attendance WHERE person=? AND adate LIKE ? AND on_time=1",
         (name, ym + "%"),
-    ).fetchone()["n"] or 0
+    ).fetchall()
+    cnt = 0
+    for r in rows:
+        try:
+            if datetime.date.fromisoformat(r["adate"]).weekday() != 6:  # yakshanba emas
+                cnt += 1
+        except (ValueError, TypeError):
+            cnt += 1
+    return cnt
 
 
 def _record_attendance(conn, person, source):
