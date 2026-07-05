@@ -1920,17 +1920,47 @@ def _montaj_earn(conn, name):
     return conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi')", (name,)).fetchone()["s"] or 0
 
 
+LEAD_STAGES = ("ssenariy", "syomka", "montaj", "tasdiq", "joylash")
+
+
+def _norm_name(s):
+    """Loyiha nomini taqqoslash uchun soddalashtiradi (registrsiz, umumiy so'zlarsiz)."""
+    s = (s or "").lower().strip()
+    for w in ("loyihasi", "loyiha", "treding", "trading", "(", ")"):
+        s = s.replace(w, " ")
+    return " ".join(s.split())
+
+
+def _find_project(projects, cfg_name):
+    """Config nomiga mos loyihani topadi (aniq yoki kuchli so'z mosligi bo'yicha)."""
+    key = _norm_name(cfg_name)
+    ktok = set(key.split())
+    for p in projects:
+        pn = _norm_name(p["name"])
+        if pn == key:
+            return p
+        common = ktok & set(pn.split())
+        if any(len(w) > 3 for w in common):  # kamida bitta uzun so'z umumiy
+            return p
+    return None
+
+
 def _leadership_pay(conn, name, rate):
-    """Har rahbarlik loyihasi uchun $50 (deadline o'tmagan) yoki $25 (o'tib ketgan)."""
-    today = uz_today().isoformat()
+    """Har rahbarlik loyihasi uchun: 5 bosqich (ssenariy/syomka/montaj/tasdiq/joylash)
+    hammasi 'tayyor' bo'lsa — to'liq $50, aks holda $25. Loyiha topilmasa — to'liq (baholab bo'lmaydi)."""
+    projects = [dict(r) for r in conn.execute("SELECT * FROM projects").fetchall()]
     total, details = 0, []
-    for pname in LEADERSHIP.get(name, []):
-        row = conn.execute("SELECT deadline FROM projects WHERE name=?", (pname,)).fetchone()
-        deadline = ((row["deadline"] if row else "") or "")
-        full = (not deadline) or (deadline >= today)
-        usd = LEADERSHIP_USD_FULL if full else LEADERSHIP_USD_HALF
+    for cfg_name in LEADERSHIP.get(name, []):
+        p = _find_project(projects, cfg_name)
+        if p:
+            fully = all((p.get(st) or "") == "tayyor" for st in LEAD_STAGES)
+            matched = p["name"]
+        else:
+            fully = True  # dashboard'da yo'q — to'liq deb hisoblanadi
+            matched = None
+        usd = LEADERSHIP_USD_FULL if fully else LEADERSHIP_USD_HALF
         total += usd * rate
-        details.append({"project": pname, "usd": usd, "full": full})
+        details.append({"project": cfg_name, "matched": matched, "usd": usd, "full": fully})
     return total, details
 
 
@@ -1986,7 +2016,11 @@ def compute_salary(conn, name, rate):
         comps.append({"label": lbl, "amount": amt, "kind": kind})
     if cfg.get("lead"):
         lp, det = _leadership_pay(conn, name, rate)
-        comps.append({"label": f"Rahbarlik ({len(det)} loyiha)", "amount": lp, "kind": "lead", "detail": det})
+        nfull = sum(1 for d in det if d["full"])
+        nhalf = len(det) - nfull
+        lbl = f"Rahbarlik ({len(det)} loyiha"
+        lbl += f" · {nfull} to'liq" + (f", {nhalf} yarim" if nhalf else "") + ")"
+        comps.append({"label": lbl, "amount": lp, "kind": "lead", "detail": det})
     if cfg.get("operator"):
         comps.append({"label": "Operator syomka puli", "amount": _op_earn(conn, name), "kind": "auto"})
     if cfg.get("scenarist"):
