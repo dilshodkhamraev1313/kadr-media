@@ -69,6 +69,74 @@ const initials = (n) => (n || '?').trim().split(/\s+/).map((w) => w[0]).slice(0,
 const colorFor = (n) => { let h = 0; for (const c of (n || '')) h = c.charCodeAt(0) + ((h << 5) - h); return COLORS[Math.abs(h) % COLORS.length]; };
 const money = (n) => String(n || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + " so'm";
 
+// ---------- Avatar ----------
+// Kartalar uchun avatar HTML (rasm bo'lsa rasm, bo'lmasa bosh harflar)
+function avatarEl(name, color, avatar, cls) {
+  if (avatar) return `<div class="${cls} has-photo" style="background-image:url('${esc(avatar)}')"></div>`;
+  return `<div class="${cls}" style="background:${color || colorFor(name)}">${initials(name)}</div>`;
+}
+// Mavjud DOM elementiga avatar qo'llash
+function applyAvatar(el, name, color, avatar) {
+  if (!el) return;
+  if (avatar) {
+    el.textContent = '';
+    el.classList.add('has-photo');
+    el.style.backgroundImage = `url('${avatar}')`;
+    el.style.backgroundColor = 'transparent';
+  } else {
+    el.classList.remove('has-photo');
+    el.textContent = initials(name);
+    el.style.backgroundImage = '';
+    el.style.background = color || colorFor(name);
+  }
+}
+// Rasmni kichraytirib data URL (JPEG ~256px) qaytaradi
+function resizeImage(file, max = 256) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(max / img.width, max / img.height, 1);
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(cv.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = reject;
+    const fr = new FileReader();
+    fr.onload = () => { img.src = fr.result; };
+    fr.onerror = reject;
+    fr.readAsDataURL(file);
+  });
+}
+// Sidebar avatarni bosib rasm yuklash
+function setupAvatarUpload() {
+  const av = $('#meAvatar');
+  if (!av || av._wired) return;
+  av._wired = true;
+  av.classList.add('editable');
+  av.title = 'Rasm qo\'yish uchun bosing';
+  let inp = $('#avatarInput');
+  if (!inp) {
+    inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*'; inp.id = 'avatarInput'; inp.style.display = 'none';
+    document.body.appendChild(inp);
+  }
+  av.addEventListener('click', () => inp.click());
+  inp.addEventListener('change', async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    try {
+      const dataUrl = await resizeImage(f, 256);
+      const res = await api('/api/avatar', { method: 'POST', body: JSON.stringify({ avatar: dataUrl }) });
+      if (res.error) { toast(res.error); return; }
+      ME.avatar = dataUrl;
+      applyAvatar($('#meAvatar'), ME.name, ME.color, ME.avatar);
+      toast('📷 Rasm qo\'yildi'); render();
+    } catch (e) { toast('Rasmni yuklab bo\'lmadi'); }
+    inp.value = '';
+  });
+}
+
 async function api(url, opts = {}) {
   const r = await fetch(url, { headers: { 'Content-Type': 'application/json', 'X-Token': TOKEN || '' }, ...opts });
   if (r.status === 401) { doLogout(); throw new Error('401'); }
@@ -132,8 +200,8 @@ async function startApp() {
   $('#app').classList.remove('hidden');
   $('#meName').textContent = ME.name;
   $('#meRole').textContent = ME.title || ME.role;
-  $('#meAvatar').textContent = initials(ME.name);
-  $('#meAvatar').style.background = ME.color || colorFor(ME.name);
+  applyAvatar($('#meAvatar'), ME.name, ME.color, ME.avatar);
+  setupAvatarUpload();
   try { TIERS = await api('/api/tiers'); } catch (e) { TIERS = {}; }
   try { RANKS = await api('/api/ranks'); } catch (e) { RANKS = { ranks: [], prices: {}, step: 100 }; }
   buildNav();
@@ -1385,7 +1453,7 @@ function editorCard(e) {
   const proj = e.byProject.slice(0, 3).map((p) => `${esc(p.project)}: ${p.count}`).join(' · ');
   return `
     <div class="team-card">
-      <div class="team-head"><div class="team-av" style="background:${e.color || colorFor(e.name)}">${initials(e.name)}</div>
+      <div class="team-head">${avatarEl(e.name, e.color, e.avatar, 'team-av')}
         <div><div class="team-name">${esc(e.name)}</div><div class="team-role">${e.accepted} video · ${proj || 'hozircha yo\'q'}</div></div></div>
       ${rankProgressBar(e)}
       <div class="money-rows">
@@ -1401,9 +1469,32 @@ function editorCard(e) {
 // ============================================================
 //  CABINET (montajchining o'zi)
 // ============================================================
+// Kelish kartasi (kruzhok/Keldim) — kabinetlarda ishlatiladi
+async function attendanceCardHTML() {
+  const att = await api('/api/attendance').catch(() => ({}));
+  if (!att.amAttend || !att.me) return '';
+  const m = att.me; const inn = m.todayIn;
+  return `<div class="rank-hero ${inn && m.todayOnTime ? 'rank-elite' : ''}" style="margin-bottom:16px">
+    <div class="rh-left"><div class="rh-icon">${inn ? (m.todayOnTime ? '🌅' : '🟡') : '⏰'}</div>
+      <div><div class="rh-label">${inn ? (m.todayOnTime ? "O'z vaqtida keldingiz" : 'Kech keldingiz') : 'Bugun belgilanmagan'}</div>
+        <div class="rh-sub">${inn ? ('Bugun ' + m.todayTime + ' da') : (att.limit + ' gacha kelsangiz — o\'z vaqtida')}</div></div></div>
+    <div class="rh-prog">
+      <div class="muted">Shu oy o'z vaqtida: <b style="color:var(--green)">${m.onTimeDays}</b> · kech: <b style="color:var(--orange)">${m.lateDays}</b> · intizom: <b>${money(m.intizom)}</b></div>
+      ${!inn ? `<button class="btn-save" id="checkin_btn" style="max-width:220px;margin-top:10px">✋ Keldim</button>` : ''}
+    </div></div>`;
+}
+function bindCheckin() {
+  const ci = $('#checkin_btn');
+  if (ci) ci.addEventListener('click', async () => {
+    const res = await api('/api/attendance/checkin', { method: 'POST', body: '{}' });
+    toast(res.on_time ? '🌅 O\'z vaqtida belgilandi' : '🟡 Kech belgilandi'); render();
+  });
+}
+
 async function viewCabinet() {
   const c = await api('/api/cabinet');
   DATA.cabinet = c;
+  const attCard = await attendanceCardHTML();
   const grouped = c.byProject.map((p) => `<div class="mrow"><span>${esc(p.project)}</span><b>${p.count} video</b></div>`).join('') || '<div class="muted">Hozircha tasdiqlangan video yo\'q</div>';
   const pays = c.payments.map((p) => `<div class="pay-row"><div><b>${money(p.amount)}</b><div class="muted">${fmtDate(p.pdate)} · ${esc(p.note) || '—'}</div></div><div class="muted">${esc(p.paid_by)}</div></div>`).join('') || '<div class="muted">To\'lov tarixi yo\'q</div>';
   const todo = (c.videosList || []).filter((v) => v.status === 'biriktirildi' || v.status === 'qaytarildi');
@@ -1428,6 +1519,7 @@ async function viewCabinet() {
       </div>
     </div>`;
   $('#content').innerHTML = `
+    ${attCard}
     ${rankHero}
     <div class="stats-grid">
       ${statTile('🎬', c.toDo, 'Montaj qilish kerak', 'orange')}
@@ -1442,6 +1534,7 @@ async function viewCabinet() {
       <div class="panel"><h3>💸 To'lov tarixim</h3>${pays}</div>
     </div>`;
   bindVideoCards();
+  bindCheckin();
 }
 
 // ============================================================
@@ -1451,7 +1544,7 @@ async function viewFinance() {
   const f = await api('/api/finance');
   DATA.finance = f;
   const proj = f.byProject.map((p) => `<div class="mrow"><span>${esc(p.project)}</span><b>${money(p.cost)}</b></div>`).join('') || '<div class="muted">Ma\'lumot yo\'q</div>';
-  const eds = f.editors.map((e) => `<div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${e.color || colorFor(e.name)}">${initials(e.name)}</div>
+  const eds = f.editors.map((e) => `<div class="ceo-item"><div class="ci-left">${avatarEl(e.name, e.color, e.avatar, 'mini-av')}
     <div><div class="ci-name">${esc(e.name)}</div><div class="ci-sub">${e.accepted} video · qolgan ${money(e.remaining)}</div></div></div>
     <span class="pill green">${money(e.earned)}</span></div>`).join('');
   const projInc = (f.projectIncome || []).map((p) => `<div class="mrow"><span>${esc(p.name)}</span><b>${money(p.fee)}</b></div>`).join('') || '<div class="muted">Loyihalarga oylik to\'lov kiritilmagan</div>';

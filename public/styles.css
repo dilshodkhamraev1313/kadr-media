@@ -125,6 +125,14 @@ body {
 }
 .me-name { font-weight: 600; font-size: 14px; }
 .me-role { color: var(--text-3); font-size: 11px; }
+/* Avatar rasm (bosh harflar o'rniga) */
+.has-photo { background-size: cover !important; background-position: center !important; color: transparent !important; }
+.me-avatar.editable { cursor: pointer; position: relative; }
+.me-avatar.editable::after {
+  content: '📷'; position: absolute; right: -3px; bottom: -3px; font-size: 11px;
+  background: var(--surface-2); border-radius: 50%; width: 17px; height: 17px;
+  display: flex; align-items: center; justify-content: center; border: 1px solid var(--border);
+}
 .logout-btn {
   width: 100%; padding: 9px; border-radius: 10px;
   background: var(--surface); border: 1px solid var(--border);

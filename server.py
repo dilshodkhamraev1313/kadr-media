@@ -98,9 +98,13 @@ STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun
 DAILY_CLOSE_USERS = ("Said", "Gulmira", "Xonzoda", "Umida")
 WORKDAYS_PER_MONTH = 25  # KPI/intizom bo'linadigan ish kunlari (yakshanba dam)
 
-# Kelish nazorati (intizom 500k) shu 3 kishida. Telegram username → ism.
-ATTENDANCE_USERS = ("Gulmira", "Said", "Xonzoda")
-TELEGRAM_ATTEND = {"baxt_mira": "Gulmira", "said_israilov": "Said", "pilotflight6": "Xonzoda"}
+# Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
+ATTENDANCE_USERS = ("Gulmira", "Said", "Xonzoda", "Umid", "Umida", "Sardor", "Shodiya")
+TELEGRAM_ATTEND = {
+    "baxt_mira": "Gulmira", "said_israilov": "Said", "pilotflight6": "Xonzoda",
+    "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
+    # "Umida": username hali berilmagan — qo'lda "Keldim" ishlatadi
+}
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
 INTIZOM_FULL = 500000        # to'liq intizom (25 kun × 20 000)
@@ -124,11 +128,12 @@ SALARY = {
              "usd": {"Sifat nazorati": 100, "KPI": 50}, "lead": True, "operator": True},
     "Xonzoda": {"title": "Ssenarist + koordinator", "som": {"Fiksa": 2000000, "Intizom": 500000},
                 "usd": {"Koordinatorlik": 100}, "lead": True, "scenarist": True},
-    "Umida": {"title": "SMM + ssenarist yordamchi", "usd": {"Stories": 100, "SMM": 100},
-              "scenarist": True},
-    "Sardor": {"title": "Montajchi", "usd": {"Fiksa": 70}, "montaj": True},
-    "Umid": {"title": "Montajchi + operator", "usd": {"Fiksa": 70}, "montaj": True, "operator": True},
-    "Shodiya": {"title": "Montajchi", "usd": {"Fiksa": 70}, "montaj": True},
+    "Umida": {"title": "SMM + ssenarist yordamchi", "som": {"Intizom": 500000},
+              "usd": {"Stories": 100, "SMM": 100}, "scenarist": True},
+    "Sardor": {"title": "Montajchi", "som": {"Fiksa": 500000, "Intizom": 500000}, "montaj": True},
+    "Umid": {"title": "Montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
+             "montaj": True, "operator": True},
+    "Shodiya": {"title": "Montajchi", "som": {"Fiksa": 500000, "Intizom": 500000}, "montaj": True},
 }
 
 # Montajyor lavozimlari (o'yin rank tizimi). Har lavozimga o'tish uchun
@@ -453,6 +458,7 @@ def init_db():
     add_column_if_missing(conn, "users", "salt", "TEXT")
     add_column_if_missing(conn, "users", "password_hash", "TEXT")
     add_column_if_missing(conn, "users", "client_name", "TEXT")
+    add_column_if_missing(conn, "users", "avatar", "TEXT")
     # projects: oylik reja + har bosqich bo'yicha bajarilgan sanoq
     add_column_if_missing(conn, "projects", "plan", "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "projects", "monthly_fee", "INTEGER DEFAULT 0")
@@ -950,6 +956,21 @@ def api_change_password(user, b):
     return {"ok": True}
 
 
+def api_set_avatar(user, b):
+    """Foydalanuvchi o'z avatar rasmini yuklaydi (data URL, kichraytirilgan JPEG)."""
+    avatar = b.get("avatar")
+    if avatar is not None and avatar != "":
+        if not isinstance(avatar, str) or not avatar.startswith("data:image"):
+            return {"ok": False, "error": "Rasm formati noto'g'ri"}
+        if len(avatar) > 400000:  # ~300KB rasm chegarasi
+            return {"ok": False, "error": "Rasm juda katta (kichikroq tanlang)"}
+    conn = get_db()
+    conn.execute("UPDATE users SET avatar=? WHERE id=?", (avatar or None, user["id"]))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "avatar": avatar or None}
+
+
 def log_audit(conn, actor, action, detail=""):
     conn.execute(
         "INSERT INTO audit (actor, action, detail, created_at) VALUES (?,?,?,?)",
@@ -1364,12 +1385,13 @@ def editor_summary(conn, name):
 
 def api_editors(user):
     conn = get_db()
-    editors = conn.execute("SELECT name, color, title FROM users WHERE role='editor' ORDER BY name").fetchall()
+    editors = conn.execute("SELECT name, color, title, avatar FROM users WHERE role='editor' ORDER BY name").fetchall()
     result = []
     for e in editors:
         s = editor_summary(conn, e["name"])
         s["color"] = e["color"]
         s["title"] = e["title"]
+        s["avatar"] = e["avatar"]
         result.append(s)
     conn.close()
     return result
@@ -2582,6 +2604,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_logout(self.headers.get("X-Token", "")))
         if path == "/api/change-password":
             return self._json(api_change_password(user, b))
+        if path == "/api/avatar":
+            return self._json(api_set_avatar(user, b))
         if path == "/api/projects":
             if r not in APPROVER_ROLES:
                 return self._forbid()
