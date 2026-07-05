@@ -2134,6 +2134,18 @@ def api_attendance(user):
     return res
 
 
+def api_clear_attendance(user, b):
+    """CEO — noto'g'ri belgilangan kelishni tozalaydi (person + sana)."""
+    person = b.get("person") or ""
+    adate = b.get("date") or uz_today().isoformat()
+    conn = get_db()
+    conn.execute("DELETE FROM attendance WHERE person=? AND adate=?", (person, adate))
+    log_audit(conn, user["name"], "kelishni tozaladi", f"{person} · {adate}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 def api_setup_webhook(user):
     """CEO — botning webhook manzilini Telegramga ro'yxatdan o'tkazadi."""
     base = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
@@ -2386,6 +2398,10 @@ class Handler(BaseHTTPRequestHandler):
             if r != "ceo":
                 return self._forbid()
             return self._json(api_setup_webhook(user))
+        if path == "/api/attendance/clear":
+            if r != "ceo":
+                return self._forbid()
+            return self._json(api_clear_attendance(user, b))
         if len(seg) == 4 and seg[1] == "scenarist" and seg[3] == "cancel":
             if not is_scenarist(user):
                 return self._forbid()
