@@ -88,6 +88,38 @@ STUDIO_EXPENSE_NAMES = [
     "Shirinliklar", "Kofe", "Shakar", "Quruq Sut", "Salfetka",
 ]
 
+# --- Maosh (payroll) konfiguratsiyasi ---
+DEFAULT_USD_RATE = 12000  # 1$ = 12 000 so'm (sozlamadan o'zgartiriladi)
+LEADERSHIP_USD_FULL = 50  # loyiha to'liq (deadline o'tmagan) bo'lsa
+LEADERSHIP_USD_HALF = 25  # deadline o'tib ketgan bo'lsa
+STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun (har bron)
+
+# Har xodim rahbarlik qiladigan loyihalar (nomi projects jadvalidagi bilan mos).
+LEADERSHIP = {
+    "Said": ["Namuna mebel", "Nova school", "Nodirbek Primqulov (arab tili)"],
+    "Xonzoda": ["Amarkets (Bekzod Treding)", "Fidda kumush taqinchoqlar"],
+    "Gulmira": ["Umida-targetolog", "Kadr studio"],
+}
+
+# Har xodim maoshi tarkibi:
+#  som  — to'g'ridan-to'g'ri so'mda (fiksa, intizom)
+#  usd  — dollarda (kursda so'mga aylanadi)
+#  flags — dinamik qismlar: lead(rahbarlik), operator, scenarist, montaj, studio_bonus
+SALARY = {
+    "Dilshod Khamraev": {"title": "CEO", "usd": {"CEO maosh": 500}},
+    "Gulmira": {"title": "Kadr Studio rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
+                "lead": True, "studio_bonus": True},
+    "Said": {"title": "Operator + loyiha rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
+             "usd": {"Sifat nazorati": 100, "KPI": 50}, "lead": True, "operator": True},
+    "Xonzoda": {"title": "Ssenarist + koordinator", "som": {"Fiksa": 2000000, "Intizom": 500000},
+                "usd": {"Koordinatorlik": 100}, "lead": True, "scenarist": True},
+    "Umida": {"title": "SMM + ssenarist yordamchi", "usd": {"Stories": 100, "SMM": 100},
+              "scenarist": True},
+    "Sardor": {"title": "Montajchi", "usd": {"Fiksa": 70}, "montaj": True},
+    "Umid": {"title": "Montajchi + operator", "usd": {"Fiksa": 70}, "montaj": True, "operator": True},
+    "Shodiya": {"title": "Montajchi", "usd": {"Fiksa": 70}, "montaj": True},
+}
+
 # Montajyor lavozimlari (o'yin rank tizimi). Har lavozimga o'tish uchun
 # RANK_STEP ta muvaffaqiyatli qabul qilingan video kerak.
 RANK_STEP = 100
@@ -378,6 +410,8 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS studio_expenses (
         id {pk}, name TEXT, amount INTEGER DEFAULT 0, edate TEXT,
         note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS settings (
+        skey TEXT PRIMARY KEY, svalue TEXT)""")
 
     # users jadvaliga login ustunlarini qo'shish (idempotent)
     add_column_if_missing(conn, "users", "username", "TEXT")
@@ -1781,6 +1815,105 @@ def api_delete_scenarist_script(user, sid):
 
 
 # ------------------------------------------------------------
+#  MAOSH (payroll) — fiksa + rahbarlik + dinamik daromadlar
+# ------------------------------------------------------------
+def get_usd_rate():
+    conn = get_db()
+    row = conn.execute("SELECT svalue FROM settings WHERE skey='usd_rate'").fetchone()
+    conn.close()
+    try:
+        return int(row["svalue"]) if row and row["svalue"] else DEFAULT_USD_RATE
+    except (ValueError, TypeError):
+        return DEFAULT_USD_RATE
+
+
+def api_set_usd_rate(user, b):
+    try:
+        v = int(b.get("rate") or 0)
+    except (ValueError, TypeError):
+        v = 0
+    if v <= 0:
+        return {"error": "Noto'g'ri kurs"}
+    conn = get_db()
+    conn.execute("DELETE FROM settings WHERE skey='usd_rate'")
+    conn.execute("INSERT INTO settings (skey, svalue) VALUES ('usd_rate', ?)", (str(v),))
+    log_audit(conn, user["name"], "USD kursini o'zgartirdi", f"1$ = {v} so'm")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "rate": v}
+
+
+def _op_earn(conn, name):
+    a = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM studio_bookings WHERE operator=? AND (status IS NULL OR status<>'bekor_qilindi')", (name,)).fetchone()["s"] or 0
+    b = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM shoots WHERE operator=? AND (status IS NULL OR status<>'bekor_qilindi')", (name,)).fetchone()["s"] or 0
+    return a + b
+
+
+def _scenarist_earn(conn, name):
+    return conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM scenarist_scripts WHERE author=? AND (status IS NULL OR status<>'bekor_qilindi')", (name,)).fetchone()["s"] or 0
+
+
+def _montaj_earn(conn, name):
+    return conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi')", (name,)).fetchone()["s"] or 0
+
+
+def _leadership_pay(conn, name, rate):
+    """Har rahbarlik loyihasi uchun $50 (deadline o'tmagan) yoki $25 (o'tib ketgan)."""
+    today = uz_today().isoformat()
+    total, details = 0, []
+    for pname in LEADERSHIP.get(name, []):
+        row = conn.execute("SELECT deadline FROM projects WHERE name=?", (pname,)).fetchone()
+        deadline = ((row["deadline"] if row else "") or "")
+        full = (not deadline) or (deadline >= today)
+        usd = LEADERSHIP_USD_FULL if full else LEADERSHIP_USD_HALF
+        total += usd * rate
+        details.append({"project": pname, "usd": usd, "full": full})
+    return total, details
+
+
+def _studio_client_bonus(conn):
+    n = conn.execute("SELECT COUNT(*) AS n FROM studio_bookings WHERE (status IS NULL OR status<>'bekor_qilindi')").fetchone()["n"]
+    return (n or 0) * STUDIO_CLIENT_BONUS
+
+
+def compute_salary(conn, name, rate):
+    cfg = SALARY.get(name)
+    if not cfg:
+        return None
+    comps = []
+    for label, som in (cfg.get("som") or {}).items():
+        comps.append({"label": label, "amount": int(som), "kind": "fixed"})
+    for label, usd in (cfg.get("usd") or {}).items():
+        comps.append({"label": f"{label} (${usd})", "amount": int(usd) * rate, "kind": "fixed"})
+    if cfg.get("lead"):
+        lp, det = _leadership_pay(conn, name, rate)
+        comps.append({"label": f"Rahbarlik ({len(det)} loyiha)", "amount": lp, "kind": "lead", "detail": det})
+    if cfg.get("operator"):
+        comps.append({"label": "Operator syomka puli", "amount": _op_earn(conn, name), "kind": "auto"})
+    if cfg.get("scenarist"):
+        comps.append({"label": "Ssenariy puli", "amount": _scenarist_earn(conn, name), "kind": "auto"})
+    if cfg.get("montaj"):
+        comps.append({"label": "Montaj puli", "amount": _montaj_earn(conn, name), "kind": "auto"})
+    if cfg.get("studio_bonus"):
+        comps.append({"label": "Studio mijoz bonusi", "amount": _studio_client_bonus(conn), "kind": "auto"})
+    return {"name": name, "title": cfg.get("title", ""), "components": comps,
+            "total": sum(c["amount"] for c in comps)}
+
+
+def api_payroll(user):
+    rate = get_usd_rate()
+    conn = get_db()
+    if user["role"] == "ceo":
+        people = [p for p in (compute_salary(conn, n, rate) for n in SALARY) if p]
+        conn.close()
+        return {"rate": rate, "isCeo": True, "people": people,
+                "grandTotal": sum(p["total"] for p in people)}
+    me = compute_salary(conn, user["name"], rate)
+    conn.close()
+    return {"rate": rate, "isCeo": False, "me": me}
+
+
+# ------------------------------------------------------------
 #  HTTP Handler
 # ------------------------------------------------------------
 CONTENT_TYPES = {
@@ -1899,6 +2032,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role not in APPROVER_ROLES else self._json(api_shoots(user, show_all))
         if path == "/api/scenarist":
             return self._forbid() if not is_scenarist(user) else self._json(api_scenarist(user))
+        if path == "/api/payroll":
+            if role != "ceo" and user["name"] not in SALARY:
+                return self._forbid()
+            return self._json(api_payroll(user))
         if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "versions":
             sid = self._int(seg[2])
             return self._json(api_script_versions(sid)) if sid else self._json({"error": "Topilmadi"}, 404)
@@ -1976,6 +2113,10 @@ class Handler(BaseHTTPRequestHandler):
             if not is_scenarist(user):
                 return self._forbid()
             return self._json(api_create_scenarist_script(user, b), 201)
+        if path == "/api/settings/usd-rate":
+            if r != "ceo":
+                return self._forbid()
+            return self._json(api_set_usd_rate(user, b))
         if len(seg) == 4 and seg[1] == "scenarist" and seg[3] == "cancel":
             if not is_scenarist(user):
                 return self._forbid()

@@ -153,6 +153,7 @@ const NAV_ITEMS = [
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
+  { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Gulmira', 'Said', 'Xonzoda', 'Umida', 'Sardor', 'Umid', 'Shodiya'] },
 ];
 const NAV_FOR = (role) => NAV_ITEMS.filter((n) => n.roles.includes(role) && (!n.names || (ME && n.names.includes(ME.name))));
 
@@ -204,6 +205,7 @@ const TITLES = {
   qc:        ['Sifat nazorati', 'Montaj qilingan, tasdiq kutayotgan videolar'],
   shoots:    ['Syomkalar', 'Loyiha syomkalari — operator va pul'],
   myscripts: ['Ssenariylarim', 'Tasdiqlangan ssenariylar va hisoblangan pul'],
+  salary:    ['Maosh', 'Fiksa, rahbarlik va daromadlar'],
   studio:    ['Kadr Studio', 'Syomka xonalari bandligi va bronlar'],
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
   editors:   ['Montajchilar', 'Kabinetlar va hisob-kitob'],
@@ -232,6 +234,7 @@ async function render() {
     else if (VIEW === 'qc') await viewQC();
     else if (VIEW === 'shoots') await viewShoots();
     else if (VIEW === 'myscripts') await viewScenarist();
+    else if (VIEW === 'salary') await viewSalary();
     else if (VIEW === 'studio') await viewStudio();
     else if (VIEW === 'editors') await viewEditors();
     else if (VIEW === 'finance') await viewFinance();
@@ -247,7 +250,7 @@ async function render() {
 function buildTopbarActions() {
   const a = $('#topbarActions');
   let html = '';
-  const canSearch = ['projects', 'scripts', 'videos', 'qc', 'shoots', 'joylash', 'editors', 'client', 'cscripts', 'cvideos', 'myvideos'].includes(VIEW);
+  const canSearch = ['projects', 'scripts', 'videos', 'qc', 'shoots', 'salary', 'joylash', 'editors', 'client', 'cscripts', 'cvideos', 'myvideos'].includes(VIEW);
   if (canSearch) html += `<div class="search-box"><span>⌕</span><input id="searchInput" placeholder="Qidirish..." value="${esc(SEARCH)}" /></div>`;
   const role = ME.role;
   if ((VIEW === 'projects') && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-project">+ Loyiha</button>`;
@@ -1056,6 +1059,59 @@ function openScenaristModal() {
       await api('/api/scenarist', { method: 'POST', body: JSON.stringify(body) });
       closeModal(); toast('✍️ Ssenariy kiritildi — pul hisoblandi'); render();
     });
+  });
+}
+
+// ============================================================
+//  MAOSH (payroll)
+// ============================================================
+function salaryCard(p) {
+  const rows = p.components.map((c) => {
+    const cls = c.kind === 'auto' ? 'sal-auto' : (c.kind === 'lead' ? 'sal-lead' : '');
+    return `<div class="mrow ${cls}"><span>${esc(c.label)}</span><b>${money(c.amount)}</b></div>`;
+  }).join('');
+  return `
+    <div class="team-card">
+      <div class="team-head"><div class="team-av" style="background:${colorFor(p.name)}">${initials(p.name)}</div>
+        <div><div class="team-name">${esc(p.name)}</div><div class="team-role">${esc(p.title || '')}</div></div></div>
+      <div class="money-rows">${rows}
+        <div class="mrow big" style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px"><span>Jami maosh</span><b style="color:var(--green)">${money(p.total)}</b></div>
+      </div>
+    </div>`;
+}
+
+async function viewSalary() {
+  const d = await api('/api/payroll');
+  DATA.payroll = d;
+  if (!d.isCeo) {
+    const me = d.me;
+    $('#content').innerHTML = me
+      ? `<div class="cards-grid" style="max-width:520px">${salaryCard(me)}</div>
+         <p class="muted" style="margin-top:14px">💡 Intizom va KPI keyingi bosqichlarda (kelish nazorati, kunlik yopish) aniqlashadi.</p>`
+      : emptyState('Maosh ma\'lumoti yo\'q');
+    return;
+  }
+  const people = d.people.filter((p) => matchSearch(p.name));
+  $('#content').innerHTML = `
+    <div class="stats-grid">
+      ${statTile('💵', money(d.grandTotal), 'Jami oylik jamoa xarajati', 'blue')}
+      ${statTile('👥', d.people.length, 'Xodimlar', 'purple')}
+      ${statTile('💱', '1$ = ' + money(d.rate), 'USD kursi', 'orange')}
+    </div>
+    <div class="panel" style="margin-bottom:16px">
+      <div class="field-row" style="align-items:end">
+        <div class="field" style="margin:0"><label>USD kursi (1$ = ... so'm)</label><input id="usd_rate" type="number" inputmode="numeric" value="${d.rate}" /></div>
+        <button class="btn-save" id="usd_save" style="max-width:180px">💱 Kursni saqlash</button>
+      </div>
+      <p class="muted" style="margin-top:8px">Kursni o'zgartirsangiz — barcha dollarli to'lovlar shu yangi kurs bo'yicha qayta hisoblanadi.</p>
+    </div>
+    <div class="cards-grid">${people.map(salaryCard).join('') || emptyState()}</div>`;
+  $('#usd_save').addEventListener('click', async () => {
+    const rate = parseInt($('#usd_rate').value || '0', 10);
+    if (rate <= 0) { toast('To\'g\'ri kurs kiriting'); return; }
+    const res = await api('/api/settings/usd-rate', { method: 'POST', body: JSON.stringify({ rate }) });
+    if (res.error) { toast(res.error); return; }
+    toast('💱 Kurs yangilandi — qayta hisoblandi'); render();
   });
 }
 
