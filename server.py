@@ -1447,6 +1447,15 @@ def api_finance():
     by_project = {}
     for v in accepted:
         by_project[v["project"] or "—"] = by_project.get(v["project"] or "—", 0) + (v["amount"] or 0)
+    # Kadr Media P&L: loyiha daromadi − jamoa maoshi
+    rate = get_usd_rate()
+    fee_rows = [dict(r) for r in conn.execute("SELECT name, monthly_fee FROM projects WHERE monthly_fee>0 ORDER BY monthly_fee DESC").fetchall()]
+    media_income = sum(p["monthly_fee"] or 0 for p in fee_rows)
+    payroll_total = 0
+    for n in SALARY:
+        s = compute_salary(conn, n, rate)
+        if s:
+            payroll_total += s["total"]
     conn.close()
     top = max(editors, key=lambda e: e["accepted"], default=None)
     return {
@@ -1459,6 +1468,10 @@ def api_finance():
         "topEditorVideos": (top["accepted"] if top else 0),
         "editors": editors,
         "byProject": [{"project": k, "cost": v} for k, v in sorted(by_project.items(), key=lambda x: -x[1])],
+        "mediaIncome": media_income,
+        "payrollTotal": payroll_total,
+        "mediaNet": media_income - payroll_total,
+        "projectIncome": [{"name": p["name"], "fee": p["monthly_fee"]} for p in fee_rows],
     }
 
 
@@ -2498,7 +2511,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/audit":
             return self._forbid() if role not in ADMIN_ROLES else self._json(api_audit())
         if path == "/api/finance":
-            return self._forbid() if role not in ADMIN_ROLES else self._json(api_finance())
+            return self._forbid() if role != "ceo" else self._json(api_finance())
         if path == "/api/studio":
             return self._forbid() if not can_view_studio(user) else self._json(api_studio(user))
         if path == "/api/studio/finance":

@@ -1454,7 +1454,18 @@ async function viewFinance() {
   const eds = f.editors.map((e) => `<div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${e.color || colorFor(e.name)}">${initials(e.name)}</div>
     <div><div class="ci-name">${esc(e.name)}</div><div class="ci-sub">${e.accepted} video · qolgan ${money(e.remaining)}</div></div></div>
     <span class="pill green">${money(e.earned)}</span></div>`).join('');
+  const projInc = (f.projectIncome || []).map((p) => `<div class="mrow"><span>${esc(p.name)}</span><b>${money(p.fee)}</b></div>`).join('') || '<div class="muted">Loyihalarga oylik to\'lov kiritilmagan</div>';
   $('#content').innerHTML = `
+    <div class="sec-label" style="margin-bottom:10px">💵 Kadr Media moliyasi</div>
+    <div class="stats-grid">
+      ${statTile('📥', money(f.mediaIncome || 0), 'Loyiha daromadi (oylik)', 'blue')}
+      ${statTile('📤', money(f.payrollTotal || 0), 'Jamoa maoshi (payroll)', 'orange')}
+      ${statTile((f.mediaNet || 0) >= 0 ? '📈' : '📉', money(f.mediaNet || 0), 'Kadr Media sof foyda', (f.mediaNet || 0) >= 0 ? 'green' : 'red')}
+    </div>
+    <div class="panel" style="margin:12px 0"><h3>📁 Loyihalar oylik daromadi</h3><div class="money-rows">${projInc}</div>
+      <p class="muted" style="margin-top:8px">O'zgartirish: Loyihalar → loyihani oching → "💵 Oylik to'lov".</p></div>
+    <div class="divider"></div>
+    <div class="sec-label" style="margin:14px 0 10px">🎬 Montaj xarajatlari</div>
     <div class="stats-grid">
       ${statTile('📅', money(f.monthCost), 'Shu oy montaj xarajati', 'blue')}
       ${statTile('💰', money(f.totalEarned), 'Jami hisoblangan', 'green')}
@@ -1465,7 +1476,7 @@ async function viewFinance() {
       <div><div class="panel"><h3>👥 Montajchilar daromadi</h3><div class="ceo-list">${eds || emptyState()}</div></div></div>
       <div>
         <div class="panel"><h3>🏆 Eng faol montajchi</h3><div style="font-size:22px;font-weight:800">${esc(f.topEditor) || '—'}</div><div class="muted">${f.topEditorVideos} ta qabul qilingan video</div></div>
-        <div class="panel"><h3>📁 Loyiha bo'yicha xarajat</h3><div class="money-rows">${proj}</div></div>
+        <div class="panel"><h3>📁 Loyiha bo'yicha montaj xarajati</h3><div class="money-rows">${proj}</div></div>
       </div>
     </div>`;
 }
