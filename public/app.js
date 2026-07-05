@@ -844,7 +844,7 @@ async function openStudioFinanceModal() {
 async function openStudioExpensesModal() {
   const f = await api('/api/studio/expenses');
   const names = f.names || [];
-  const nameOpts = names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('') + `<option value="__other">Boshqa harajat...</option>`;
+  const nameSuggest = names.map((n) => `<option value="${esc(n)}"></option>`).join('');
   const list = (f.expenses || []).map((e) => `
     <div class="day-row" style="cursor:default">
       <span class="dr-main"><b>${esc(e.name)}</b>${e.note ? `<span class="muted"> · ${esc(e.note)}</span>` : ''}<div class="muted" style="font-size:12px">📅 ${fmtDate(e.edate)} · ${esc(e.created_by || '')}</div></span>
@@ -856,8 +856,9 @@ async function openStudioExpensesModal() {
       ${statTile('🧾', money(f.totalAll), 'Jami xarajat', 'orange')}
     </div>
     <div class="panel" style="margin-bottom:14px">
-      <div class="field"><label>Xarajat nomi</label><select id="ex_name">${nameOpts}</select></div>
-      <div id="ex_otherwrap" class="field" style="display:none"><label>Boshqa nomi</label><input id="ex_other" placeholder="masalan: taksi" /></div>
+      <div class="field"><label>Xarajat nomi</label>
+        <input id="ex_name" list="ex_names" placeholder="masalan: Studio ijarasi" autocomplete="off" />
+        <datalist id="ex_names">${nameSuggest}</datalist></div>
       <div class="field-row">
         <div class="field"><label>Summa (so'm)</label><input id="ex_amt" type="number" inputmode="numeric" placeholder="masalan: 200000" /></div>
         <div class="field"><label>Sana</label><input id="ex_date" type="date" /></div>
@@ -867,12 +868,9 @@ async function openStudioExpensesModal() {
     </div>
     <div class="day-list">${list}</div>`,
   () => {
-    $('#ex_name').addEventListener('change', () => {
-      $('#ex_otherwrap').style.display = $('#ex_name').value === '__other' ? '' : 'none';
-    });
     $('#ex_save').addEventListener('click', async () => {
-      let name = $('#ex_name').value;
-      if (name === '__other') name = $('#ex_other').value.trim() || 'Boshqa';
+      const name = $('#ex_name').value.trim();
+      if (!name) { toast('Xarajat nomini kiriting'); return; }
       const amount = parseInt($('#ex_amt').value || '0', 10);
       if (amount <= 0) { toast('Summani kiriting'); return; }
       await api('/api/studio/expenses', { method: 'POST', body: JSON.stringify({ name, amount, edate: $('#ex_date').value || null, note: $('#ex_note').value }) });

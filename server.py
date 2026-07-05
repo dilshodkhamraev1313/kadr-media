@@ -119,7 +119,7 @@ LEADERSHIP = {
 SALARY = {
     "Dilshod Khamraev": {"title": "CEO", "usd": {"CEO maosh": 500}},
     "Gulmira": {"title": "Kadr Studio rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
-                "lead": True, "studio_bonus": True},
+                "lead": True},
     "Said": {"title": "Operator + loyiha rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
              "usd": {"Sifat nazorati": 100, "KPI": 50}, "lead": True, "operator": True},
     "Xonzoda": {"title": "Ssenarist + koordinator", "som": {"Fiksa": 2000000, "Intizom": 500000},
@@ -1892,6 +1892,20 @@ def _studio_client_bonus(conn):
     return (n or 0) * STUDIO_CLIENT_BONUS
 
 
+def _smm_pay(conn, full, today):
+    """SMM = to'liq × (shu oy joylangan / shu oy tasdiqlangan). Video bo'lmasa 0."""
+    ym = today.strftime("%Y-%m")
+    accepted = conn.execute(
+        "SELECT COUNT(*) AS n FROM videos WHERE status IN ('qabul_qilindi','joylandi') AND approved_at LIKE ?",
+        (ym + "%",)).fetchone()["n"] or 0
+    posted = conn.execute(
+        "SELECT COUNT(*) AS n FROM videos WHERE status='joylandi' AND approved_at LIKE ?",
+        (ym + "%",)).fetchone()["n"] or 0
+    if accepted == 0:
+        return 0, posted, accepted
+    return int(round(full * posted / accepted)), posted, accepted
+
+
 def compute_salary(conn, name, rate):
     cfg = SALARY.get(name)
     if not cfg:
@@ -1908,11 +1922,21 @@ def compute_salary(conn, name, rate):
     for label, usd in (cfg.get("usd") or {}).items():
         amt = int(usd) * rate
         lbl = f"{label} (${usd})"
+        kind = "fixed"
         if label == "KPI":
             amt, missed = _kpi_after_discipline(conn, name, amt, uz_today())
             if missed:
                 lbl = f"KPI (${usd}) · −{missed} kun yopilmagan"
-        comps.append({"label": lbl, "amount": amt, "kind": "fixed"})
+        elif label == "Stories":
+            amt, missed = _kpi_after_discipline(conn, name, amt, uz_today())
+            kind = "auto"
+            if missed:
+                lbl = f"Stories (${usd}) · −{missed} kun yopilmagan"
+        elif label == "SMM":
+            amt, posted, accepted = _smm_pay(conn, amt, uz_today())
+            kind = "auto"
+            lbl = f"SMM (${usd}) · {posted}/{accepted} joylandi"
+        comps.append({"label": lbl, "amount": amt, "kind": kind})
     if cfg.get("lead"):
         lp, det = _leadership_pay(conn, name, rate)
         comps.append({"label": f"Rahbarlik ({len(det)} loyiha)", "amount": lp, "kind": "lead", "detail": det})
