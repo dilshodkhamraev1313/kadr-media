@@ -2058,31 +2058,41 @@ def is_charity_user(user):
 
 
 def api_charity(user):
-    rate = get_usd_rate()
     conn = get_db()
-    media_income = conn.execute("SELECT COALESCE(SUM(monthly_fee),0) AS s FROM projects").fetchone()["s"] or 0
+    contrib = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM charity_ledger WHERE kind='contribution'").fetchone()["s"] or 0
+    withdraw = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM charity_ledger WHERE kind='withdrawal'").fetchone()["s"] or 0
+    ledger = [dict(r) for r in conn.execute("SELECT * FROM charity_ledger ORDER BY id DESC LIMIT 50").fetchall()]
+
+    # Gulmira — faqat umumiy xayriya fondi (Media daromadi/foyda ko'rinmaydi)
+    if user["role"] != "ceo":
+        conn.close()
+        return {"limited": True, "isCeo": False, "pct": int(CHARITY_PCT * 100),
+                "balance": contrib - withdraw, "contributed": contrib, "withdrawn": withdraw,
+                "ledger": ledger}
+
+    # CEO (Dilshod) — to'liq hisob-kitob
+    rate = get_usd_rate()
+    projects = [dict(r) for r in conn.execute("SELECT name, monthly_fee FROM projects WHERE monthly_fee>0 ORDER BY monthly_fee DESC").fetchall()]
+    media_income = sum(p["monthly_fee"] or 0 for p in projects)
     studio_income = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM studio_bookings WHERE (status IS NULL OR status<>'bekor_qilindi')").fetchone()["s"] or 0
     studio_exp = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM studio_expenses").fetchone()["s"] or 0
-    # Payroll (barcha maoshlar — operator/montaj/ssenarist shu yerda, ikki marta sanalmaydi)
     payroll = 0
     for n in SALARY:
         s = compute_salary(conn, n, rate)
         if s:
             payroll += s["total"]
-    contrib = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM charity_ledger WHERE kind='contribution'").fetchone()["s"] or 0
-    withdraw = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM charity_ledger WHERE kind='withdrawal'").fetchone()["s"] or 0
-    ledger = [dict(r) for r in conn.execute("SELECT * FROM charity_ledger ORDER BY id DESC LIMIT 50").fetchall()]
     conn.close()
     total_income = media_income + studio_income
     total_expense = payroll + studio_exp
     profit = total_income - total_expense
     return {
+        "isCeo": True, "limited": False,
         "mediaIncome": media_income, "studioIncome": studio_income, "totalIncome": total_income,
         "payroll": payroll, "studioExpenses": studio_exp, "totalExpense": total_expense,
         "profit": profit, "pct": int(CHARITY_PCT * 100),
         "charityShare": int(round(max(profit, 0) * CHARITY_PCT)),
         "balance": contrib - withdraw, "contributed": contrib, "withdrawn": withdraw,
-        "ledger": ledger,
+        "ledger": ledger, "projectIncome": [{"name": p["name"], "fee": p["monthly_fee"]} for p in projects],
     }
 
 
@@ -2611,7 +2621,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             return self._json(api_checkin(user))
         if path == "/api/charity":
-            if not is_charity_user(user):
+            if r != "ceo":
                 return self._forbid()
             return self._json(api_charity_add(user, b))
         if path == "/api/telegram/setup-webhook":

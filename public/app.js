@@ -358,7 +358,7 @@ function projectCard(p) {
   return `
     <div class="project-card ${clickable ? 'clickable' : ''}" data-id="${p.id}">
       <div class="pc-top"><div class="pc-name">${esc(p.name)}</div><div class="pc-badges">${badges.join('')}</div></div>
-      <div class="pc-client">📁 ${esc(p.client) || '—'}</div>
+      <div class="pc-client">📁 ${esc(p.client) || '—'}${ME.role === 'ceo' ? ` · 💵 ${p.monthly_fee ? money(p.monthly_fee) : 'to\'lov 0'}` : ''}</div>
       <div class="pc-stages">${STAGES.map((s) => `<div class="stage-dot ${p[s.key]}">${s.label}</div>`).join('')}</div>
       ${p.plan ? `
       <div class="plan-box">
@@ -1281,16 +1281,29 @@ async function viewCharity() {
       <div class="muted">${fmtDate(l.cdate)} · ${esc(l.note) || (isW ? 'xayriya berildi' : 'fondga qo\'shildi')}</div></div>
       <div class="muted">${esc(l.created_by || '')}</div></div>`;
   }).join('') || '<div class="muted">Hali yozuv yo\'q</div>';
-  $('#content').innerHTML = `
+
+  const hero = `
     <div class="rank-hero rank-legenda" style="margin-bottom:16px">
       <div class="rh-left"><div class="rh-icon">🤲</div>
         <div><div class="rh-label">${money(d.balance)}</div>
           <div class="rh-sub">Xayriya fondi jamg'armasi · Alloh yo'lida</div></div></div>
       <div class="rh-prog">
-        <div class="muted">Bu oy sof foyda: <b>${money(d.profit)}</b> → ${d.pct}% = <b style="color:var(--green)">${money(d.charityShare)}</b></div>
-        <div class="rh-next">Jami qo'shilgan: ${money(d.contributed)} · berilgan: ${money(d.withdrawn)}</div>
+        <div class="muted">Jami qo'shilgan: <b style="color:var(--green)">${money(d.contributed)}</b> · berilgan: <b style="color:var(--orange)">${money(d.withdrawn)}</b></div>
       </div>
-    </div>
+    </div>`;
+
+  // Gulmira — faqat umumiy fond va tarix (Media daromadi/foyda ko'rinmaydi)
+  if (!d.isCeo) {
+    $('#content').innerHTML = `${hero}
+      <div class="panel"><h3>📜 Fond tarixi</h3>${ledger}</div>`;
+    return;
+  }
+
+  // CEO — to'liq hisob-kitob + loyihalar daromadi
+  const projIncome = (d.projectIncome || []).map((p) =>
+    `<div class="mrow"><span>${esc(p.name)}</span><b>${money(p.fee)}</b></div>`).join('') || '<div class="muted">Loyihalarga oylik to\'lov kiritilmagan</div>';
+  $('#content').innerHTML = `
+    ${hero}
     <div class="stats-grid">
       ${statTile('📥', money(d.totalIncome), 'Jami tushum (Media+Studio)', 'blue')}
       ${statTile('📤', money(d.totalExpense), 'Jami xarajat (maosh+studio)', 'orange')}
@@ -1298,17 +1311,21 @@ async function viewCharity() {
       ${statTile('🤲', money(d.charityShare), d.pct + '% xayriya ulushi', 'purple')}
     </div>
     <div class="ceo-grid" style="margin-top:6px">
-      <div class="panel"><h3>💰 Hisob-kitob</h3><div class="money-rows">
-        <div class="mrow"><span>Kadr Media daromadi</span><b>${money(d.mediaIncome)}</b></div>
-        <div class="mrow"><span>Kadr Studio daromadi</span><b>${money(d.studioIncome)}</b></div>
-        <div class="mrow"><span style="color:var(--pink)">Maosh (payroll)</span><b style="color:var(--pink)">−${money(d.payroll)}</b></div>
-        <div class="mrow"><span style="color:var(--pink)">Studio xarajatlari</span><b style="color:var(--pink)">−${money(d.studioExpenses)}</b></div>
-        <div class="mrow big" style="border-top:1px solid var(--border);padding-top:6px"><span>Sof foyda</span><b>${money(d.profit)}</b></div>
+      <div>
+        <div class="panel"><h3>💰 Hisob-kitob</h3><div class="money-rows">
+          <div class="mrow"><span>Kadr Media daromadi</span><b>${money(d.mediaIncome)}</b></div>
+          <div class="mrow"><span>Kadr Studio daromadi</span><b>${money(d.studioIncome)}</b></div>
+          <div class="mrow"><span style="color:var(--pink)">Maosh (payroll)</span><b style="color:var(--pink)">−${money(d.payroll)}</b></div>
+          <div class="mrow"><span style="color:var(--pink)">Studio xarajatlari</span><b style="color:var(--pink)">−${money(d.studioExpenses)}</b></div>
+          <div class="mrow big" style="border-top:1px solid var(--border);padding-top:6px"><span>Sof foyda</span><b>${money(d.profit)}</b></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn-save" id="ch_add">+ Fondga qo'shish</button>
+          <button class="btn-del" id="ch_give">🤲 Xayriya berildi</button>
+        </div></div>
+        <div class="panel"><h3>📁 Loyihalar oylik to'lovi (Media daromadi)</h3><div class="money-rows">${projIncome}</div>
+          <p class="muted" style="margin-top:8px">O'zgartirish: Loyihalar → loyihani oching → "💵 Oylik to'lov".</p></div>
       </div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn-save" id="ch_add">+ Fondga qo'shish</button>
-        <button class="btn-del" id="ch_give">🤲 Xayriya berildi</button>
-      </div></div>
       <div class="panel"><h3>📜 Fond tarixi</h3>${ledger}</div>
     </div>`;
   $('#ch_add').addEventListener('click', () => openCharityModal('contribution', d.charityShare));
