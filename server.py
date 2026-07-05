@@ -2472,6 +2472,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         # --- Ochiq (auth shart emas) ---
+        if path == "/api/ping":
+            # Serverni uxlatmaslik uchun yengil ping (bazaga tegmaydi)
+            return self._json({"ok": True, "ts": now_local()})
         if path == "/api/tiers":
             return self._json(api_tiers())
         if path == "/api/ranks":
