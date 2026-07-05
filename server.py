@@ -94,6 +94,10 @@ LEADERSHIP_USD_FULL = 50  # loyiha to'liq (deadline o'tmagan) bo'lsa
 LEADERSHIP_USD_HALF = 25  # deadline o'tib ketgan bo'lsa
 STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun (har bron)
 
+# Kunlik sarhisob yopish majburiyati (KPI intizomi) shu 4 kishida.
+DAILY_CLOSE_USERS = ("Said", "Gulmira", "Xonzoda", "Umida")
+WORKDAYS_PER_MONTH = 25  # KPI bo'linadigan ish kunlari (yakshanba dam)
+
 # Har xodim rahbarlik qiladigan loyihalar (nomi projects jadvalidagi bilan mos).
 LEADERSHIP = {
     "Said": ["Namuna mebel", "Nova school", "Nodirbek Primqulov (arab tili)"],
@@ -412,6 +416,8 @@ def init_db():
         note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
     conn.execute("""CREATE TABLE IF NOT EXISTS settings (
         skey TEXT PRIMARY KEY, svalue TEXT)""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS daily_close (
+        id {pk}, person TEXT, cdate TEXT, closed_at TEXT)""")
 
     # users jadvaliga login ustunlarini qo'shish (idempotent)
     add_column_if_missing(conn, "users", "username", "TEXT")
@@ -1884,7 +1890,13 @@ def compute_salary(conn, name, rate):
     for label, som in (cfg.get("som") or {}).items():
         comps.append({"label": label, "amount": int(som), "kind": "fixed"})
     for label, usd in (cfg.get("usd") or {}).items():
-        comps.append({"label": f"{label} (${usd})", "amount": int(usd) * rate, "kind": "fixed"})
+        amt = int(usd) * rate
+        lbl = f"{label} (${usd})"
+        if label == "KPI":
+            amt, missed = _kpi_after_discipline(conn, name, amt, uz_today())
+            if missed:
+                lbl = f"KPI (${usd}) · −{missed} kun yopilmagan"
+        comps.append({"label": lbl, "amount": amt, "kind": "fixed"})
     if cfg.get("lead"):
         lp, det = _leadership_pay(conn, name, rate)
         comps.append({"label": f"Rahbarlik ({len(det)} loyiha)", "amount": lp, "kind": "lead", "detail": det})
@@ -1911,6 +1923,102 @@ def api_payroll(user):
     me = compute_salary(conn, user["name"], rate)
     conn.close()
     return {"rate": rate, "isCeo": False, "me": me}
+
+
+# ------------------------------------------------------------
+#  KUNLIK SARHISOB (kun yopish) + KPI intizomi
+# ------------------------------------------------------------
+def is_daily_user(user):
+    return bool(user) and user["name"] in DAILY_CLOSE_USERS
+
+
+def _closed_dates(conn, name, ym):
+    return {r["cdate"] for r in conn.execute(
+        "SELECT cdate FROM daily_close WHERE person=? AND cdate LIKE ?", (name, ym + "%")
+    ).fetchall()}
+
+
+def _missed_workdays(conn, name, today):
+    """Shu oyda bugundan OLDINGI ish kunlari (yakshanbadan tashqari) — yopilmaganlari."""
+    ym = today.strftime("%Y-%m")
+    closed = _closed_dates(conn, name, ym)
+    missed = 0
+    for d in range(1, today.day):  # bugundan oldingi kunlar
+        dt = datetime.date(today.year, today.month, d)
+        if dt.weekday() != 6 and dt.isoformat() not in closed:  # 6 = yakshanba
+            missed += 1
+    return missed
+
+
+def _kpi_after_discipline(conn, name, kpi_full, today):
+    """KPI = to'liq − (yopilmagan ish kunlari × KPI/25)."""
+    missed = _missed_workdays(conn, name, today)
+    per_day = kpi_full / WORKDAYS_PER_MONTH
+    return max(int(round(kpi_full - min(missed * per_day, kpi_full))), 0), missed
+
+
+def api_daily(user):
+    conn = get_db()
+    today = uz_today()
+    tstr = today.isoformat()
+    ym = today.strftime("%Y-%m")
+    res = {"today": tstr, "isWorkday": today.weekday() != 6, "amDaily": is_daily_user(user)}
+    if is_daily_user(user):
+        closed = _closed_dates(conn, user["name"], ym)
+        elapsed = sum(1 for d in range(1, today.day + 1)
+                      if datetime.date(today.year, today.month, d).weekday() != 6)
+        res["closedToday"] = tstr in closed
+        res["closedCount"] = len(closed)
+        res["workdaysElapsed"] = elapsed
+        res["missed"] = _missed_workdays(conn, user["name"], today)
+        res["summary"] = {
+            "bookings": conn.execute("SELECT COUNT(*) AS n FROM studio_bookings WHERE bdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (tstr,)).fetchone()["n"],
+            "shoots": conn.execute("SELECT COUNT(*) AS n FROM shoots WHERE sdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (tstr,)).fetchone()["n"],
+            "scripts": conn.execute("SELECT COUNT(*) AS n FROM scenarist_scripts WHERE sdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (tstr,)).fetchone()["n"],
+            "accepted": conn.execute("SELECT COUNT(*) AS n FROM videos WHERE approved_at LIKE ? AND status IN ('qabul_qilindi','joylandi')", (tstr + "%",)).fetchone()["n"],
+        }
+    if user["role"] == "ceo":
+        res["overview"] = [{
+            "name": nm, "closedToday": tstr in _closed_dates(conn, nm, ym),
+            "closedCount": len(_closed_dates(conn, nm, ym)),
+            "missed": _missed_workdays(conn, nm, today),
+        } for nm in DAILY_CLOSE_USERS]
+    conn.close()
+    return res
+
+
+def api_close_day(user):
+    if not is_daily_user(user):
+        return {"error": "Ruxsat yo'q"}
+    conn = get_db()
+    today = uz_today().isoformat()
+    ex = conn.execute("SELECT id FROM daily_close WHERE person=? AND cdate=?", (user["name"], today)).fetchone()
+    if not ex:
+        conn.execute("INSERT INTO daily_close (person, cdate, closed_at) VALUES (?,?,?)",
+                     (user["name"], today, now_local()))
+        log_audit(conn, user["name"], "kunni yopdi", today)
+        conn.commit()
+    conn.close()
+    return {"ok": True, "closedToday": True}
+
+
+def api_cron_daily_check():
+    """22:00 da tashqi cron chaqiradi — bugun kun yopmaganlarni guruhda eslatadi."""
+    today = uz_today()
+    if today.weekday() == 6:
+        return {"ok": True, "skipped": "yakshanba"}
+    tstr = today.isoformat()
+    conn = get_db()
+    not_closed = [nm for nm in DAILY_CLOSE_USERS
+                  if not conn.execute("SELECT id FROM daily_close WHERE person=? AND cdate=?", (nm, tstr)).fetchone()]
+    conn.close()
+    if not_closed:
+        send_telegram(
+            "⚠️ <b>Kun sarhisobi yopilmadi!</b>\n📅 " + tstr + "\n\n"
+            "Yopmaganlar: <b>" + ", ".join(not_closed) + "</b>\n\n"
+            "❗️ Kun yopilmasa KPI puli kamayadi (har yopilmagan kun uchun −KPI/25)."
+        )
+    return {"ok": True, "notClosed": not_closed}
 
 
 # ------------------------------------------------------------
@@ -1983,6 +2091,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_telegram_test())
         if path == "/api/telegram/digest":
             return self._json(api_telegram_digest())
+        if path == "/api/cron/daily-check":
+            return self._json(api_cron_daily_check())
         if not path.startswith("/api/"):
             return self._serve_static(path)
 
@@ -2036,6 +2146,10 @@ class Handler(BaseHTTPRequestHandler):
             if role != "ceo" and user["name"] not in SALARY:
                 return self._forbid()
             return self._json(api_payroll(user))
+        if path == "/api/daily":
+            if not is_daily_user(user) and role != "ceo":
+                return self._forbid()
+            return self._json(api_daily(user))
         if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "versions":
             sid = self._int(seg[2])
             return self._json(api_script_versions(sid)) if sid else self._json({"error": "Topilmadi"}, 404)
@@ -2117,6 +2231,10 @@ class Handler(BaseHTTPRequestHandler):
             if r != "ceo":
                 return self._forbid()
             return self._json(api_set_usd_rate(user, b))
+        if path == "/api/daily/close":
+            if not is_daily_user(user):
+                return self._forbid()
+            return self._json(api_close_day(user))
         if len(seg) == 4 and seg[1] == "scenarist" and seg[3] == "cancel":
             if not is_scenarist(user):
                 return self._forbid()

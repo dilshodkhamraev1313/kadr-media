@@ -154,6 +154,7 @@ const NAV_ITEMS = [
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
   { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Gulmira', 'Said', 'Xonzoda', 'Umida', 'Sardor', 'Umid', 'Shodiya'] },
+  { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Said', 'Gulmira', 'Xonzoda', 'Umida'] },
 ];
 const NAV_FOR = (role) => NAV_ITEMS.filter((n) => n.roles.includes(role) && (!n.names || (ME && n.names.includes(ME.name))));
 
@@ -206,6 +207,7 @@ const TITLES = {
   shoots:    ['Syomkalar', 'Loyiha syomkalari — operator va pul'],
   myscripts: ['Ssenariylarim', 'Tasdiqlangan ssenariylar va hisoblangan pul'],
   salary:    ['Maosh', 'Fiksa, rahbarlik va daromadlar'],
+  daily:     ['Kun yopish', 'Kunlik sarhisob va KPI intizomi'],
   studio:    ['Kadr Studio', 'Syomka xonalari bandligi va bronlar'],
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
   editors:   ['Montajchilar', 'Kabinetlar va hisob-kitob'],
@@ -235,6 +237,7 @@ async function render() {
     else if (VIEW === 'shoots') await viewShoots();
     else if (VIEW === 'myscripts') await viewScenarist();
     else if (VIEW === 'salary') await viewSalary();
+    else if (VIEW === 'daily') await viewDaily();
     else if (VIEW === 'studio') await viewStudio();
     else if (VIEW === 'editors') await viewEditors();
     else if (VIEW === 'finance') await viewFinance();
@@ -1112,6 +1115,57 @@ async function viewSalary() {
     const res = await api('/api/settings/usd-rate', { method: 'POST', body: JSON.stringify({ rate }) });
     if (res.error) { toast(res.error); return; }
     toast('💱 Kurs yangilandi — qayta hisoblandi'); render();
+  });
+}
+
+// ============================================================
+//  KUN YOPISH (kunlik sarhisob + KPI)
+// ============================================================
+async function viewDaily() {
+  const d = await api('/api/daily');
+  DATA.daily = d;
+  let html = '';
+  if (d.amDaily) {
+    const s = d.summary || {};
+    const done = d.closedToday;
+    html += `
+      <div class="rank-hero ${done ? 'rank-elite' : ''}" style="margin-bottom:16px">
+        <div class="rh-left"><div class="rh-icon">${done ? '✅' : '🌙'}</div>
+          <div><div class="rh-label">${done ? 'Bugun yopildi' : 'Kun ochiq'}</div>
+            <div class="rh-sub">${fmtDate(d.today)}${d.isWorkday ? '' : ' · dam kuni'}</div></div></div>
+        <div class="rh-prog">
+          <div class="muted">Shu oy: <b>${d.closedCount}</b> kun yopilgan · yopilmagan ish kuni: <b style="color:var(--orange)">${d.missed}</b></div>
+          ${d.missed
+            ? `<div class="rh-next" style="color:var(--orange)">⚠️ Har yopilmagan ish kuni uchun KPI'dan −KPI/25 ayiriladi</div>`
+            : `<div class="rh-next" style="color:var(--green)">👍 Barcha ish kunlari yopilgan</div>`}
+        </div>
+      </div>
+      <div class="stats-grid">
+        ${statTile('🎥', s.bookings || 0, 'Bugungi studio bron', 'blue')}
+        ${statTile('📹', s.shoots || 0, 'Bugungi syomka', 'purple')}
+        ${statTile('✍️', s.scripts || 0, 'Bugungi ssenariy', 'green')}
+        ${statTile('✅', s.accepted || 0, 'Bugun qabul qilingan', 'orange')}
+      </div>
+      <div class="panel" style="margin-top:16px;text-align:center">
+        ${done
+          ? `<div style="font-size:16px;font-weight:700;color:var(--green)">✅ Bugungi sarhisob yopilgan</div>`
+          : `<p class="muted" style="margin-bottom:12px">Yuqoridagilarni ko'rib chiqib, kun sarhisobini yakunlang:</p>
+             <button class="btn-save" id="close_day" style="max-width:280px;margin:0 auto">🌙 Kunni yopish</button>`}
+      </div>`;
+  }
+  if (d.overview) {
+    html += `<div class="panel" style="margin-top:16px"><h3>Bugun kim yopdi</h3><div class="ceo-list">` +
+      d.overview.map((o) => `
+        <div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${colorFor(o.name)}">${initials(o.name)}</div>
+          <div><div class="ci-name">${esc(o.name)}</div><div class="ci-sub">Shu oy ${o.closedCount} kun · yopilmagan ${o.missed}</div></div></div>
+          <span class="pill ${o.closedToday ? 'green' : 'red'}">${o.closedToday ? '✅ yopdi' : '⏳ yopmadi'}</span></div>`).join('') +
+      `</div></div>`;
+  }
+  $('#content').innerHTML = html || emptyState();
+  const cb = $('#close_day');
+  if (cb) cb.addEventListener('click', async () => {
+    await api('/api/daily/close', { method: 'POST', body: '{}' });
+    toast('🌙 Kun yopildi — rahmat!'); render();
   });
 }
 
