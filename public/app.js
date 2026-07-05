@@ -43,6 +43,20 @@ let RANKS = { ranks: [], prices: {}, step: 100 };
 // Lavozim chipi (montajyor rangi/darajasi)
 const rankChip = (v) => v && v.editor_rank_label
   ? `<span class="rank-chip rank-${esc(v.editor_rank)}">${v.editor_rank_icon || '🎖'} ${esc(v.editor_rank_label)}</span>` : '';
+// Deadline chipi (montaj muddati / kechikkan)
+function deadlineChip(v) {
+  if (v.is_late) return `<span class="dl-chip dl-late">⏰ Kechikkan</span>`;
+  if (v.deadline_at && ['biriktirildi', 'montaj_qilindi', 'sifat_ok', 'qaytarildi'].includes(v.status)) {
+    if (v.overdue) return `<span class="dl-chip dl-late">⏰ Muddat o'tdi</span>`;
+    const h = v.hours_left;
+    if (h != null) {
+      const cls = h < 6 ? 'dl-soon' : 'dl-ok';
+      const txt = h >= 1 ? `${Math.round(h)} soat` : `${Math.round(h * 60)} daq`;
+      return `<span class="dl-chip ${cls}">⏱ ${txt} qoldi</span>`;
+    }
+  }
+  return '';
+}
 let VIEW = '';
 let FILTER = 'all';
 let SEARCH = '';
@@ -503,6 +517,7 @@ function videoCard(v) {
       <div class="video-meta">
         <span class="link-chip">🎞 ${esc(VIDEO_TYPE_LABEL[v.vtype] || 'Reels')}</span>
         ${rankChip(v)}
+        ${deadlineChip(v)}
         ${(v.pay_visible && v.amount) ? `<span class="money-chip">💰 ${money(v.amount)}</span>` : ''}
         ${v.drive_link ? `<span class="link-chip">🔗 Drive</span>` : ''}
         ${v.instagram_link ? `<span class="link-chip">📷 Instagram</span>` : ''}
@@ -574,7 +589,9 @@ function openVideoDetailModal(v) {
     <div style="margin-bottom:10px"><span class="pill ${st.cls}">${st.label}</span></div>
     <div class="money-rows" style="margin-bottom:12px">
       <div class="mrow"><span>📁 Loyiha</span><b>${esc(v.project || '—')}</b></div>
-      <div class="mrow"><span>🎞 Video turi</span><b>${esc(VIDEO_TYPE_LABEL[v.vtype] || 'Reels')}</b></div>
+      <div class="mrow"><span>🎞 Video turi</span><b>${esc(VIDEO_TYPE_LABEL[v.vtype] || 'Reels')} · ${v.deadline_hours || 24}s muddat</b></div>
+      ${v.is_late ? `<div class="mrow"><span>⏰ Holat</span><b style="color:var(--red)">Kechikkan (pul kamaytirilgan)</b></div>` : ''}
+      ${(!v.is_late && v.deadline_at && ['biriktirildi', 'montaj_qilindi', 'sifat_ok', 'qaytarildi'].includes(v.status)) ? `<div class="mrow"><span>⏱ Muddat</span><b style="color:${v.overdue ? 'var(--red)' : 'var(--text)'}">${v.overdue ? 'o\'tib ketdi' : (Math.round(v.hours_left) + ' soat qoldi')}</b></div>` : ''}
       <div class="mrow"><span>🎬 Montajchi</span><b>${esc(v.editor || '—')}${v.editor_rank_label ? ` · ${v.editor_rank_icon || ''} ${esc(v.editor_rank_label)}` : ''}</b></div>
       <div class="mrow"><span>📅 Sana</span><b>${fmtDate(v.vdate)}</b></div>
       ${(v.pay_visible && v.amount) ? `<div class="mrow"><span>💰 Haq (lavozim bo'yicha)</span><b>${money(v.amount)}</b></div>` : ''}

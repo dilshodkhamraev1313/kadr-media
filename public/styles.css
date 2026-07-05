@@ -652,6 +652,12 @@ body {
 .shoot-cancelled { opacity: .68; }
 .shoot-cancelled .pc-name { text-decoration: line-through; }
 
+/* Montaj deadline chipi */
+.dl-chip { font-size: 12px; font-weight: 700; padding: 5px 10px; border-radius: 8px; white-space: nowrap; }
+.dl-ok   { background: rgba(48,209,88,.15);  color: var(--green); }
+.dl-soon { background: rgba(255,159,10,.16); color: var(--orange); }
+.dl-late { background: rgba(255,69,58,.16);  color: var(--red); }
+
 /* Maosh kartasi qatorlari */
 .mrow.sal-auto span::before { content: '⚙ '; opacity: .6; }
 .mrow.sal-auto b { color: var(--blue); }
