@@ -96,7 +96,14 @@ STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun
 
 # Kunlik sarhisob yopish majburiyati (KPI intizomi) shu 4 kishida.
 DAILY_CLOSE_USERS = ("Said", "Gulmira", "Xonzoda", "Umida")
-WORKDAYS_PER_MONTH = 25  # KPI bo'linadigan ish kunlari (yakshanba dam)
+WORKDAYS_PER_MONTH = 25  # KPI/intizom bo'linadigan ish kunlari (yakshanba dam)
+
+# Kelish nazorati (intizom 500k) shu 3 kishida. Telegram username → ism.
+ATTENDANCE_USERS = ("Gulmira", "Said", "Xonzoda")
+TELEGRAM_ATTEND = {"baxt_mira": "Gulmira", "said_israilov": "Said", "pilotflight6": "Xonzoda"}
+ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
+INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
+INTIZOM_FULL = 500000        # to'liq intizom (25 kun × 20 000)
 
 # Har xodim rahbarlik qiladigan loyihalar (nomi projects jadvalidagi bilan mos).
 LEADERSHIP = {
@@ -418,6 +425,9 @@ def init_db():
         skey TEXT PRIMARY KEY, svalue TEXT)""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS daily_close (
         id {pk}, person TEXT, cdate TEXT, closed_at TEXT)""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS attendance (
+        id {pk}, person TEXT, adate TEXT, checkin_time TEXT,
+        on_time INTEGER DEFAULT 0, source TEXT DEFAULT 'bot', created_at {ts})""")
 
     # users jadvaliga login ustunlarini qo'shish (idempotent)
     add_column_if_missing(conn, "users", "username", "TEXT")
@@ -1888,7 +1898,13 @@ def compute_salary(conn, name, rate):
         return None
     comps = []
     for label, som in (cfg.get("som") or {}).items():
-        comps.append({"label": label, "amount": int(som), "kind": "fixed"})
+        amt = int(som)
+        lbl = label
+        if label == "Intizom" and name in ATTENDANCE_USERS:
+            ot = _ontime_days(conn, name, uz_today())
+            amt = min(ot * INTIZOM_PER_DAY, INTIZOM_FULL)
+            lbl = f"Intizom · {ot} kun o'z vaqtida"
+        comps.append({"label": lbl, "amount": amt, "kind": "fixed"})
     for label, usd in (cfg.get("usd") or {}).items():
         amt = int(usd) * rate
         lbl = f"{label} (${usd})"
@@ -2022,6 +2038,126 @@ def api_cron_daily_check():
 
 
 # ------------------------------------------------------------
+#  KELISH NAZORATI (intizom) — ertalabki kruzhok / qo'lda "Keldim"
+# ------------------------------------------------------------
+def is_attend_user(user):
+    return bool(user) and user["name"] in ATTENDANCE_USERS
+
+
+def _ontime_days(conn, name, today):
+    ym = today.strftime("%Y-%m")
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM attendance WHERE person=? AND adate LIKE ? AND on_time=1",
+        (name, ym + "%"),
+    ).fetchone()["n"] or 0
+
+
+def _record_attendance(conn, person, source):
+    """Bugun uchun birinchi kelishni yozadi. Takror bo'lsa — o'zgartirmaydi."""
+    today = uz_today().isoformat()
+    ex = conn.execute("SELECT id FROM attendance WHERE person=? AND adate=?", (person, today)).fetchone()
+    if ex:
+        return None  # bugun allaqachon belgilangan
+    now = uz_now()
+    ctime = now.strftime("%H:%M")
+    on_time = 1 if ctime <= ON_TIME_LIMIT else 0
+    conn.execute(
+        "INSERT INTO attendance (person, adate, checkin_time, on_time, source) VALUES (?,?,?,?,?)",
+        (person, today, ctime, on_time, source),
+    )
+    tag = "o'z vaqtida" if on_time else "kech"
+    log_audit(conn, person, "ishga keldi", f"{ctime} ({tag}, {source})")
+    return {"time": ctime, "on_time": on_time}
+
+
+def api_telegram_webhook(update):
+    """Telegram botdan keladigan yangilanishlar. 'ish voxti' topikdagi kruzhok (video_note)
+    ma'lum foydalanuvchidan kelsa — o'sha kishi ishga keldi deb belgilanadi."""
+    try:
+        msg = (update or {}).get("message") or (update or {}).get("edited_message") or {}
+        if not msg.get("video_note"):
+            return {"ok": True}
+        uname = ((msg.get("from") or {}).get("username") or "").lower()
+        person = TELEGRAM_ATTEND.get(uname)
+        if not person:
+            return {"ok": True}
+        conn = get_db()
+        rec = _record_attendance(conn, person, "bot")
+        conn.commit()
+        conn.close()
+        if rec:
+            tag = "✅ o'z vaqtida" if rec["on_time"] else "🟡 kech"
+            send_telegram(f"🟢 <b>{person}</b> ishga keldi — {rec['time']} ({tag})")
+    except Exception:
+        pass  # webhook hech qachon xato qaytarmasligi kerak
+    return {"ok": True}
+
+
+def api_checkin(user):
+    """Qo'lda 'Keldim' (zaxira) — bot ishlamay qolsa."""
+    if not is_attend_user(user):
+        return {"error": "Ruxsat yo'q"}
+    conn = get_db()
+    rec = _record_attendance(conn, user["name"], "manual")
+    conn.commit()
+    conn.close()
+    if not rec:
+        return {"ok": True, "already": True}
+    return {"ok": True, "time": rec["time"], "on_time": bool(rec["on_time"])}
+
+
+def _attend_month(conn, name, today):
+    ym = today.strftime("%Y-%m")
+    rows = {r["adate"]: dict(r) for r in conn.execute(
+        "SELECT * FROM attendance WHERE person=? AND adate LIKE ?", (name, ym + "%")).fetchall()}
+    tstr = today.isoformat()
+    on_time = sum(1 for r in rows.values() if r["on_time"])
+    late = sum(1 for r in rows.values() if not r["on_time"])
+    t = rows.get(tstr)
+    return {
+        "name": name, "onTimeDays": on_time, "lateDays": late,
+        "todayIn": bool(t), "todayTime": (t["checkin_time"] if t else None),
+        "todayOnTime": (bool(t["on_time"]) if t else None),
+        "intizom": min(on_time * INTIZOM_PER_DAY, INTIZOM_FULL),
+    }
+
+
+def api_attendance(user):
+    conn = get_db()
+    today = uz_today()
+    res = {"today": today.isoformat(), "limit": ON_TIME_LIMIT, "amAttend": is_attend_user(user)}
+    if is_attend_user(user):
+        res["me"] = _attend_month(conn, user["name"], today)
+    if user["role"] == "ceo":
+        res["overview"] = [_attend_month(conn, nm, today) for nm in ATTENDANCE_USERS]
+    conn.close()
+    return res
+
+
+def api_setup_webhook(user):
+    """CEO — botning webhook manzilini Telegramga ro'yxatdan o'tkazadi."""
+    base = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+    if not base:
+        return {"error": "RENDER_EXTERNAL_URL topilmadi (Render env)"}
+    if not TELEGRAM_BOT_TOKEN:
+        return {"error": "TELEGRAM_BOT_TOKEN sozlanmagan"}
+    hook = f"{base}/api/telegram/webhook"
+    try:
+        import urllib.request
+        import urllib.parse
+        api_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
+        data = urllib.parse.urlencode({
+            "url": hook,
+            "allowed_updates": json.dumps(["message", "edited_message"]),
+        }).encode()
+        with urllib.request.urlopen(api_url, data=data, timeout=10) as r:
+            res = json.loads(r.read().decode())
+        return {"ok": res.get("ok", False), "webhook": hook, "telegram": res}
+    except Exception as e:
+        return {"error": str(e), "webhook": hook}
+
+
+# ------------------------------------------------------------
 #  HTTP Handler
 # ------------------------------------------------------------
 CONTENT_TYPES = {
@@ -2150,6 +2286,10 @@ class Handler(BaseHTTPRequestHandler):
             if not is_daily_user(user) and role != "ceo":
                 return self._forbid()
             return self._json(api_daily(user))
+        if path == "/api/attendance":
+            if not is_attend_user(user) and role != "ceo":
+                return self._forbid()
+            return self._json(api_attendance(user))
         if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "versions":
             sid = self._int(seg[2])
             return self._json(api_script_versions(sid)) if sid else self._json({"error": "Topilmadi"}, 404)
@@ -2164,6 +2304,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/login":
             res = api_login(self._body())
             return self._json(res) if res else self._json({"error": "Login yoki parol noto'g'ri"}, 401)
+        # Telegram webhook — ochiq (bot chaqiradi, auth yo'q)
+        if path == "/api/telegram/webhook":
+            return self._json(api_telegram_webhook(self._body()))
 
         user = self._auth()
         if not user:
@@ -2235,6 +2378,14 @@ class Handler(BaseHTTPRequestHandler):
             if not is_daily_user(user):
                 return self._forbid()
             return self._json(api_close_day(user))
+        if path == "/api/attendance/checkin":
+            if not is_attend_user(user):
+                return self._forbid()
+            return self._json(api_checkin(user))
+        if path == "/api/telegram/setup-webhook":
+            if r != "ceo":
+                return self._forbid()
+            return self._json(api_setup_webhook(user))
         if len(seg) == 4 and seg[1] == "scenarist" and seg[3] == "cancel":
             if not is_scenarist(user):
                 return self._forbid()

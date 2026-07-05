@@ -1122,9 +1122,32 @@ async function viewSalary() {
 //  KUN YOPISH (kunlik sarhisob + KPI)
 // ============================================================
 async function viewDaily() {
-  const d = await api('/api/daily');
-  DATA.daily = d;
+  const [d, att] = await Promise.all([api('/api/daily'), api('/api/attendance').catch(() => ({}))]);
+  DATA.daily = d; DATA.attend = att;
   let html = '';
+  // --- Kelish (ertalabki kruzhok / Keldim) ---
+  if (att.amAttend && att.me) {
+    const m = att.me;
+    const inn = m.todayIn;
+    html += `
+      <div class="rank-hero ${inn && m.todayOnTime ? 'rank-elite' : ''}" style="margin-bottom:16px">
+        <div class="rh-left"><div class="rh-icon">${inn ? (m.todayOnTime ? '🌅' : '🟡') : '⏰'}</div>
+          <div><div class="rh-label">${inn ? (m.todayOnTime ? "O'z vaqtida keldingiz" : 'Kech keldingiz') : 'Bugun belgilanmagan'}</div>
+            <div class="rh-sub">${inn ? ('Bugun ' + m.todayTime + ' da') : (att.limit + ' gacha kelsangiz — o\'z vaqtida')}</div></div></div>
+        <div class="rh-prog">
+          <div class="muted">Shu oy o'z vaqtida: <b style="color:var(--green)">${m.onTimeDays}</b> · kech: <b style="color:var(--orange)">${m.lateDays}</b> · intizom: <b>${money(m.intizom)}</b></div>
+          ${!inn ? `<button class="btn-save" id="checkin_btn" style="max-width:220px;margin-top:10px">✋ Keldim</button>` : ''}
+        </div>
+      </div>`;
+  }
+  if (att.overview) {
+    html += `<div class="panel" style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">Kelish (bugun)</h3><button class="btn-ghost" id="hook_btn">🤖 Botni ulash</button></div><div class="ceo-list">` +
+      att.overview.map((o) => `
+        <div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${colorFor(o.name)}">${initials(o.name)}</div>
+          <div><div class="ci-name">${esc(o.name)}</div><div class="ci-sub">Shu oy: ${o.onTimeDays} o'z vaqtida · ${o.lateDays} kech · ${money(o.intizom)}</div></div></div>
+          <span class="pill ${o.todayIn ? (o.todayOnTime ? 'green' : 'orange') : 'red'}">${o.todayIn ? (o.todayOnTime ? '🌅 ' + o.todayTime : '🟡 ' + o.todayTime) : '⏳ yo\'q'}</span></div>`).join('') +
+      `</div></div>`;
+  }
   if (d.amDaily) {
     const s = d.summary || {};
     const done = d.closedToday;
@@ -1166,6 +1189,18 @@ async function viewDaily() {
   if (cb) cb.addEventListener('click', async () => {
     await api('/api/daily/close', { method: 'POST', body: '{}' });
     toast('🌙 Kun yopildi — rahmat!'); render();
+  });
+  const ci = $('#checkin_btn');
+  if (ci) ci.addEventListener('click', async () => {
+    const res = await api('/api/attendance/checkin', { method: 'POST', body: '{}' });
+    toast(res.on_time ? '🌅 O\'z vaqtida belgilandi' : '🟡 Kech belgilandi'); render();
+  });
+  const hb = $('#hook_btn');
+  if (hb) hb.addEventListener('click', async () => {
+    toast('Bot ulanmoqda...');
+    const res = await api('/api/telegram/setup-webhook', { method: 'POST', body: '{}' });
+    if (res.ok) { toast('🤖 Webhook ulandi!'); }
+    else { alert('Xatolik: ' + (res.error || JSON.stringify(res.telegram || res))); }
   });
 }
 
