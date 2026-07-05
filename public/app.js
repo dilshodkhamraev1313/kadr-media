@@ -155,7 +155,9 @@ const NAV_ITEMS = [
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
   { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Gulmira', 'Said', 'Xonzoda', 'Umida', 'Sardor', 'Umid', 'Shodiya'] },
   { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Said', 'Gulmira', 'Xonzoda', 'Umida'] },
+  { view: 'stats',     icon: '📈', label: 'Oylik statistika', roles: ['ceo', 'coordinator', 'lead'] },
 ];
+const UZ_MONTH_FULL = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
 const NAV_FOR = (role) => NAV_ITEMS.filter((n) => n.roles.includes(role) && (!n.names || (ME && n.names.includes(ME.name))));
 
 const navMBtn = (n) => `<button class="m-btn" data-view="${n.view}"><span>${n.icon}</span>${n.label}</button>`;
@@ -208,6 +210,7 @@ const TITLES = {
   myscripts: ['Ssenariylarim', 'Tasdiqlangan ssenariylar va hisoblangan pul'],
   salary:    ['Maosh', 'Fiksa, rahbarlik va daromadlar'],
   daily:     ['Kun yopish', 'Kunlik sarhisob va KPI intizomi'],
+  stats:     ['Oylik statistika', 'Har oy noldan; o\'tgan oylar faqat ko\'rish'],
   studio:    ['Kadr Studio', 'Syomka xonalari bandligi va bronlar'],
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
   editors:   ['Montajchilar', 'Kabinetlar va hisob-kitob'],
@@ -238,6 +241,7 @@ async function render() {
     else if (VIEW === 'myscripts') await viewScenarist();
     else if (VIEW === 'salary') await viewSalary();
     else if (VIEW === 'daily') await viewDaily();
+    else if (VIEW === 'stats') await viewStats();
     else if (VIEW === 'studio') await viewStudio();
     else if (VIEW === 'editors') await viewEditors();
     else if (VIEW === 'finance') await viewFinance();
@@ -1200,6 +1204,49 @@ async function viewDaily() {
     if (res.ok) { toast('🤖 Webhook ulandi!'); }
     else { alert('Xatolik: ' + (res.error || JSON.stringify(res.telegram || res))); }
   });
+}
+
+// ============================================================
+//  OYLIK STATISTIKA
+// ============================================================
+let STATS_YM = null;
+async function viewStats() {
+  if (!STATS_YM) { const t = new Date(); STATS_YM = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`; }
+  const d = await api('/api/month-stats?ym=' + STATS_YM);
+  DATA.monthStats = d;
+  STATS_YM = d.month; // server chegaralaydi (kelajak yo'q)
+  const [y, m] = d.month.split('-').map(Number);
+  const t = d.totals;
+  const teamRows = (arr, icon, unit) => arr.map((x) =>
+    `<div class="mrow"><span>${icon} ${esc(x.name)}</span><b>${x.count} ${unit}</b></div>`).join('') || '<div class="muted">—</div>';
+  $('#content').innerHTML = `
+    <div class="cal-toolbar">
+      <button class="btn-ghost" data-sm="prev">‹</button>
+      <h3 class="cal-title">${UZ_MONTH_FULL[m - 1]} ${y}</h3>
+      <button class="btn-ghost" data-sm="next"${d.isPast ? '' : ' disabled style="opacity:.4;cursor:default"'}>›</button>
+      ${d.isPast ? '<span class="pill st-gray">🔒 faqat ko\'rish</span>' : '<span class="pill green">● joriy oy</span>'}
+    </div>
+    <div class="stats-grid">
+      ${statTile('✍️', t.ssenariy, 'Ssenariy', 'purple')}
+      ${statTile('📹', t.syomka, 'Syomka', 'blue')}
+      ${statTile('►', t.montaj, 'Montaj qilindi', 'orange')}
+      ${statTile('✓', t.tasdiq, 'Tasdiqlangan', 'green')}
+      ${statTile('📷', t.joylash, 'Joylangan', 'red')}
+    </div>
+    <div class="ceo-grid">
+      <div class="panel"><h3>✍️ Ssenaristlar</h3><div class="money-rows">${teamRows(d.scenarists, '✍️', 'ssenariy')}</div></div>
+      <div class="panel"><h3>📹 Operatorlar</h3><div class="money-rows">${teamRows(d.operators, '📹', 'syomka')}</div></div>
+    </div>
+    <div class="panel"><h3>► Montajchilar (tasdiqlangan videolar)</h3><div class="money-rows">${teamRows(d.editors, '►', 'video')}</div></div>
+    ${d.isPast ? '<p class="muted" style="margin-top:12px">🔒 O\'tgan oy — faqat ko\'rish uchun. Bu oydagi ma\'lumotlar o\'zgartirilmaydi.</p>' : ''}`;
+  $('#content').querySelectorAll('[data-sm]').forEach((b) => b.addEventListener('click', () => {
+    if (b.disabled) return;
+    const [yy, mm] = STATS_YM.split('-').map(Number);
+    const dt = new Date(yy, mm - 1, 1);
+    dt.setMonth(dt.getMonth() + (b.dataset.sm === 'prev' ? -1 : 1));
+    STATS_YM = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+    render();
+  }));
 }
 
 // ============================================================

@@ -15,7 +15,7 @@ import urllib.request
 import hashlib
 import secrets
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
@@ -439,7 +439,7 @@ def init_db():
     for col in DONE_COLS:
         add_column_if_missing(conn, "projects", col, "INTEGER DEFAULT 0")
     # videos: ish jarayoni ustunlari
-    for col in ("assigned_by", "qc_by", "qc_at", "posted_by", "posted_at"):
+    for col in ("assigned_by", "qc_by", "qc_at", "posted_by", "posted_at", "montaj_at"):
         add_column_if_missing(conn, "videos", col, "TEXT")
     # videos: video turi (reels/podcast/youtube)
     add_column_if_missing(conn, "videos", "vtype", "TEXT DEFAULT 'reels'")
@@ -1207,8 +1207,8 @@ def api_video_action(user, vid, b):
 
     if action == "montaj_done" and (ex["editor"] == user["name"] or role in ADMIN_ROLES):
         conn.execute(
-            "UPDATE videos SET status='montaj_qilindi', drive_link=?, note=? WHERE id=?",
-            (b.get("drive_link") or ex["drive_link"], b.get("note") or ex["note"], vid),
+            "UPDATE videos SET status='montaj_qilindi', drive_link=?, note=?, montaj_at=? WHERE id=?",
+            (b.get("drive_link") or ex["drive_link"], b.get("note") or ex["note"], now_local(), vid),
         )
         log_audit(conn, user["name"], "montaj tugatdi", f"#{vid} {ex['title']}")
         send_telegram(f"🎞 <b>Montaj tugatildi</b>\n{ex['title']}\n👤 {ex['editor']}\n→ Sifat nazoratiga")
@@ -1966,6 +1966,51 @@ def api_payroll(user):
 
 
 # ------------------------------------------------------------
+#  OYLIK STATISTIKA (har oy noldan; o'tgan oylar faqat ko'rish)
+# ------------------------------------------------------------
+def api_month_stats(user, ym):
+    """Berilgan oy (YYYY-MM) uchun statistika. O'tgan oylar faqat ko'rish uchun."""
+    cur = uz_now().strftime("%Y-%m")
+    if not ym or len(ym) != 7:
+        ym = cur
+    if ym > cur:
+        ym = cur  # kelajak oy ko'rsatilmaydi
+    like = ym + "%"
+    conn = get_db()
+
+    def cnt(sql, params):
+        return conn.execute(sql, params).fetchone()["n"] or 0
+
+    # Umumiy (loyihalar bo'yicha bosqichlar) — shu oyda
+    totals = {
+        "ssenariy": cnt("SELECT COUNT(*) AS n FROM scenarist_scripts WHERE (status IS NULL OR status<>'bekor_qilindi') AND sdate LIKE ?", (like,)),
+        "syomka": cnt("SELECT COUNT(*) AS n FROM shoots WHERE (status IS NULL OR status<>'bekor_qilindi') AND sdate LIKE ?", (like,)),
+        "montaj": cnt("SELECT COUNT(*) AS n FROM videos WHERE montaj_at LIKE ?", (like,)),
+        "tasdiq": cnt("SELECT COUNT(*) AS n FROM videos WHERE approved_at LIKE ? AND status IN ('qabul_qilindi','joylandi')", (like,)),
+        "joylash": cnt("SELECT COUNT(*) AS n FROM videos WHERE posted_at LIKE ? AND status='joylandi'", (like,)),
+    }
+
+    # Jamoa (kimga tegishli bo'lsa) — shu oyda
+    scenarists = [{"name": nm,
+                   "count": cnt("SELECT COUNT(*) AS n FROM scenarist_scripts WHERE author=? AND (status IS NULL OR status<>'bekor_qilindi') AND sdate LIKE ?", (nm, like))}
+                  for nm in SCENARIST_PAY]
+    operators = [{"name": nm,
+                  "count": cnt("SELECT COUNT(*) AS n FROM shoots WHERE operator=? AND (status IS NULL OR status<>'bekor_qilindi') AND sdate LIKE ?", (nm, like))
+                            + cnt("SELECT COUNT(*) AS n FROM studio_bookings WHERE operator=? AND (status IS NULL OR status<>'bekor_qilindi') AND bdate LIKE ?", (nm, like))}
+                 for nm in STUDIO_OPERATORS]
+    ed_rows = conn.execute("SELECT name FROM users WHERE role='editor' ORDER BY name").fetchall()
+    editors = [{"name": e["name"],
+                "count": cnt("SELECT COUNT(*) AS n FROM videos WHERE editor=? AND approved_at LIKE ? AND status IN ('qabul_qilindi','joylandi')", (e["name"], like))}
+               for e in ed_rows]
+    conn.close()
+    return {
+        "month": ym, "current": cur, "isPast": ym < cur,
+        "totals": totals,
+        "scenarists": scenarists, "operators": operators, "editors": editors,
+    }
+
+
+# ------------------------------------------------------------
 #  KUNLIK SARHISOB (kun yopish) + KPI intizomi
 # ------------------------------------------------------------
 def is_daily_user(user):
@@ -2322,6 +2367,11 @@ class Handler(BaseHTTPRequestHandler):
             if not is_daily_user(user) and role != "ceo":
                 return self._forbid()
             return self._json(api_daily(user))
+        if path == "/api/month-stats":
+            if role not in APPROVER_ROLES:
+                return self._forbid()
+            ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
+            return self._json(api_month_stats(user, ym))
         if path == "/api/attendance":
             if not is_attend_user(user) and role != "ceo":
                 return self._forbid()
