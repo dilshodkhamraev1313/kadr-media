@@ -125,11 +125,13 @@ SALARY = {
     "Gulmira": {"title": "Kadr Studio rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
                 "lead": True},
     "Said": {"title": "Operator + loyiha rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
-             "usd": {"Sifat nazorati": 100, "KPI": 50}, "lead": True, "operator": True},
+             "usd": {"Sifat nazorati": 100}, "lead": True, "operator": True,
+             "close_link": "Sifat nazorati"},
     "Xonzoda": {"title": "Ssenarist + koordinator", "som": {"Fiksa": 2000000, "Intizom": 500000},
                 "usd": {"Koordinatorlik": 100}, "lead": True, "scenarist": True},
     "Umida": {"title": "SMM + ssenarist yordamchi", "som": {"Intizom": 500000},
-              "usd": {"Stories": 100, "SMM": 100}, "scenarist": True},
+              "usd": {"Stories": 100, "SMM": 100}, "scenarist": True,
+              "close_link": "Stories"},
     "Sardor": {"title": "Montajchi", "som": {"Fiksa": 500000, "Intizom": 500000}, "montaj": True},
     "Umid": {"title": "Montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
              "montaj": True, "operator": True},
@@ -2031,19 +2033,17 @@ def compute_salary(conn, name, rate):
             amt = min(ot * INTIZOM_PER_DAY, INTIZOM_FULL)
             lbl = f"Intizom · {ot} kun o'z vaqtida"
         comps.append({"label": lbl, "amount": amt, "kind": "fixed"})
+    close_link = cfg.get("close_link")  # qaysi komponent kun yopishga bog'langan
     for label, usd in (cfg.get("usd") or {}).items():
         amt = int(usd) * rate
         lbl = f"{label} (${usd})"
         kind = "fixed"
-        if label == "KPI":
-            amt, missed = _kpi_after_discipline(conn, name, amt, uz_today())
-            if missed:
-                lbl = f"KPI (${usd}) · −{missed} kun yopilmagan"
-        elif label == "Stories":
+        if label == close_link and name in DAILY_CLOSE_USERS:
+            # Kun yopishga bog'langan: har yopilmagan ish kuni −qiymat/25
             amt, missed = _kpi_after_discipline(conn, name, amt, uz_today())
             kind = "auto"
             if missed:
-                lbl = f"Stories (${usd}) · −{missed} kun yopilmagan"
+                lbl = f"{label} (${usd}) · −{missed} kun yopilmagan"
         elif label == "SMM":
             amt, posted, accepted = _smm_pay(conn, amt, uz_today())
             kind = "auto"
