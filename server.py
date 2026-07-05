@@ -122,13 +122,15 @@ LEADERSHIP = {
 #  flags — dinamik qismlar: lead(rahbarlik), operator, scenarist, montaj, studio_bonus
 SALARY = {
     "Dilshod Khamraev": {"title": "CEO", "usd": {"CEO maosh": 500}},
-    "Gulmira": {"title": "Kadr Studio rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
-                "lead": True},
+    "Gulmira": {"title": "Kadr Studio rahbari",
+                "som": {"Fiksa": 2000000, "Intizom": 500000, "Operatsion boshqaruv": 500000},
+                "lead": True, "close_link": "Operatsion boshqaruv"},
     "Said": {"title": "Operator + loyiha rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
              "usd": {"Sifat nazorati": 100}, "lead": True, "operator": True,
              "close_link": "Sifat nazorati"},
     "Xonzoda": {"title": "Ssenarist + koordinator", "som": {"Fiksa": 2000000, "Intizom": 500000},
-                "usd": {"Koordinatorlik": 100}, "lead": True, "scenarist": True},
+                "usd": {"Koordinatorlik": 100}, "lead": True, "scenarist": True,
+                "close_link": "Koordinatorlik"},
     "Umida": {"title": "SMM + ssenarist yordamchi", "som": {"Intizom": 500000},
               "usd": {"Stories": 100, "SMM": 100}, "scenarist": True,
               "close_link": "Stories"},
@@ -2025,15 +2027,22 @@ def compute_salary(conn, name, rate):
     if not cfg:
         return None
     comps = []
+    close_link = cfg.get("close_link")  # qaysi komponent kun yopishga bog'langan
     for label, som in (cfg.get("som") or {}).items():
         amt = int(som)
         lbl = label
+        kind = "fixed"
         if label == "Intizom" and name in ATTENDANCE_USERS:
             ot = _ontime_days(conn, name, uz_today())
             amt = min(ot * INTIZOM_PER_DAY, INTIZOM_FULL)
             lbl = f"Intizom · {ot} kun o'z vaqtida"
-        comps.append({"label": lbl, "amount": amt, "kind": "fixed"})
-    close_link = cfg.get("close_link")  # qaysi komponent kun yopishga bog'langan
+            kind = "auto"
+        elif label == close_link and name in DAILY_CLOSE_USERS:
+            amt, missed = _kpi_after_discipline(conn, name, amt, uz_today())
+            kind = "auto"
+            if missed:
+                lbl = f"{label} · −{missed} kun yopilmagan"
+        comps.append({"label": lbl, "amount": amt, "kind": kind})
     for label, usd in (cfg.get("usd") or {}).items():
         amt = int(usd) * rate
         lbl = f"{label} (${usd})"
