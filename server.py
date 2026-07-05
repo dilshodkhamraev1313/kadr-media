@@ -441,6 +441,9 @@ def init_db():
         skey TEXT PRIMARY KEY, svalue TEXT)""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS daily_close (
         id {pk}, person TEXT, cdate TEXT, closed_at TEXT)""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS charity_ledger (
+        id {pk}, kind TEXT, amount INTEGER DEFAULT 0, note TEXT DEFAULT '',
+        cdate TEXT, created_by TEXT, created_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS attendance (
         id {pk}, person TEXT, adate TEXT, checkin_time TEXT,
         on_time INTEGER DEFAULT 0, source TEXT DEFAULT 'bot', created_at {ts})""")
@@ -452,6 +455,7 @@ def init_db():
     add_column_if_missing(conn, "users", "client_name", "TEXT")
     # projects: oylik reja + har bosqich bo'yicha bajarilgan sanoq
     add_column_if_missing(conn, "projects", "plan", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "projects", "monthly_fee", "INTEGER DEFAULT 0")
     for col in DONE_COLS:
         add_column_if_missing(conn, "projects", col, "INTEGER DEFAULT 0")
     # videos: ish jarayoni ustunlari
@@ -621,14 +625,14 @@ def api_create_project(b):
     conn = get_db()
     sql = """INSERT INTO projects
            (name,client,responsible,ssenariy,syomka,montaj,tasdiq,joylash,deadline,muammo,izoh,
-            plan,done_ssenariy,done_syomka,done_montaj,done_tasdiq,done_joylash)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
+            plan,monthly_fee,done_ssenariy,done_syomka,done_montaj,done_tasdiq,done_joylash)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
     params = (
         b.get("name") or "Nomsiz loyiha", b.get("client") or "",
         b.get("responsible") or "", st(b.get("ssenariy")), st(b.get("syomka")),
         st(b.get("montaj")), st(b.get("tasdiq")), st(b.get("joylash")),
         b.get("deadline") or None, b.get("muammo") or "", b.get("izoh") or "",
-        iv("plan"), iv("done_ssenariy"), iv("done_syomka"), iv("done_montaj"), iv("done_tasdiq"), iv("done_joylash"),
+        iv("plan"), iv("monthly_fee"), iv("done_ssenariy"), iv("done_syomka"), iv("done_montaj"), iv("done_tasdiq"), iv("done_joylash"),
     )
     if IS_PG:
         pid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
@@ -680,6 +684,7 @@ def api_update_project(pid, b):
         "muammo": b.get("muammo", existing["muammo"]),
         "izoh": b.get("izoh", existing["izoh"]),
         "plan": iv("plan"),
+        "monthly_fee": iv("monthly_fee"),
         "done_ssenariy": iv("done_ssenariy"), "done_syomka": iv("done_syomka"),
         "done_montaj": iv("done_montaj"), "done_tasdiq": iv("done_tasdiq"),
         "done_joylash": iv("done_joylash"),
@@ -704,13 +709,13 @@ def api_update_project(pid, b):
     conn.execute(
         """UPDATE projects SET name=?,client=?,responsible=?,ssenariy=?,syomka=?,montaj=?,
            tasdiq=?,joylash=?,deadline=?,muammo=?,izoh=?,
-           plan=?,done_ssenariy=?,done_syomka=?,done_montaj=?,done_tasdiq=?,done_joylash=?,
+           plan=?,monthly_fee=?,done_ssenariy=?,done_syomka=?,done_montaj=?,done_tasdiq=?,done_joylash=?,
            updated_at=CURRENT_TIMESTAMP WHERE id=?""",
         (
             merged["name"], merged["client"], merged["responsible"], merged["ssenariy"],
             merged["syomka"], merged["montaj"], merged["tasdiq"], merged["joylash"],
             merged["deadline"], merged["muammo"], merged["izoh"],
-            merged["plan"], merged["done_ssenariy"], merged["done_syomka"],
+            merged["plan"], merged["monthly_fee"], merged["done_ssenariy"], merged["done_syomka"],
             merged["done_montaj"], merged["done_tasdiq"], merged["done_joylash"], pid,
         ),
     )
@@ -2008,6 +2013,65 @@ def api_payroll(user):
 
 
 # ------------------------------------------------------------
+#  XAYRIYA FONDI (Media+Studio sof foydasidan 5%) — Dilshod+Gulmira
+# ------------------------------------------------------------
+CHARITY_PCT = 0.05
+CHARITY_USERS = ("Dilshod Khamraev", "Gulmira")
+
+
+def is_charity_user(user):
+    return bool(user) and user["name"] in CHARITY_USERS
+
+
+def api_charity(user):
+    rate = get_usd_rate()
+    conn = get_db()
+    media_income = conn.execute("SELECT COALESCE(SUM(monthly_fee),0) AS s FROM projects").fetchone()["s"] or 0
+    studio_income = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM studio_bookings WHERE (status IS NULL OR status<>'bekor_qilindi')").fetchone()["s"] or 0
+    studio_exp = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM studio_expenses").fetchone()["s"] or 0
+    # Payroll (barcha maoshlar — operator/montaj/ssenarist shu yerda, ikki marta sanalmaydi)
+    payroll = 0
+    for n in SALARY:
+        s = compute_salary(conn, n, rate)
+        if s:
+            payroll += s["total"]
+    contrib = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM charity_ledger WHERE kind='contribution'").fetchone()["s"] or 0
+    withdraw = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM charity_ledger WHERE kind='withdrawal'").fetchone()["s"] or 0
+    ledger = [dict(r) for r in conn.execute("SELECT * FROM charity_ledger ORDER BY id DESC LIMIT 50").fetchall()]
+    conn.close()
+    total_income = media_income + studio_income
+    total_expense = payroll + studio_exp
+    profit = total_income - total_expense
+    return {
+        "mediaIncome": media_income, "studioIncome": studio_income, "totalIncome": total_income,
+        "payroll": payroll, "studioExpenses": studio_exp, "totalExpense": total_expense,
+        "profit": profit, "pct": int(CHARITY_PCT * 100),
+        "charityShare": int(round(max(profit, 0) * CHARITY_PCT)),
+        "balance": contrib - withdraw, "contributed": contrib, "withdrawn": withdraw,
+        "ledger": ledger,
+    }
+
+
+def api_charity_add(user, b):
+    kind = "withdrawal" if b.get("kind") == "withdrawal" else "contribution"
+    try:
+        amount = int(b.get("amount") or 0)
+    except (ValueError, TypeError):
+        amount = 0
+    if amount <= 0:
+        return {"error": "Summani kiriting"}
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO charity_ledger (kind, amount, note, cdate, created_by) VALUES (?,?,?,?,?)",
+        (kind, amount, b.get("note") or "", uz_today().isoformat(), user["name"]),
+    )
+    log_audit(conn, user["name"], "xayriya " + ("berdi" if kind == "withdrawal" else "qo'shdi"), f"{amount} so'm")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------
 #  OYLIK STATISTIKA (har oy noldan; o'tgan oylar faqat ko'rish)
 # ------------------------------------------------------------
 def api_month_stats(user, ym):
@@ -2414,6 +2478,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
             return self._json(api_month_stats(user, ym))
+        if path == "/api/charity":
+            return self._forbid() if not is_charity_user(user) else self._json(api_charity(user))
         if path == "/api/attendance":
             if not is_attend_user(user) and role != "ceo":
                 return self._forbid()
@@ -2510,6 +2576,10 @@ class Handler(BaseHTTPRequestHandler):
             if not is_attend_user(user):
                 return self._forbid()
             return self._json(api_checkin(user))
+        if path == "/api/charity":
+            if not is_charity_user(user):
+                return self._forbid()
+            return self._json(api_charity_add(user, b))
         if path == "/api/telegram/setup-webhook":
             if r != "ceo":
                 return self._forbid()

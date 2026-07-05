@@ -170,6 +170,7 @@ const NAV_ITEMS = [
   { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Gulmira', 'Said', 'Xonzoda', 'Umida', 'Sardor', 'Umid', 'Shodiya'] },
   { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Said', 'Gulmira', 'Xonzoda', 'Umida'] },
   { view: 'stats',     icon: '📈', label: 'Oylik statistika', roles: ['ceo', 'coordinator', 'lead'] },
+  { view: 'charity',   icon: '🤲', label: 'Xayriya fondi',  roles: ['ceo', 'lead'], names: ['Dilshod Khamraev', 'Gulmira'] },
 ];
 const UZ_MONTH_FULL = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
 const NAV_FOR = (role) => NAV_ITEMS.filter((n) => n.roles.includes(role) && (!n.names || (ME && n.names.includes(ME.name))));
@@ -225,6 +226,7 @@ const TITLES = {
   salary:    ['Maosh', 'Fiksa, rahbarlik va daromadlar'],
   daily:     ['Kun yopish', 'Kunlik sarhisob va KPI intizomi'],
   stats:     ['Oylik statistika', 'Har oy noldan; o\'tgan oylar faqat ko\'rish'],
+  charity:   ['Xayriya fondi', 'Sof foydaning 5% — Alloh yo\'lida'],
   studio:    ['Kadr Studio', 'Syomka xonalari bandligi va bronlar'],
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
   editors:   ['Montajchilar', 'Kabinetlar va hisob-kitob'],
@@ -256,6 +258,7 @@ async function render() {
     else if (VIEW === 'salary') await viewSalary();
     else if (VIEW === 'daily') await viewDaily();
     else if (VIEW === 'stats') await viewStats();
+    else if (VIEW === 'charity') await viewCharity();
     else if (VIEW === 'studio') await viewStudio();
     else if (VIEW === 'editors') await viewEditors();
     else if (VIEW === 'finance') await viewFinance();
@@ -1267,6 +1270,70 @@ async function viewStats() {
 }
 
 // ============================================================
+//  XAYRIYA FONDI
+// ============================================================
+async function viewCharity() {
+  const d = await api('/api/charity');
+  DATA.charity = d;
+  const ledger = (d.ledger || []).map((l) => {
+    const isW = l.kind === 'withdrawal';
+    return `<div class="pay-row"><div><b style="color:${isW ? 'var(--orange)' : 'var(--green)'}">${isW ? '−' : '+'} ${money(l.amount)}</b>
+      <div class="muted">${fmtDate(l.cdate)} · ${esc(l.note) || (isW ? 'xayriya berildi' : 'fondga qo\'shildi')}</div></div>
+      <div class="muted">${esc(l.created_by || '')}</div></div>`;
+  }).join('') || '<div class="muted">Hali yozuv yo\'q</div>';
+  $('#content').innerHTML = `
+    <div class="rank-hero rank-legenda" style="margin-bottom:16px">
+      <div class="rh-left"><div class="rh-icon">🤲</div>
+        <div><div class="rh-label">${money(d.balance)}</div>
+          <div class="rh-sub">Xayriya fondi jamg'armasi · Alloh yo'lida</div></div></div>
+      <div class="rh-prog">
+        <div class="muted">Bu oy sof foyda: <b>${money(d.profit)}</b> → ${d.pct}% = <b style="color:var(--green)">${money(d.charityShare)}</b></div>
+        <div class="rh-next">Jami qo'shilgan: ${money(d.contributed)} · berilgan: ${money(d.withdrawn)}</div>
+      </div>
+    </div>
+    <div class="stats-grid">
+      ${statTile('📥', money(d.totalIncome), 'Jami tushum (Media+Studio)', 'blue')}
+      ${statTile('📤', money(d.totalExpense), 'Jami xarajat (maosh+studio)', 'orange')}
+      ${statTile('📈', money(d.profit), 'Sof foyda', d.profit >= 0 ? 'green' : 'red')}
+      ${statTile('🤲', money(d.charityShare), d.pct + '% xayriya ulushi', 'purple')}
+    </div>
+    <div class="ceo-grid" style="margin-top:6px">
+      <div class="panel"><h3>💰 Hisob-kitob</h3><div class="money-rows">
+        <div class="mrow"><span>Kadr Media daromadi</span><b>${money(d.mediaIncome)}</b></div>
+        <div class="mrow"><span>Kadr Studio daromadi</span><b>${money(d.studioIncome)}</b></div>
+        <div class="mrow"><span style="color:var(--pink)">Maosh (payroll)</span><b style="color:var(--pink)">−${money(d.payroll)}</b></div>
+        <div class="mrow"><span style="color:var(--pink)">Studio xarajatlari</span><b style="color:var(--pink)">−${money(d.studioExpenses)}</b></div>
+        <div class="mrow big" style="border-top:1px solid var(--border);padding-top:6px"><span>Sof foyda</span><b>${money(d.profit)}</b></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn-save" id="ch_add">+ Fondga qo'shish</button>
+        <button class="btn-del" id="ch_give">🤲 Xayriya berildi</button>
+      </div></div>
+      <div class="panel"><h3>📜 Fond tarixi</h3>${ledger}</div>
+    </div>`;
+  $('#ch_add').addEventListener('click', () => openCharityModal('contribution', d.charityShare));
+  $('#ch_give').addEventListener('click', () => openCharityModal('withdrawal', 0));
+}
+
+function openCharityModal(kind, preset) {
+  const isW = kind === 'withdrawal';
+  openModal(isW ? 'Xayriya berildi' : 'Fondga qo\'shish', `
+    <p class="muted" style="margin-bottom:10px">${isW ? 'Xayriya qilingan summani yozing.' : 'Fondga qo\'shiladigan summa (odatda bu oy 5% ulushi).'}</p>
+    <div class="field"><label>Summa (so'm)</label><input id="ch_amt" type="number" inputmode="numeric" value="${preset || ''}" /></div>
+    <div class="field"><label>Izoh</label><input id="ch_note" placeholder="${isW ? 'masalan: masjid qurilishiga' : 'masalan: iyul oyi 5%'}" /></div>
+    <button class="btn-save" id="ch_ok" ${isW ? 'style="background:var(--orange)"' : ''}>${isW ? '🤲 Berildi' : '+ Qo\'shish'}</button>`,
+  () => {
+    $('#ch_ok').addEventListener('click', async () => {
+      const amount = parseInt($('#ch_amt').value || '0', 10);
+      if (amount <= 0) { toast('Summani kiriting'); return; }
+      const res = await api('/api/charity', { method: 'POST', body: JSON.stringify({ kind, amount, note: $('#ch_note').value }) });
+      if (res.error) { toast(res.error); return; }
+      closeModal(); toast(isW ? '🤲 Xayriya yozildi' : '✓ Fondga qo\'shildi'); render();
+    });
+  });
+}
+
+// ============================================================
 //  MONTAJCHILAR (kabinetlar)
 // ============================================================
 async function viewEditors() {
@@ -1442,6 +1509,7 @@ async function openProjectModal(project) {
       <div class="field"><label>Javobgar</label><select id="pf_resp"><option value="">—</option>${leads.map((u) => `<option ${PDRAFT.responsible === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></div>
     </div>
     <div class="field"><label>Deadline</label><input id="pf_deadline" type="date" value="${PDRAFT.deadline || ''}" /></div>
+    ${ME.role === 'ceo' ? `<div class="field"><label>💵 Oylik to'lov (so'm) — Media daromadi (xayriya hisobi uchun)</label><input id="pf_fee" type="number" min="0" value="${PDRAFT.monthly_fee || 0}" placeholder="masalan: 10800000 (barter bo'lsa 0)" /></div>` : ''}
     <div class="divider"></div><div class="sec-label">📅 Oylik reja (mijoz bilan kelishilgan)</div>
     <div class="field"><label>Oyiga nechta video — har bosqich uchun shu son</label><input id="pf_plan" type="number" min="0" value="${PDRAFT.plan || 0}" placeholder="masalan: 15" /></div>
     <div class="sec-label" style="margin-top:12px">Bu oy bajarilgani (har bosqich):</div>
@@ -1474,6 +1542,8 @@ async function saveProject() {
     done_ssenariy: parseInt($('#pf_done_ssenariy').value || '0', 10), done_syomka: parseInt($('#pf_done_syomka').value || '0', 10),
     done_montaj: parseInt($('#pf_done_montaj').value || '0', 10), done_tasdiq: parseInt($('#pf_done_tasdiq').value || '0', 10),
     done_joylash: parseInt($('#pf_done_joylash').value || '0', 10) };
+  const fee = $('#pf_fee');
+  if (fee) body.monthly_fee = parseInt(fee.value || '0', 10);
   if (EDIT_P) await api(`/api/projects/${EDIT_P.id}`, { method: 'PUT', body: JSON.stringify(body) });
   else await api('/api/projects', { method: 'POST', body: JSON.stringify(body) });
   closeModal(); toast('✓ Saqlandi'); render();
