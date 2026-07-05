@@ -94,9 +94,10 @@ LEADERSHIP_USD_FULL = 50  # loyiha to'liq (deadline o'tmagan) bo'lsa
 LEADERSHIP_USD_HALF = 25  # deadline o'tib ketgan bo'lsa
 STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun (har bron)
 
-# Kunlik sarhisob yopish majburiyati (KPI intizomi) shu 4 kishida.
+# Kunlik sarhisob yopish majburiyati shu 4 kishida.
 DAILY_CLOSE_USERS = ("Said", "Gulmira", "Xonzoda", "Umida")
-WORKDAYS_PER_MONTH = 25  # KPI/intizom bo'linadigan ish kunlari (yakshanba dam)
+WORKDAYS_PER_MONTH = 25  # intizom bo'linadigan ish kunlari (yakshanba dam)
+CLOSE_PENALTY_PER_DAY = 20000  # har yopilmagan ish kuni uchun jazo (hamma uchun bir xil)
 
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
 ATTENDANCE_USERS = ("Gulmira", "Said", "Xonzoda", "Umid", "Umida", "Sardor", "Shodiya")
@@ -2229,11 +2230,12 @@ def _missed_workdays(conn, name, today):
     return missed
 
 
-def _kpi_after_discipline(conn, name, kpi_full, today):
-    """KPI = to'liq − (yopilmagan ish kunlari × KPI/25)."""
+def _kpi_after_discipline(conn, name, full, today):
+    """Kun yopishga bog'langan komponent: har yopilmagan ish kuni uchun flat −20 000
+    (komponent qiymatidan qat'i nazar — hamma uchun bir xil)."""
     missed = _missed_workdays(conn, name, today)
-    per_day = kpi_full / WORKDAYS_PER_MONTH
-    return max(int(round(kpi_full - min(missed * per_day, kpi_full))), 0), missed
+    ded = min(missed * CLOSE_PENALTY_PER_DAY, full)
+    return max(int(round(full - ded)), 0), missed
 
 
 def api_daily(user):
