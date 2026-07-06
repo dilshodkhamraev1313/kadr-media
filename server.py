@@ -2344,10 +2344,61 @@ def _record_attendance(conn, person, source):
     return {"time": ctime, "on_time": on_time}
 
 
+def _save_last_webhook(update):
+    """Diagnostika: oxirgi kelgan xabar xulosasini saqlaydi (nima kelganini ko'rish uchun)."""
+    try:
+        msg = (update or {}).get("message") or (update or {}).get("edited_message") \
+            or (update or {}).get("channel_post") or {}
+        frm = msg.get("from") or {}
+        summary = {
+            "ts": now_local(),
+            "username": frm.get("username"),
+            "name": frm.get("first_name"),
+            "video_note": bool(msg.get("video_note")),
+            "video": bool(msg.get("video")),
+            "chat_id": (msg.get("chat") or {}).get("id"),
+            "thread_id": msg.get("message_thread_id"),
+            "keys": list(msg.keys())[:15],
+        }
+        conn = get_db()
+        conn.execute("DELETE FROM settings WHERE skey='last_webhook'")
+        conn.execute("INSERT INTO settings (skey, svalue) VALUES ('last_webhook', ?)", (json.dumps(summary),))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def api_last_webhook():
+    conn = get_db()
+    row = conn.execute("SELECT svalue FROM settings WHERE skey='last_webhook'").fetchone()
+    conn.close()
+    if not row or not row["svalue"]:
+        return {"empty": True, "note": "Hali hech qanday xabar kelmagan"}
+    try:
+        return json.loads(row["svalue"])
+    except (ValueError, TypeError):
+        return {"empty": True}
+
+
+def api_webhook_info():
+    """Telegram getWebhookInfo — webhook sog'ligi, xatolar, kutayotgan xabarlar."""
+    if not TELEGRAM_BOT_TOKEN:
+        return {"error": "TELEGRAM_BOT_TOKEN yo'q"}
+    try:
+        import urllib.request
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getWebhookInfo"
+        with urllib.request.urlopen(url, timeout=10) as r:
+            return json.loads(r.read().decode())
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def api_telegram_webhook(update):
     """Telegram botdan keladigan yangilanishlar. 'ish voxti' topikdagi kruzhok (video_note)
     ma'lum foydalanuvchidan kelsa — o'sha kishi ishga keldi deb belgilanadi."""
     try:
+        _save_last_webhook(update)
         msg = (update or {}).get("message") or (update or {}).get("edited_message") or {}
         if not msg.get("video_note"):
             return {"ok": True}
@@ -2531,6 +2582,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/me":
             return self._json(public_user(user))
+        if path == "/api/telegram/last":
+            return self._forbid() if role != "ceo" else self._json(api_last_webhook())
+        if path == "/api/telegram/webhook-info":
+            return self._forbid() if role != "ceo" else self._json(api_webhook_info())
         if path == "/api/team":
             return self._json(api_team())
         if path == "/api/clients":
