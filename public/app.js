@@ -1261,7 +1261,7 @@ async function viewDaily() {
         <div class="rh-prog">
           <div class="muted">Shu oy: <b>${d.closedCount}</b> kun yopilgan · yopilmagan ish kuni: <b style="color:var(--orange)">${d.missed}</b></div>
           ${d.missed
-            ? `<div class="rh-next" style="color:var(--orange)">⚠️ Har yopilmagan ish kuni uchun KPI'dan −KPI/25 ayiriladi</div>`
+            ? `<div class="rh-next" style="color:var(--orange)">⚠️ Har yopilmagan ish kuni uchun daromadingizdan −20 000 ayiriladi</div>`
             : `<div class="rh-next" style="color:var(--green)">👍 Barcha ish kunlari yopilgan</div>`}
         </div>
       </div>
