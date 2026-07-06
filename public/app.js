@@ -1212,9 +1212,21 @@ async function viewSalary() {
 //  KUN YOPISH (kunlik sarhisob + KPI)
 // ============================================================
 async function viewDaily() {
-  const [d, att] = await Promise.all([api('/api/daily'), api('/api/attendance').catch(() => ({}))]);
-  DATA.daily = d; DATA.attend = att;
+  const [d, att, smm] = await Promise.all([
+    api('/api/daily'), api('/api/attendance').catch(() => ({})), api('/api/smm').catch(() => ({})),
+  ]);
+  DATA.daily = d; DATA.attend = att; DATA.smm = smm;
   let html = '';
+  // --- SMM loyihalari (Umida) ---
+  if (smm && smm.projects) {
+    const items = smm.projects.map((p) => `
+      <button class="smm-item ${p.done ? 'done' : ''}" data-smmproj="${esc(p.name)}">
+        <span class="smm-check">${p.done ? '✅' : '⬜'}</span> ${esc(p.name)}</button>`).join('');
+    const doneN = smm.projects.filter((p) => p.done).length;
+    html += `<div class="panel" style="margin-bottom:16px"><h3>📱 SMM loyihalari (${doneN}/${smm.projects.length} bajarildi)</h3>
+      <p class="muted" style="margin-bottom:10px">Oy davomida SMM'ini (persona, caption, oblojka, joylash) tugatgan loyihalarni belgilang — SMM daromadingiz shunga qarab hisoblanadi.</p>
+      <div class="smm-list">${items}</div></div>`;
+  }
   // --- Kelish (ertalabki kruzhok / Keldim) ---
   if (att.amAttend && att.me) {
     const m = att.me;
@@ -1280,6 +1292,11 @@ async function viewDaily() {
     await api('/api/daily/close', { method: 'POST', body: '{}' });
     toast('🌙 Kun yopildi — rahmat!'); render();
   });
+  $('#content').querySelectorAll('[data-smmproj]').forEach((b) => b.addEventListener('click', async () => {
+    const res = await api('/api/smm/toggle', { method: 'POST', body: JSON.stringify({ project: b.dataset.smmproj }) });
+    if (res.error) { toast(res.error); return; }
+    toast(res.done ? '✅ Bajarildi deb belgilandi' : 'Belgi olib tashlandi'); render();
+  }));
   const ci = $('#checkin_btn');
   if (ci) ci.addEventListener('click', async () => {
     const res = await api('/api/attendance/checkin', { method: 'POST', body: '{}' });

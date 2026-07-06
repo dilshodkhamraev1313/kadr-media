@@ -82,6 +82,10 @@ STUDIO_OPERATORS = ("Said", "Umid")
 # Ssenarist o'z kabinetidan tasdiqlangan ssenariyni kiritadi — pul avtomatik hisoblanadi.
 SCENARIST_PAY = {"Xonzoda": 100000, "Umida": 50000}
 
+# Umida SMM qiladigan loyihalar. SMM to'liq daromadi shu loyihalar bajarilishiga bog'liq
+# (hammasi bajarilsa — to'liq; qismi bajarilsa — foizi). Umida oy davomida belgilaydi.
+SMM_PROJECTS = ["Namuna mebel", "Nodirbek arab tili", "Kadr studio"]
+
 # Kadr Studio xarajatlari uchun tayyor nomlar (+ "Boshqa" izoh bilan).
 STUDIO_EXPENSE_NAMES = [
     "Studio ijarasi", "WiFi", "Kommunalka", "Kunlik tushlik", "Suv",
@@ -134,7 +138,7 @@ SALARY = {
                 "close_link": "Koordinatorlik"},
     "Umida": {"title": "SMM + ssenarist yordamchi", "som": {"Intizom": 500000},
               "usd": {"Stories": 100, "SMM": 100}, "scenarist": True,
-              "close_link": "Stories"},
+              "close_link": ["Stories", "SMM"]},
     "Sardor": {"title": "Montajchi", "som": {"Fiksa": 500000, "Intizom": 500000}, "montaj": True},
     "Umid": {"title": "Montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
              "montaj": True, "operator": True},
@@ -457,6 +461,8 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS attendance (
         id {pk}, person TEXT, adate TEXT, checkin_time TEXT,
         on_time INTEGER DEFAULT 0, source TEXT DEFAULT 'bot', created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS smm_done (
+        id {pk}, person TEXT, project TEXT, ym TEXT)""")
 
     # users jadvaliga login ustunlarini qo'shish (idempotent)
     add_column_if_missing(conn, "users", "username", "TEXT")
@@ -2009,18 +2015,46 @@ def _studio_client_bonus(conn):
     return (n or 0) * STUDIO_CLIENT_BONUS
 
 
-def _smm_pay(conn, full, today):
-    """SMM = to'liq × (shu oy joylangan / shu oy tasdiqlangan). Video bo'lmasa 0."""
-    ym = today.strftime("%Y-%m")
-    accepted = conn.execute(
-        "SELECT COUNT(*) AS n FROM videos WHERE status IN ('qabul_qilindi','joylandi') AND approved_at LIKE ?",
-        (ym + "%",)).fetchone()["n"] or 0
-    posted = conn.execute(
-        "SELECT COUNT(*) AS n FROM videos WHERE status='joylandi' AND approved_at LIKE ?",
-        (ym + "%",)).fetchone()["n"] or 0
-    if accepted == 0:
-        return 0, posted, accepted
-    return int(round(full * posted / accepted)), posted, accepted
+def _smm_done_count(conn, name, ym):
+    """Shu oyda bajarilgan deb belgilangan SMM loyihalari soni."""
+    ph = ",".join(["?"] * len(SMM_PROJECTS))
+    return conn.execute(
+        f"SELECT COUNT(DISTINCT project) AS n FROM smm_done WHERE person=? AND ym=? AND project IN ({ph})",
+        tuple([name, ym] + SMM_PROJECTS),
+    ).fetchone()["n"] or 0
+
+
+def is_smm_user(user):
+    return bool(user) and (SALARY.get(user["name"], {}).get("usd") or {}).get("SMM") is not None
+
+
+def api_smm(user):
+    ym = uz_now().strftime("%Y-%m")
+    conn = get_db()
+    done = {r["project"] for r in conn.execute(
+        "SELECT project FROM smm_done WHERE person=? AND ym=?", (user["name"], ym)).fetchall()}
+    conn.close()
+    return {"ym": ym, "projects": [{"name": p, "done": p in done} for p in SMM_PROJECTS]}
+
+
+def api_smm_toggle(user, b):
+    project = b.get("project")
+    if project not in SMM_PROJECTS:
+        return {"error": "Noto'g'ri loyiha"}
+    ym = uz_now().strftime("%Y-%m")
+    conn = get_db()
+    ex = conn.execute("SELECT id FROM smm_done WHERE person=? AND ym=? AND project=?",
+                      (user["name"], ym, project)).fetchone()
+    if ex:
+        conn.execute("DELETE FROM smm_done WHERE id=?", (ex["id"],))
+        done = False
+    else:
+        conn.execute("INSERT INTO smm_done (person, project, ym) VALUES (?,?,?)", (user["name"], project, ym))
+        done = True
+    log_audit(conn, user["name"], "SMM loyiha belgiladi", f"{project} · {'bajarildi' if done else 'olib tashlandi'}")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "project": project, "done": done}
 
 
 def compute_salary(conn, name, rate):
@@ -2028,18 +2062,22 @@ def compute_salary(conn, name, rate):
     if not cfg:
         return None
     comps = []
-    close_link = cfg.get("close_link")  # qaysi komponent kun yopishga bog'langan
+    today = uz_today()
+    ym = today.strftime("%Y-%m")
+    cl = cfg.get("close_link") or []          # kun yopishga bog'langan komponent(lar)
+    close_links = [cl] if isinstance(cl, str) else list(cl)
+    is_close = name in DAILY_CLOSE_USERS
     for label, som in (cfg.get("som") or {}).items():
         amt = int(som)
         lbl = label
         kind = "fixed"
         if label == "Intizom" and name in ATTENDANCE_USERS:
-            ot = _ontime_days(conn, name, uz_today())
+            ot = _ontime_days(conn, name, today)
             amt = min(ot * INTIZOM_PER_DAY, INTIZOM_FULL)
             lbl = f"Intizom · {ot} kun o'z vaqtida"
             kind = "auto"
-        elif label == close_link and name in DAILY_CLOSE_USERS:
-            amt, missed = _kpi_after_discipline(conn, name, amt, uz_today())
+        elif label in close_links and is_close:
+            amt, missed = _kpi_after_discipline(conn, name, amt, today)
             kind = "auto"
             if missed:
                 lbl = f"{label} · −{missed} kun yopilmagan"
@@ -2048,16 +2086,23 @@ def compute_salary(conn, name, rate):
         amt = int(usd) * rate
         lbl = f"{label} (${usd})"
         kind = "fixed"
-        if label == close_link and name in DAILY_CLOSE_USERS:
-            # Kun yopishga bog'langan: har yopilmagan ish kuni −qiymat/25
-            amt, missed = _kpi_after_discipline(conn, name, amt, uz_today())
+        if label == "SMM":
+            # SMM = to'liq × (bajarilgan SMM loyihalar ÷ jami); + kun yopishga bog'liq bo'lsa jazo
+            done = _smm_done_count(conn, name, ym)
+            total = len(SMM_PROJECTS) or 1
+            amt = int(round(amt * done / total))
+            kind = "auto"
+            parts = [f"{done}/{total} loyiha"]
+            if "SMM" in close_links and is_close:
+                amt, missed = _kpi_after_discipline(conn, name, amt, today)
+                if missed:
+                    parts.append(f"−{missed} kun")
+            lbl = f"SMM (${usd}) · " + " · ".join(parts)
+        elif label in close_links and is_close:
+            amt, missed = _kpi_after_discipline(conn, name, amt, today)
             kind = "auto"
             if missed:
                 lbl = f"{label} (${usd}) · −{missed} kun yopilmagan"
-        elif label == "SMM":
-            amt, posted, accepted = _smm_pay(conn, amt, uz_today())
-            kind = "auto"
-            lbl = f"SMM (${usd}) · {posted}/{accepted} joylandi"
         comps.append({"label": lbl, "amount": amt, "kind": kind})
     if cfg.get("lead"):
         lp, det = _leadership_pay(conn, name, rate)
@@ -2641,6 +2686,10 @@ class Handler(BaseHTTPRequestHandler):
             if not is_attend_user(user) and role != "ceo":
                 return self._forbid()
             return self._json(api_attendance(user))
+        if path == "/api/smm":
+            if not is_smm_user(user) and role != "ceo":
+                return self._forbid()
+            return self._json(api_smm(user))
         if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "versions":
             sid = self._int(seg[2])
             return self._json(api_script_versions(sid)) if sid else self._json({"error": "Topilmadi"}, 404)
@@ -2735,6 +2784,10 @@ class Handler(BaseHTTPRequestHandler):
             if not is_attend_user(user):
                 return self._forbid()
             return self._json(api_checkin(user))
+        if path == "/api/smm/toggle":
+            if not is_smm_user(user):
+                return self._forbid()
+            return self._json(api_smm_toggle(user, b))
         if path == "/api/charity":
             if r != "ceo":
                 return self._forbid()

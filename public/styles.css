@@ -666,6 +666,15 @@ body {
 .dl-soon { background: rgba(255,159,10,.16); color: var(--orange); }
 .dl-late { background: rgba(255,69,58,.16);  color: var(--red); }
 
+/* SMM loyihalar checklist (Umida) */
+.smm-list { display: flex; flex-direction: column; gap: 8px; }
+.smm-item { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%;
+  background: var(--surface); border: 1px solid var(--border-soft); border-radius: 12px;
+  padding: 12px 14px; font-family: inherit; font-size: 15px; font-weight: 600; color: var(--text); cursor: pointer; }
+.smm-item:hover { border-color: var(--blue); }
+.smm-item.done { border-color: var(--green); background: rgba(48,209,88,.08); }
+.smm-check { font-size: 17px; }
+
 /* Maosh kartasi qatorlari */
 .mrow.sal-auto span::before { content: '⚙ '; opacity: .6; }
 .mrow.sal-auto b { color: var(--blue); }
