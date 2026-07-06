@@ -104,7 +104,7 @@ ATTENDANCE_USERS = ("Gulmira", "Said", "Xonzoda", "Umid", "Umida", "Sardor", "Sh
 TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "said_israilov": "Said", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
-    # "Umida": username hali berilmagan — qo'lda "Keldim" ishlatadi
+    "umiyanassu": "Umida",
 }
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
