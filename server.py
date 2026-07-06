@@ -2283,6 +2283,27 @@ def _kpi_after_discipline(conn, name, full, today):
     return max(int(round(full - ded)), 0), missed
 
 
+def _close_streak(conn, name, today):
+    """Ketma-ket yopilgan ish kunlari soni (yakshanba streak'ni buzmaydi).
+    Bugun hali yopilmagan bo'lsa — kechadan sanaydi."""
+    closed = {r["cdate"] for r in conn.execute(
+        "SELECT cdate FROM daily_close WHERE person=?", (name,)).fetchall()}
+    d = today
+    if d.isoformat() not in closed and d.weekday() != 6:
+        d = d - datetime.timedelta(days=1)  # bugun hali yopiladi — kechadan
+    streak = 0
+    for _ in range(90):
+        if d.weekday() == 6:  # yakshanba — o'tkazamiz
+            d = d - datetime.timedelta(days=1)
+            continue
+        if d.isoformat() in closed:
+            streak += 1
+            d = d - datetime.timedelta(days=1)
+        else:
+            break
+    return streak
+
+
 def api_daily(user):
     conn = get_db()
     today = uz_today()
@@ -2297,6 +2318,7 @@ def api_daily(user):
         res["closedCount"] = len(closed)
         res["workdaysElapsed"] = elapsed
         res["missed"] = _missed_workdays(conn, user["name"], today)
+        res["streak"] = _close_streak(conn, user["name"], today)
         res["summary"] = {
             "bookings": conn.execute("SELECT COUNT(*) AS n FROM studio_bookings WHERE bdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (tstr,)).fetchone()["n"],
             "shoots": conn.execute("SELECT COUNT(*) AS n FROM shoots WHERE sdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (tstr,)).fetchone()["n"],
@@ -2308,6 +2330,7 @@ def api_daily(user):
             "name": nm, "closedToday": tstr in _closed_dates(conn, nm, ym),
             "closedCount": len(_closed_dates(conn, nm, ym)),
             "missed": _missed_workdays(conn, nm, today),
+            "streak": _close_streak(conn, nm, today),
         } for nm in DAILY_CLOSE_USERS]
     conn.close()
     return res

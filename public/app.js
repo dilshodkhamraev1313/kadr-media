@@ -1253,12 +1253,15 @@ async function viewDaily() {
   if (d.amDaily) {
     const s = d.summary || {};
     const done = d.closedToday;
+    const streak = d.streak || 0;
+    const streakBadge = streak >= 2 ? `<div class="streak-badge">🔥 ${streak} kun ketma-ket!</div>` : '';
     html += `
       <div class="rank-hero ${done ? 'rank-elite' : ''}" style="margin-bottom:16px">
         <div class="rh-left"><div class="rh-icon">${done ? '✅' : '🌙'}</div>
           <div><div class="rh-label">${done ? 'Bugun yopildi' : 'Kun ochiq'}</div>
             <div class="rh-sub">${fmtDate(d.today)}${d.isWorkday ? '' : ' · dam kuni'}</div></div></div>
         <div class="rh-prog">
+          ${streakBadge}
           <div class="muted">Shu oy: <b>${d.closedCount}</b> kun yopilgan · yopilmagan ish kuni: <b style="color:var(--orange)">${d.missed}</b></div>
           ${d.missed
             ? `<div class="rh-next" style="color:var(--orange)">⚠️ Har yopilmagan ish kuni uchun daromadingizdan −20 000 ayiriladi</div>`
@@ -1282,7 +1285,7 @@ async function viewDaily() {
     html += `<div class="panel" style="margin-top:16px"><h3>Bugun kim yopdi</h3><div class="ceo-list">` +
       d.overview.map((o) => `
         <div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${colorFor(o.name)}">${initials(o.name)}</div>
-          <div><div class="ci-name">${esc(o.name)}</div><div class="ci-sub">Shu oy ${o.closedCount} kun · yopilmagan ${o.missed}</div></div></div>
+          <div><div class="ci-name">${esc(o.name)}${o.streak >= 2 ? ` <span style="color:var(--orange)">🔥${o.streak}</span>` : ''}</div><div class="ci-sub">Shu oy ${o.closedCount} kun · yopilmagan ${o.missed}</div></div></div>
           <span class="pill ${o.closedToday ? 'green' : 'red'}">${o.closedToday ? '✅ yopdi' : '⏳ yopmadi'}</span></div>`).join('') +
       `</div></div>`;
   }
