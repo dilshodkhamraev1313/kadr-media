@@ -666,6 +666,13 @@ body {
 .dl-soon { background: rgba(255,159,10,.16); color: var(--orange); }
 .dl-late { background: rgba(255,69,58,.16);  color: var(--red); }
 
+/* Budjet progress bar */
+.bud-bar { height: 10px; background: var(--border); border-radius: 6px; overflow: hidden; margin-top: 4px; }
+.bud-fill { height: 100%; border-radius: 6px; transition: width .4s; }
+.bud-fill.ok { background: linear-gradient(90deg, var(--blue), var(--green)); }
+.bud-fill.warn { background: linear-gradient(90deg, var(--orange), var(--yellow)); }
+.bud-fill.over { background: linear-gradient(90deg, var(--red), #ff6b5e); }
+
 /* Kun yopish streak (ketma-ket kunlar) */
 .streak-badge { display: inline-block; background: linear-gradient(135deg, #ff9f0a, #ff453a);
   color: #fff; font-weight: 800; font-size: 14px; padding: 5px 12px; border-radius: 10px; margin-bottom: 8px; }

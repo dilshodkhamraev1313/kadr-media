@@ -453,6 +453,8 @@ def init_db():
         note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
     conn.execute("""CREATE TABLE IF NOT EXISTS settings (
         skey TEXT PRIMARY KEY, svalue TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS budgets (
+        category TEXT PRIMARY KEY, monthly INTEGER DEFAULT 0, responsible TEXT DEFAULT '')""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS daily_close (
         id {pk}, person TEXT, cdate TEXT, closed_at TEXT)""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS charity_ledger (
@@ -898,6 +900,14 @@ def api_telegram_digest():
 # ============================================================
 #  AUTH (login / parol)
 # ============================================================
+def _is_budget_user(name):
+    """Foydalanuvchi biror budjet kategoriyasiga mas'ul qilib biriktirilganmi."""
+    conn = get_db()
+    row = conn.execute("SELECT 1 FROM budgets WHERE responsible=? LIMIT 1", (name,)).fetchone()
+    conn.close()
+    return bool(row)
+
+
 def public_user(u):
     if not u:
         return None
@@ -905,6 +915,7 @@ def public_user(u):
     d.pop("salt", None)
     d.pop("password_hash", None)
     d["hasPassword"] = True
+    d["budgetUser"] = _is_budget_user(d.get("name"))
     return d
 
 
@@ -1766,6 +1777,127 @@ def api_delete_studio_expense(user, eid):
     conn = get_db()
     conn.execute("DELETE FROM studio_expenses WHERE id=?", (eid,))
     log_audit(conn, user["name"], "studio xarajat o'chirdi", f"#{eid}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------
+#  BUDJET — kategoriya bo'yicha oylik budjet + mas'ul kishi
+#  Xarajatlar studio_expenses jadvalida (name = kategoriya) saqlanadi.
+# ------------------------------------------------------------
+def _category_responsible(conn, category):
+    row = conn.execute("SELECT responsible FROM budgets WHERE category=?", (category,)).fetchone()
+    return (row["responsible"] if row else "") or ""
+
+
+def can_spend_category(user, category):
+    """Kategoriyaga xarajat yozish huquqi: CEO yoki shu kategoriya mas'uli."""
+    if user["role"] == "ceo":
+        return True
+    conn = get_db()
+    resp = _category_responsible(conn, category)
+    conn.close()
+    return resp == user["name"]
+
+
+def api_budget(user):
+    ym = uz_now().strftime("%Y-%m")
+    conn = get_db()
+    buds = {r["category"]: dict(r) for r in conn.execute("SELECT * FROM budgets ORDER BY category").fetchall()}
+    spent = {}
+    for r in conn.execute(
+        "SELECT name, COALESCE(SUM(amount),0) AS s FROM studio_expenses WHERE edate LIKE ? GROUP BY name",
+        (ym + "%",),
+    ).fetchall():
+        spent[r["name"]] = r["s"] or 0
+    # Bu oydagi xarajatlar ro'yxati (kategoriya bo'yicha)
+    exp_rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM studio_expenses WHERE edate LIKE ? ORDER BY edate DESC, id DESC", (ym + "%",)).fetchall()]
+    conn.close()
+    is_ceo = user["role"] == "ceo"
+    cats = list(dict.fromkeys(list(buds.keys()) + STUDIO_EXPENSE_NAMES + list(spent.keys())))
+    result = []
+    for c in cats:
+        b = buds.get(c, {})
+        monthly = b.get("monthly", 0) or 0
+        sp = spent.get(c, 0) or 0
+        resp = b.get("responsible", "") or ""
+        mine = resp == user["name"]
+        if not (is_ceo or mine or c in buds or sp):
+            # boshqalar uchun faqat o'zi mas'ul yoki budjetli/sarflangan kategoriyalar
+            pass
+        result.append({
+            "category": c, "monthly": monthly, "responsible": resp,
+            "spent": sp, "remaining": monthly - sp,
+            "pct": (round(sp / monthly * 100) if monthly else 0),
+            "canSpend": is_ceo or mine,
+        })
+    # Mas'ul bo'lmagan oddiy foydalanuvchi — faqat o'zi mas'ul kategoriyalari
+    if not is_ceo:
+        result = [r for r in result if r["responsible"] == user["name"]]
+    return {
+        "ym": ym, "isCeo": is_ceo,
+        "categories": result,
+        "totalBudget": sum(r["monthly"] for r in result),
+        "totalSpent": sum(r["spent"] for r in result),
+        "expenses": exp_rows if is_ceo else [e for e in exp_rows if _cat_is_mine(buds, e.get("name"), user["name"])],
+    }
+
+
+def _cat_is_mine(buds, category, name):
+    b = buds.get(category, {})
+    return (b.get("responsible") or "") == name
+
+
+def api_set_budget(user, b):
+    """CEO — kategoriya oylik budjeti va mas'ulini o'rnatadi."""
+    category = (b.get("category") or "").strip()
+    if not category:
+        return {"error": "Kategoriya nomi kerak"}
+    try:
+        monthly = int(b.get("monthly") or 0)
+    except (ValueError, TypeError):
+        monthly = 0
+    responsible = (b.get("responsible") or "").strip()
+    conn = get_db()
+    conn.execute("DELETE FROM budgets WHERE category=?", (category,))
+    conn.execute("INSERT INTO budgets (category, monthly, responsible) VALUES (?,?,?)",
+                 (category, monthly, responsible))
+    log_audit(conn, user["name"], "budjet o'rnatdi", f"{category}: {monthly} so'm · mas'ul {responsible or '—'}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_delete_budget(user, b):
+    category = (b.get("category") or "").strip()
+    conn = get_db()
+    conn.execute("DELETE FROM budgets WHERE category=?", (category,))
+    log_audit(conn, user["name"], "budjet o'chirdi", category)
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_budget_spend(user, b):
+    """Kategoriyaga xarajat yozish (CEO yoki mas'ul). studio_expenses'ga tushadi."""
+    category = (b.get("category") or "").strip()
+    if not category:
+        return {"error": "Kategoriya kerak"}
+    if not can_spend_category(user, category):
+        return {"error": "Bu kategoriyaga ruxsat yo'q"}
+    try:
+        amount = int(b.get("amount") or 0)
+    except (ValueError, TypeError):
+        amount = 0
+    if amount <= 0:
+        return {"error": "Summani kiriting"}
+    edate = b.get("edate") or uz_today().isoformat()
+    conn = get_db()
+    conn.execute("INSERT INTO studio_expenses (name, amount, edate, note, created_by) VALUES (?,?,?,?,?)",
+                 (category, amount, edate, b.get("note") or "", user["name"]))
+    log_audit(conn, user["name"], "budjet xarajat", f"{category}: {amount} so'm")
     conn.commit()
     conn.close()
     return {"ok": True}
@@ -2686,6 +2818,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if not can_edit_studio(user) else self._json(api_studio_finance(user))
         if path == "/api/studio/expenses":
             return self._forbid() if not can_edit_studio(user) else self._json(api_studio_expenses(user))
+        if path == "/api/budget":
+            if role != "ceo" and not _is_budget_user(user["name"]):
+                return self._forbid()
+            return self._json(api_budget(user))
         if path == "/api/shoots":
             return self._forbid() if role not in APPROVER_ROLES else self._json(api_shoots(user, show_all))
         if path == "/api/scenarist":
@@ -2769,6 +2905,16 @@ class Handler(BaseHTTPRequestHandler):
             if not can_edit_studio(user):
                 return self._forbid()
             return self._json(api_create_studio_expense(user, b), 201)
+        if path == "/api/budget/set":
+            if r != "ceo":
+                return self._forbid()
+            return self._json(api_set_budget(user, b))
+        if path == "/api/budget/delete":
+            if r != "ceo":
+                return self._forbid()
+            return self._json(api_delete_budget(user, b))
+        if path == "/api/budget/spend":
+            return self._json(api_budget_spend(user, b))
         if len(seg) == 4 and seg[1] == "studio" and seg[3] == "pay":
             if not can_edit_studio(user):
                 return self._forbid()

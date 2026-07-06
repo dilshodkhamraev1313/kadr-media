@@ -233,6 +233,7 @@ const NAV_ITEMS = [
   { view: 'myscripts', icon: '✍️', label: 'Ssenariylarim', roles: ['coordinator', 'editor', 'lead'], names: ['Xonzoda', 'Umida'] },
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
+  { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
   { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Gulmira', 'Said', 'Xonzoda', 'Umida', 'Sardor', 'Umid', 'Shodiya'] },
@@ -241,7 +242,10 @@ const NAV_ITEMS = [
   { view: 'charity',   icon: '🤲', label: 'Xayriya fondi',  roles: ['ceo', 'lead'], names: ['Dilshod Khamraev', 'Gulmira'] },
 ];
 const UZ_MONTH_FULL = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
-const NAV_FOR = (role) => NAV_ITEMS.filter((n) => n.roles.includes(role) && (!n.names || (ME && n.names.includes(ME.name))));
+const NAV_FOR = (role) => NAV_ITEMS.filter((n) =>
+  n.roles.includes(role)
+  && (!n.names || (ME && n.names.includes(ME.name)))
+  && (!n.flag || role === 'ceo' || (ME && ME[n.flag])));
 
 const navMBtn = (n) => `<button class="m-btn" data-view="${n.view}"><span>${n.icon}</span>${n.label}</button>`;
 
@@ -294,6 +298,7 @@ const TITLES = {
   salary:    ['Maosh', 'Fiksa, rahbarlik va daromadlar'],
   daily:     ['Kun yopish', 'Kunlik sarhisob va KPI intizomi'],
   stats:     ['Oylik statistika', 'Har oy noldan; o\'tgan oylar faqat ko\'rish'],
+  budget:    ['Budjet', 'Oylik xarajatlar budjeti va mas\'ullar'],
   charity:   ['Xayriya fondi', 'Sof foydaning 5% — Alloh yo\'lida'],
   studio:    ['Kadr Studio', 'Syomka xonalari bandligi va bronlar'],
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
@@ -326,6 +331,7 @@ async function render() {
     else if (VIEW === 'salary') await viewSalary();
     else if (VIEW === 'daily') await viewDaily();
     else if (VIEW === 'stats') await viewStats();
+    else if (VIEW === 'budget') await viewBudget();
     else if (VIEW === 'charity') await viewCharity();
     else if (VIEW === 'studio') await viewStudio();
     else if (VIEW === 'editors') await viewEditors();
@@ -342,7 +348,7 @@ async function render() {
 function buildTopbarActions() {
   const a = $('#topbarActions');
   let html = '';
-  const canSearch = ['projects', 'scripts', 'videos', 'qc', 'shoots', 'salary', 'joylash', 'editors', 'client', 'cscripts', 'cvideos', 'myvideos'].includes(VIEW);
+  const canSearch = ['projects', 'scripts', 'videos', 'qc', 'shoots', 'salary', 'budget', 'joylash', 'editors', 'client', 'cscripts', 'cvideos', 'myvideos'].includes(VIEW);
   if (canSearch) html += `<div class="search-box"><span>⌕</span><input id="searchInput" placeholder="Qidirish..." value="${esc(SEARCH)}" /></div>`;
   const role = ME.role;
   if ((VIEW === 'projects') && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-project">+ Loyiha</button>`;
@@ -1311,6 +1317,93 @@ async function viewDaily() {
     const res = await api('/api/telegram/setup-webhook', { method: 'POST', body: '{}' });
     if (res.ok) { toast('🤖 Webhook ulandi!'); }
     else { alert('Xatolik: ' + (res.error || JSON.stringify(res.telegram || res))); }
+  });
+}
+
+// ============================================================
+//  BUDJET
+// ============================================================
+async function viewBudget() {
+  const d = await api('/api/budget');
+  DATA.budget = d;
+  const cats = d.categories.filter((c) => matchSearch(c.category + ' ' + (c.responsible || '')));
+  const cards = cats.map((c) => budgetCard(c, d.isCeo)).join('') || emptyState('Kategoriya yo\'q');
+  $('#content').innerHTML = `
+    <div class="stats-grid">
+      ${statTile('💳', money(d.totalBudget), 'Jami oylik budjet', 'blue')}
+      ${statTile('💸', money(d.totalSpent), 'Sarflandi', 'orange')}
+      ${statTile('✅', money(Math.max(d.totalBudget - d.totalSpent, 0)), 'Qolgan', 'green')}
+    </div>
+    ${d.isCeo ? `<div style="margin:14px 0"><button class="btn-primary" id="bud_add">+ Kategoriya / Budjet</button></div>` : ''}
+    <div class="cards-grid">${cards}</div>`;
+  const ba = $('#bud_add');
+  if (ba) ba.addEventListener('click', () => openBudgetSetModal(null));
+  $('#content').querySelectorAll('[data-budspend]').forEach((b) => b.addEventListener('click', () => openBudgetSpendModal(b.dataset.budspend)));
+  $('#content').querySelectorAll('[data-budedit]').forEach((b) => b.addEventListener('click', () => {
+    const c = d.categories.find((x) => x.category === b.dataset.budedit); openBudgetSetModal(c);
+  }));
+}
+
+function budgetCard(c, isCeo) {
+  const over = c.monthly && c.spent > c.monthly;
+  const pct = Math.min(c.pct || 0, 100);
+  const barCls = over ? 'over' : ((c.pct || 0) >= 80 ? 'warn' : 'ok');
+  return `
+    <div class="team-card">
+      <div class="team-head"><div style="flex:1"><div class="team-name">${esc(c.category)}</div>
+        <div class="team-role">${c.responsible ? '👤 ' + esc(c.responsible) : 'mas\'ul biriktirilmagan'}</div></div>
+        ${isCeo ? `<button class="mini-btn gray" data-budedit="${esc(c.category)}">⚙</button>` : ''}</div>
+      <div class="money-rows">
+        <div class="mrow"><span>Oylik budjet</span><b>${money(c.monthly)}</b></div>
+        <div class="mrow"><span>Sarflandi</span><b>${money(c.spent)}</b></div>
+        <div class="mrow big" style="border-top:1px solid var(--border);padding-top:6px"><span>Qolgan</span><b style="color:${over ? 'var(--red)' : 'var(--green)'}">${money(c.remaining)}</b></div>
+      </div>
+      <div class="bud-bar"><div class="bud-fill ${barCls}" style="width:${pct}%"></div></div>
+      ${over ? `<div class="muted" style="color:var(--red);margin-top:6px">⚠️ Budjetdan ${money(c.spent - c.monthly)} oshib ketdi!</div>` : ''}
+      ${c.canSpend ? `<button class="btn-save sm" data-budspend="${esc(c.category)}" style="margin-top:10px">+ Xarajat yozish</button>` : ''}
+    </div>`;
+}
+
+async function openBudgetSetModal(c) {
+  if (!DATA.team) DATA.team = await api('/api/team');
+  const opts = `<option value="">— mas'ul biriktirilmagan —</option>` +
+    DATA.team.map((u) => `<option ${c && c.responsible === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
+  openModal(c ? 'Budjetni tahrirlash' : 'Yangi kategoriya / budjet', `
+    <div class="field"><label>Kategoriya nomi</label><input id="bud_cat" value="${c ? esc(c.category) : ''}" ${c ? 'readonly' : ''} placeholder="masalan: Kunlik tushlik" /></div>
+    <div class="field"><label>Oylik budjet (so'm)</label><input id="bud_mon" type="number" inputmode="numeric" value="${c ? c.monthly : ''}" placeholder="masalan: 4000000" /></div>
+    <div class="field"><label>Mas'ul kishi (u xarajat yozadi)</label><select id="bud_resp">${opts}</select></div>
+    <div class="modal-actions"><button class="btn-save" id="bud_save">💾 Saqlash</button>
+      ${c ? `<button class="btn-del" id="bud_del">🗑 O'chirish</button>` : ''}</div>`,
+  () => {
+    $('#bud_save').addEventListener('click', async () => {
+      const category = $('#bud_cat').value.trim();
+      if (!category) { toast('Kategoriya nomini kiriting'); return; }
+      await api('/api/budget/set', { method: 'POST', body: JSON.stringify({ category, monthly: parseInt($('#bud_mon').value || '0', 10), responsible: $('#bud_resp').value }) });
+      closeModal(); toast('💾 Saqlandi'); render();
+    });
+    const del = $('#bud_del');
+    if (del) del.addEventListener('click', async () => {
+      if (!confirm('Budjet o\'chirilsinmi? (yozilgan xarajatlar qoladi)')) return;
+      await api('/api/budget/delete', { method: 'POST', body: JSON.stringify({ category: c.category }) });
+      closeModal(); toast('O\'chirildi'); render();
+    });
+  });
+}
+
+function openBudgetSpendModal(category) {
+  openModal(`💸 Xarajat — ${esc(category)}`, `
+    <div class="field"><label>Summa (so'm)</label><input id="sp_amt" type="number" inputmode="numeric" placeholder="masalan: 180000" /></div>
+    <div class="field"><label>Sana</label><input id="sp_date" type="date" /></div>
+    <div class="field"><label>Izoh (ixtiyoriy)</label><input id="sp_note" placeholder="masalan: 6 kishiga tushlik" /></div>
+    <button class="btn-save" id="sp_ok">+ Yozish</button>`,
+  () => {
+    $('#sp_ok').addEventListener('click', async () => {
+      const amount = parseInt($('#sp_amt').value || '0', 10);
+      if (amount <= 0) { toast('Summani kiriting'); return; }
+      const res = await api('/api/budget/spend', { method: 'POST', body: JSON.stringify({ category, amount, edate: $('#sp_date').value || null, note: $('#sp_note').value }) });
+      if (res.error) { toast(res.error); return; }
+      closeModal(); toast('💸 Xarajat yozildi'); render();
+    });
   });
 }
 
