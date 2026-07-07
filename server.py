@@ -482,6 +482,7 @@ def init_db():
         add_column_if_missing(conn, "videos", col, "TEXT")
     # videos: video turi (reels/podcast/youtube)
     add_column_if_missing(conn, "videos", "vtype", "TEXT DEFAULT 'reels'")
+    add_column_if_missing(conn, "videos", "deadline_reminded", "INTEGER DEFAULT 0")
     # videos: deadline uchun biriktirilgan vaqt (Toshkent) va kechikish belgisi
     add_column_if_missing(conn, "videos", "assigned_at", "TEXT")
     add_column_if_missing(conn, "videos", "is_late", "INTEGER DEFAULT 0")
@@ -2541,9 +2542,103 @@ def api_cron_daily_check():
         send_telegram(
             "⚠️ <b>Kun sarhisobi yopilmadi!</b>\n📅 " + tstr + "\n\n"
             "Yopmaganlar: <b>" + ", ".join(not_closed) + "</b>\n\n"
-            "❗️ Kun yopilmasa KPI puli kamayadi (har yopilmagan kun uchun −KPI/25)."
+            "❗️ Kun yopilmasa maoshdan −20 000 so'm ushlab qolinadi (har yopilmagan kun uchun)."
         )
     return {"ok": True, "notClosed": not_closed}
+
+
+def api_cron_deadline_check():
+    """Har ~soatda tashqi cron chaqiradi — montaj muddati yaqinlashgan/o'tgan
+    videolar uchun bir marta Telegram eslatmasi yuboradi (deadline_reminded flag)."""
+    conn = get_db()
+    now = uz_now().replace(tzinfo=None)
+    rows = conn.execute(
+        "SELECT * FROM videos WHERE status IN ('biriktirildi','qaytarildi') "
+        "AND assigned_at IS NOT NULL AND assigned_at<>'' "
+        "AND (deadline_reminded IS NULL OR deadline_reminded=0)"
+    ).fetchall()
+    warned, expired = [], []
+    for r in rows:
+        v = dict(r)
+        vtype = v.get("vtype") or "reels"
+        hours = DEADLINE_HOURS.get(vtype if vtype in DEADLINE_HOURS else "reels", 24)
+        try:
+            a = datetime.datetime.strptime((v.get("assigned_at") or "")[:19], "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            continue
+        deadline = a + datetime.timedelta(hours=hours)
+        left = (deadline - now).total_seconds() / 3600.0
+        if left > 3:
+            continue  # hali erta
+        conn.execute("UPDATE videos SET deadline_reminded=1 WHERE id=?", (v["id"],))
+        editor = v.get("editor") or "—"
+        title = v.get("title") or "—"
+        if left > 0:
+            send_telegram(
+                "⏰ <b>Muddat yaqinlashdi!</b>\n" + title + "\n"
+                "👤 " + editor + "\n"
+                "⏳ ~" + str(round(left, 1)) + " soat qoldi — tez montaj qiling!"
+            )
+            warned.append(title)
+        else:
+            note = ("kechiksa pul hisoblanmaydi" if vtype == "reels" else "kechiksa yarim pul")
+            send_telegram(
+                "🔴 <b>Muddat o'tdi!</b>\n" + title + "\n"
+                "👤 " + editor + "\n"
+                "(" + note + ")"
+            )
+            expired.append(title)
+    conn.commit()
+    conn.close()
+    return {"ok": True, "warned": warned, "expired": expired}
+
+
+def api_cron_morning_digest():
+    """~09:00 da tashqi cron chaqiradi — jamoaga bugungi kun uchun qisqa digest yuboradi."""
+    today = uz_today()
+    if today.weekday() == 6:
+        return {"ok": True, "skipped": "yakshanba"}
+    tstr = today.isoformat()
+    yesterday = (today - datetime.timedelta(days=1)).isoformat()
+    conn = get_db()
+
+    def _count(sql, params=()):
+        row = conn.execute(sql, params).fetchone()
+        return row[0] if row else 0
+
+    bookings = _count(
+        "SELECT COUNT(*) FROM studio_bookings WHERE bdate=? "
+        "AND (status IS NULL OR status<>'bekor_qilindi')", (tstr,))
+    shoots = _count(
+        "SELECT COUNT(*) FROM shoots WHERE sdate=? "
+        "AND (status IS NULL OR status<>'bekor_qilindi')", (tstr,))
+    montaj = _count("SELECT COUNT(*) FROM videos WHERE status IN ('biriktirildi','qaytarildi')")
+    qc = _count("SELECT COUNT(*) FROM videos WHERE status='montaj_qilindi'")
+    post = _count("SELECT COUNT(*) FROM videos WHERE status='qabul_qilindi'")
+
+    # kecha kun yopmaganlar (ish kuni bo'lsa)
+    not_closed = []
+    if datetime.date.fromisoformat(yesterday).weekday() != 6:
+        not_closed = [nm for nm in DAILY_CLOSE_USERS
+                      if not conn.execute("SELECT id FROM daily_close WHERE person=? AND cdate=?",
+                                          (nm, yesterday)).fetchone()]
+    conn.close()
+
+    lines = ["☀️ <b>Xayrli tong, Kadr jamoasi!</b>", "📅 " + tstr, ""]
+    total_shoot = bookings + shoots
+    if total_shoot:
+        lines.append("🎥 Bugungi syomkalar: <b>" + str(total_shoot) + "</b>")
+    lines.append("🎬 Montaj kutmoqda: <b>" + str(montaj) + "</b>")
+    lines.append("🔎 Sifat nazorati: <b>" + str(qc) + "</b>")
+    lines.append("📷 Joylashga tayyor: <b>" + str(post) + "</b>")
+    if not_closed:
+        lines.append("")
+        lines.append("⚠️ Kecha kun yopmaganlar: <b>" + ", ".join(not_closed) + "</b>")
+    lines.append("")
+    lines.append("Kuningiz barakali o'tsin! 💪")
+    send_telegram("\n".join(lines))
+    return {"ok": True, "shoots": total_shoot, "montaj": montaj, "qc": qc,
+            "post": post, "notClosed": not_closed}
 
 
 # ------------------------------------------------------------
@@ -2813,6 +2908,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_telegram_digest())
         if path == "/api/cron/daily-check":
             return self._json(api_cron_daily_check())
+        if path == "/api/cron/deadline-check":
+            return self._json(api_cron_deadline_check())
+        if path == "/api/cron/morning-digest":
+            return self._json(api_cron_morning_digest())
         if not path.startswith("/api/"):
             return self._serve_static(path)
 

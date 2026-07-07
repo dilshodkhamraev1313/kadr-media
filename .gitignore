@@ -1,0 +1,14 @@
+# Mahalliy ma'lumotlar bazasi — internetga yuklanmasin
+kadr-media.db
+kadr-media.db-wal
+kadr-media.db-shm
+
+# Node (agar ishlatilsa)
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+
+# Tizim
+.DS_Store
