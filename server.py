@@ -2528,6 +2528,64 @@ def api_month_stats(user, ym):
     }
 
 
+def api_leaderboard(user):
+    """Reyting + trend: montajchilar/ssenaristlar/operatorlar shu oy bo'yicha
+    reytingi + oxirgi 6 oy jamoaviy trend (qabul qilingan / joylangan videolar)."""
+    conn = get_db()
+    cur = uz_now()
+    ym = cur.strftime("%Y-%m")
+    like = ym + "%"
+
+    def cnt(sql, params):
+        return conn.execute(sql, params).fetchone()["n"] or 0
+
+    allc = _editor_accepted_counts(conn)
+    ed_rows = conn.execute("SELECT name FROM users WHERE role='editor' ORDER BY name").fetchall()
+    montaj = []
+    for e in ed_rows:
+        nm = e["name"]
+        mo = cnt("SELECT COUNT(*) AS n FROM videos WHERE editor=? AND approved_at LIKE ? "
+                 "AND status IN ('qabul_qilindi','joylandi')", (nm, like))
+        ri = rank_info(allc.get(nm, 0))
+        montaj.append({"name": nm, "month": mo, "allTime": allc.get(nm, 0),
+                       "rankLabel": ri["rank_label"], "rankIcon": ri["rank_icon"]})
+    montaj.sort(key=lambda x: (-x["month"], -x["allTime"]))
+
+    scen = [{"name": nm,
+             "month": cnt("SELECT COUNT(*) AS n FROM scenarist_scripts WHERE author=? "
+                          "AND (status IS NULL OR status<>'bekor_qilindi') AND sdate LIKE ?", (nm, like))}
+            for nm in SCENARIST_PAY]
+    scen.sort(key=lambda x: -x["month"])
+
+    ops = [{"name": nm,
+            "month": cnt("SELECT COUNT(*) AS n FROM shoots WHERE operator=? "
+                         "AND (status IS NULL OR status<>'bekor_qilindi') AND sdate LIKE ?", (nm, like))
+                     + cnt("SELECT COUNT(*) AS n FROM studio_bookings WHERE operator=? "
+                           "AND (status IS NULL OR status<>'bekor_qilindi') AND bdate LIKE ?", (nm, like))}
+           for nm in STUDIO_OPERATORS]
+    ops.sort(key=lambda x: -x["month"])
+
+    # oxirgi 6 oy
+    y, m = cur.year, cur.month
+    months = []
+    for i in range(5, -1, -1):
+        mm, yy = m - i, y
+        while mm <= 0:
+            mm += 12
+            yy -= 1
+        months.append("%04d-%02d" % (yy, mm))
+    trend = []
+    for mo in months:
+        trend.append({
+            "ym": mo,
+            "accepted": cnt("SELECT COUNT(*) AS n FROM videos WHERE approved_at LIKE ? "
+                            "AND status IN ('qabul_qilindi','joylandi')", (mo + "%",)),
+            "posted": cnt("SELECT COUNT(*) AS n FROM videos WHERE posted_at LIKE ? AND status='joylandi'", (mo + "%",)),
+        })
+    conn.close()
+    return {"month": ym, "montaj": montaj, "scenarists": scen, "operators": ops, "trend": trend}
+
+
 # ------------------------------------------------------------
 #  KUNLIK SARHISOB (kun yopish) + KPI intizomi
 # ------------------------------------------------------------
@@ -3087,6 +3145,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
             return self._json(api_month_stats(user, ym))
+        if path == "/api/leaderboard":
+            if role not in APPROVER_ROLES:
+                return self._forbid()
+            return self._json(api_leaderboard(user))
         if path == "/api/charity":
             return self._forbid() if not is_charity_user(user) else self._json(api_charity(user))
         if path == "/api/attendance":

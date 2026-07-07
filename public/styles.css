@@ -318,6 +318,33 @@ body {
 .cf-tot { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; padding-top: 10px;
   border-top: 1px solid var(--border, rgba(255,255,255,.08)); font-size: 13px; color: var(--muted); }
 
+/* Reyting + trend */
+.lb-grid { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 16px; margin-top: 16px; align-items: start; }
+.lb-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.lb-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px;
+  background: var(--bg-soft, rgba(255,255,255,.03)); }
+.lb-row.lb-top { background: rgba(255,214,10,.10); }
+.lb-rank { width: 26px; text-align: center; font-size: 17px; }
+.lb-num { font-size: 12px; color: var(--muted); font-weight: 700; }
+.lb-name { flex: 1; font-weight: 600; display: flex; flex-direction: column; }
+.lb-sub { font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 1px; }
+.lb-val { font-size: 13px; color: var(--muted); white-space: nowrap; }
+.trend-chart { display: flex; align-items: flex-end; gap: 12px; height: 180px; margin: 14px 6px 4px; }
+.tr-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; height: 100%; }
+.tr-bars { flex: 1; display: flex; align-items: flex-end; justify-content: center; gap: 4px; width: 100%; }
+.tr-bar { width: 40%; max-width: 34px; border-radius: 6px 6px 0 0; min-height: 3px; position: relative;
+  transition: height .3s ease; }
+.tr-bar.acc { background: var(--blue); }
+.tr-bar.post { background: var(--green); }
+.tr-bar span { position: absolute; top: -18px; left: 50%; transform: translateX(-50%);
+  font-size: 11px; font-weight: 700; color: var(--text); }
+.tr-lbl { font-size: 12px; color: var(--muted); }
+.tr-legend { display: flex; gap: 18px; justify-content: center; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.tr-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: middle; }
+.tr-legend .dot.acc { background: var(--blue); }
+.tr-legend .dot.post { background: var(--green); }
+@media (max-width: 900px) { .lb-grid { grid-template-columns: 1fr; } }
+
 .activity-item { display: flex; gap: 11px; padding: 10px 0; border-bottom: 1px solid var(--border-soft); font-size: 13px; }
 .activity-item:last-child { border: none; }
 .activity-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-top: 6px; flex-shrink: 0; }

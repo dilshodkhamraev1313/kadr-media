@@ -243,6 +243,7 @@ const NAV_ITEMS = [
   { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Gulmira', 'Said', 'Xonzoda', 'Umida', 'Sardor', 'Umid', 'Shodiya'] },
   { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Said', 'Gulmira', 'Xonzoda', 'Umida'] },
   { view: 'stats',     icon: '📈', label: 'Oylik statistika', roles: ['ceo', 'coordinator', 'lead'] },
+  { view: 'reyting',   icon: '🏆', label: 'Reyting',        roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'charity',   icon: '🤲', label: 'Xayriya fondi',  roles: ['ceo', 'lead'], names: ['Dilshod Khamraev', 'Gulmira'] },
 ];
 const UZ_MONTH_FULL = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
@@ -302,6 +303,7 @@ const TITLES = {
   salary:    ['Maosh', 'Fiksa, rahbarlik va daromadlar'],
   daily:     ['Kun yopish', 'Kunlik sarhisob va KPI intizomi'],
   stats:     ['Oylik statistika', 'Har oy noldan; o\'tgan oylar faqat ko\'rish'],
+  reyting:   ['Reyting', 'Jamoa reytingi va oylik trend'],
   budget:    ['Budjet', 'Oylik xarajatlar budjeti va mas\'ullar'],
   bugun:     ['Bugun', 'Bugungi vazifalaringiz va muddatlar'],
   charity:   ['Xayriya fondi', 'Sof foydaning 5% — Alloh yo\'lida'],
@@ -338,6 +340,7 @@ async function render() {
     else if (VIEW === 'salary') await viewSalary();
     else if (VIEW === 'daily') await viewDaily();
     else if (VIEW === 'stats') await viewStats();
+    else if (VIEW === 'reyting') await viewLeaderboard();
     else if (VIEW === 'budget') await viewBudget();
     else if (VIEW === 'charity') await viewCharity();
     else if (VIEW === 'studio') await viewStudio();
@@ -1808,6 +1811,57 @@ async function viewCashflow() {
     if (res && res.ok) { toast(res.paid ? '✓ To\'landi deb belgilandi' : 'Bekor qilindi'); render(); }
     else { b.disabled = false; toast('Xatolik'); }
   }));
+}
+
+// ============================================================
+//  REYTING + TREND (leaderboard)
+// ============================================================
+const UZ_MONTHS_FULL = ['Yan', 'Fev', 'Mar', 'Apr', 'May', 'Iyn', 'Iyl', 'Avg', 'Sen', 'Okt', 'Noy', 'Dek'];
+function medal(i) { return ['🥇', '🥈', '🥉'][i] || `<span class="lb-num">${i + 1}</span>`; }
+
+function lbRows(list, valFn, subFn) {
+  if (!list.length || list.every((x) => (x.month || 0) === 0 && (x.allTime || 0) === 0))
+    return emptyState('Bu oy uchun ma\'lumot yo\'q');
+  return list.map((x, i) => `<div class="lb-row${i === 0 && (x.month || 0) > 0 ? ' lb-top' : ''}">
+    <div class="lb-rank">${medal(i)}</div>
+    <div class="lb-name">${esc(x.name)}${subFn ? `<span class="lb-sub">${subFn(x)}</span>` : ''}</div>
+    <div class="lb-val">${valFn(x)}</div></div>`).join('');
+}
+
+async function viewLeaderboard() {
+  const d = await api('/api/leaderboard');
+  DATA.leaderboard = d;
+  const trend = d.trend || [];
+  const max = Math.max(1, ...trend.map((t) => Math.max(t.accepted || 0, t.posted || 0)));
+  const bars = trend.map((t) => {
+    const mIdx = parseInt(t.ym.slice(5, 7), 10) - 1;
+    const ah = Math.round((t.accepted || 0) / max * 100);
+    const ph = Math.round((t.posted || 0) / max * 100);
+    return `<div class="tr-col">
+      <div class="tr-bars">
+        <div class="tr-bar acc" style="height:${ah}%" title="Qabul: ${t.accepted}"><span>${t.accepted || ''}</span></div>
+        <div class="tr-bar post" style="height:${ph}%" title="Joylandi: ${t.posted}"></div>
+      </div>
+      <div class="tr-lbl">${UZ_MONTHS_FULL[mIdx]}</div></div>`;
+  }).join('');
+
+  $('#content').innerHTML = `
+    <div class="panel">
+      <h3>📊 Oylik trend — qabul qilingan videolar (oxirgi 6 oy)</h3>
+      <div class="trend-chart">${bars}</div>
+      <div class="tr-legend"><span><i class="dot acc"></i> Qabul qilingan</span><span><i class="dot post"></i> Joylangan</span></div>
+    </div>
+    <div class="lb-grid">
+      <div class="panel"><h3>🎬 Montajchilar (bu oy)</h3><div class="lb-list">
+        ${lbRows(d.montaj || [], (x) => `<b>${x.month}</b> ta`, (x) => `${x.rankIcon || ''} ${x.rankLabel || ''} · jami ${x.allTime}`)}
+      </div></div>
+      <div class="panel"><h3>✍️ Ssenaristlar (bu oy)</h3><div class="lb-list">
+        ${lbRows(d.scenarists || [], (x) => `<b>${x.month}</b> ta`)}
+      </div></div>
+      <div class="panel"><h3>📹 Operatorlar (bu oy)</h3><div class="lb-list">
+        ${lbRows(d.operators || [], (x) => `<b>${x.month}</b> ta`)}
+      </div></div>
+    </div>`;
 }
 
 // ============================================================
