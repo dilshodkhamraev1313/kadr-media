@@ -103,6 +103,36 @@ DAILY_CLOSE_USERS = ("Said", "Gulmira", "Xonzoda", "Umida")
 WORKDAYS_PER_MONTH = 25  # intizom bo'linadigan ish kunlari (yakshanba dam)
 CLOSE_PENALTY_PER_DAY = 20000  # har yopilmagan ish kuni uchun jazo (hamma uchun bir xil)
 
+# Kun yopish cheklisti — har kishi uchun tayyor vazifalar (loyihalarigacha).
+# Dashboardda tahrirlanadi; bular faqat boshlang'ich (seed) qiymatlar.
+DEFAULT_CHECKLIST = {
+    "Said": [
+        "Namuna Mebel — syomka/loyiha nazorati",
+        "Nodirbek (arab tili) — loyiha nazorati",
+        "Sifat nazorati — montaj videolarni tekshirdim",
+        "Bugungi syomkalar bajarildi",
+    ],
+    "Gulmira": [
+        "Kadr Studio operatsion boshqaruv",
+        "Bugungi studio bronlar nazorati",
+        "1 reels tayyorlandi",
+        "5 stories joylandi",
+        "Umida-targetolog loyihasi nazorati",
+    ],
+    "Xonzoda": [
+        "Kunlik koordinatsiya hisoboti (barcha loyihalar holati)",
+        "Amarkets — ssenariy/nazorat",
+        "Fidda kumush — ssenariy/nazorat",
+        "Bugungi ssenariylar yozildi",
+    ],
+    "Umida": [
+        "Stories joylandi",
+        "SMM: persona / caption / oblojka / opisaniya",
+        "Videolar Instagram'ga joylandi",
+        "Ssenarist yordami (Xonzodaga)",
+    ],
+}
+
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
 ATTENDANCE_USERS = ("Gulmira", "Said", "Xonzoda", "Umid", "Umida", "Sardor", "Shodiya")
 TELEGRAM_ATTEND = {
@@ -475,6 +505,10 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS client_payments (
         id {pk}, project TEXT, ym TEXT, amount INTEGER DEFAULT 0,
         pdate TEXT, note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS checklist_items (
+        id {pk}, person TEXT, text TEXT, sort INTEGER DEFAULT 0, active INTEGER DEFAULT 1)""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS checklist_done (
+        id {pk}, person TEXT, cdate TEXT, item_id INTEGER)""")
 
     # users jadvaliga login ustunlarini qo'shish (idempotent)
     add_column_if_missing(conn, "users", "username", "TEXT")
@@ -505,6 +539,7 @@ def init_db():
     # shoots (Kadr Media syomkalari): syomka vaqti (nechidan nechigacha)
     add_column_if_missing(conn, "shoots", "start_time", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "shoots", "end_time", "TEXT DEFAULT ''")
+    _seed_checklist(conn)
     conn.commit()
 
     # Seed (faqat bo'sh bo'lsa)
@@ -2650,6 +2685,32 @@ def _close_streak(conn, name, today):
     return streak
 
 
+def _seed_checklist(conn):
+    """Har kishiga tayyor cheklist (faqat o'sha kishida hech narsa bo'lmasa)."""
+    for person, items in DEFAULT_CHECKLIST.items():
+        n = conn.execute("SELECT COUNT(*) AS n FROM checklist_items WHERE person=?", (person,)).fetchone()["n"]
+        if n == 0:
+            for i, text in enumerate(items):
+                conn.execute("INSERT INTO checklist_items (person, text, sort, active) VALUES (?,?,?,1)",
+                             (person, text, i))
+
+
+def _checklist_for(conn, person, cdate=None):
+    """Kishining faol cheklisti; cdate berilsa — o'sha kundagi belgilangan holati bilan."""
+    items = conn.execute(
+        "SELECT id, text FROM checklist_items WHERE person=? AND active=1 ORDER BY sort, id",
+        (person,)).fetchall()
+    done = set()
+    if cdate:
+        done = {r["item_id"] for r in conn.execute(
+            "SELECT item_id FROM checklist_done WHERE person=? AND cdate=?", (person, cdate)).fetchall()}
+    return [{"id": r["id"], "text": r["text"], "done": r["id"] in done} for r in items]
+
+
+def can_edit_checklist(user, person):
+    return bool(user) and (user["name"] == person or user["role"] == "ceo")
+
+
 def api_daily(user):
     conn = get_db()
     today = uz_today()
@@ -2665,26 +2726,23 @@ def api_daily(user):
         res["workdaysElapsed"] = elapsed
         res["missed"] = _missed_workdays(conn, user["name"], today)
         res["streak"] = _close_streak(conn, user["name"], today)
-        res["summary"] = {
-            "bookings": conn.execute("SELECT COUNT(*) AS n FROM studio_bookings WHERE bdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (tstr,)).fetchone()["n"],
-            "shoots": conn.execute("SELECT COUNT(*) AS n FROM shoots WHERE sdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (tstr,)).fetchone()["n"],
-            "scripts": conn.execute("SELECT COUNT(*) AS n FROM scenarist_scripts WHERE sdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (tstr,)).fetchone()["n"],
-            "accepted": conn.execute("SELECT COUNT(*) AS n FROM videos WHERE approved_at LIKE ? AND status IN ('qabul_qilindi','joylandi')", (tstr + "%",)).fetchone()["n"],
-        }
+        res["checklist"] = _checklist_for(conn, user["name"], tstr)
     if user["role"] == "ceo":
         res["overview"] = [{
             "name": nm, "closedToday": tstr in _closed_dates(conn, nm, ym),
             "closedCount": len(_closed_dates(conn, nm, ym)),
             "missed": _missed_workdays(conn, nm, today),
             "streak": _close_streak(conn, nm, today),
+            "checklist": _checklist_for(conn, nm, tstr),
         } for nm in DAILY_CLOSE_USERS]
     conn.close()
     return res
 
 
-def api_close_day(user):
+def api_close_day(user, b=None):
     if not is_daily_user(user):
         return {"error": "Ruxsat yo'q"}
+    b = b or {}
     conn = get_db()
     today = uz_today().isoformat()
     ex = conn.execute("SELECT id FROM daily_close WHERE person=? AND cdate=?", (user["name"], today)).fetchone()
@@ -2692,9 +2750,98 @@ def api_close_day(user):
         conn.execute("INSERT INTO daily_close (person, cdate, closed_at) VALUES (?,?,?)",
                      (user["name"], today, now_local()))
         log_audit(conn, user["name"], "kunni yopdi", today)
-        conn.commit()
+    # Belgilangan vazifalar (galochka) — bugungi to'plamni qayta yozamiz (tahrirlash uchun)
+    items = b.get("items")
+    if items is not None:
+        conn.execute("DELETE FROM checklist_done WHERE person=? AND cdate=?", (user["name"], today))
+        valid = {r["id"] for r in conn.execute(
+            "SELECT id FROM checklist_items WHERE person=?", (user["name"],)).fetchall()}
+        seen = set()
+        for iid in items:
+            try:
+                iid = int(iid)
+            except (ValueError, TypeError):
+                continue
+            if iid in valid and iid not in seen:
+                seen.add(iid)
+                conn.execute("INSERT INTO checklist_done (person, cdate, item_id) VALUES (?,?,?)",
+                             (user["name"], today, iid))
+    conn.commit()
     conn.close()
     return {"ok": True, "closedToday": True}
+
+
+def api_checklist_get(user, person):
+    """Kishining cheklist shabloni (tahrirlash uchun) — CEO yoki o'zi."""
+    person = person or user["name"]
+    if not can_edit_checklist(user, person):
+        return {"error": "Ruxsat yo'q"}, 403
+    if person not in DAILY_CLOSE_USERS:
+        return {"error": "Bu foydalanuvchida kun yopish yo'q"}, 400
+    conn = get_db()
+    items = [dict(r) for r in conn.execute(
+        "SELECT id, text, sort FROM checklist_items WHERE person=? AND active=1 ORDER BY sort, id",
+        (person,)).fetchall()]
+    conn.close()
+    return {"person": person, "items": items}
+
+
+def api_checklist_add(user, b):
+    person = (b.get("person") or user["name"]).strip()
+    if not can_edit_checklist(user, person):
+        return {"error": "Ruxsat yo'q"}, 403
+    if person not in DAILY_CLOSE_USERS:
+        return {"error": "Bu foydalanuvchida kun yopish yo'q"}, 400
+    text = (b.get("text") or "").strip()
+    if not text:
+        return {"error": "Vazifa matni kerak"}, 400
+    conn = get_db()
+    mx = conn.execute("SELECT COALESCE(MAX(sort),0) AS m FROM checklist_items WHERE person=?", (person,)).fetchone()["m"]
+    sql = "INSERT INTO checklist_items (person, text, sort, active) VALUES (?,?,?,1)"
+    params = (person, text, (mx or 0) + 1)
+    if IS_PG:
+        iid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        iid = conn.execute(sql, params).lastrowid
+    conn.commit()
+    conn.close()
+    return {"ok": True, "id": iid, "text": text}
+
+
+def api_checklist_update(user, b):
+    iid = b.get("id")
+    text = (b.get("text") or "").strip()
+    conn = get_db()
+    row = conn.execute("SELECT person FROM checklist_items WHERE id=?", (iid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if not can_edit_checklist(user, row["person"]):
+        conn.close()
+        return {"error": "Ruxsat yo'q"}, 403
+    if not text:
+        conn.close()
+        return {"error": "Matn kerak"}, 400
+    conn.execute("UPDATE checklist_items SET text=? WHERE id=?", (text, iid))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_checklist_delete(user, b):
+    iid = b.get("id")
+    conn = get_db()
+    row = conn.execute("SELECT person FROM checklist_items WHERE id=?", (iid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if not can_edit_checklist(user, row["person"]):
+        conn.close()
+        return {"error": "Ruxsat yo'q"}, 403
+    conn.execute("UPDATE checklist_items SET active=0 WHERE id=?", (iid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 def api_cron_daily_check():
@@ -3150,6 +3297,9 @@ class Handler(BaseHTTPRequestHandler):
             if not is_daily_user(user) and role != "ceo":
                 return self._forbid()
             return self._json(api_daily(user))
+        if path == "/api/checklist":
+            person = (parse_qs(urlparse(self.path).query).get("person") or [""])[0]
+            return self._json(api_checklist_get(user, person))
         if path == "/api/month-stats":
             if role not in APPROVER_ROLES:
                 return self._forbid()
@@ -3272,7 +3422,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/daily/close":
             if not is_daily_user(user):
                 return self._forbid()
-            return self._json(api_close_day(user))
+            return self._json(api_close_day(user, b))
+        if path == "/api/checklist/add":
+            return self._json(api_checklist_add(user, b))
+        if path == "/api/checklist/update":
+            return self._json(api_checklist_update(user, b))
+        if path == "/api/checklist/delete":
+            return self._json(api_checklist_delete(user, b))
         if path == "/api/attendance/checkin":
             if not is_attend_user(user):
                 return self._forbid()

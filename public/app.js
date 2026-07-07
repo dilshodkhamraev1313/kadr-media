@@ -446,7 +446,7 @@ async function viewToday() {
   const ci = $('#t_checkin');
   if (ci) ci.addEventListener('click', async () => { await api('/api/attendance/checkin', { method: 'POST', body: '{}' }); toast('🌅 Belgilandi'); render(); });
   const cl = $('#t_close');
-  if (cl) cl.addEventListener('click', async () => { await api('/api/daily/close', { method: 'POST', body: '{}' }); toast('🌙 Kun yopildi'); render(); });
+  if (cl) cl.addEventListener('click', () => { VIEW = 'daily'; render(); });
   $('#content').querySelectorAll('[data-vact]').forEach((b) => b.addEventListener('click', (e) => {
     e.stopPropagation(); videoActionUI(b.dataset.id, b.dataset.vact);
   }));
@@ -1330,10 +1330,16 @@ async function viewDaily() {
       `</div></div>`;
   }
   if (d.amDaily) {
-    const s = d.summary || {};
     const done = d.closedToday;
     const streak = d.streak || 0;
     const streakBadge = streak >= 2 ? `<div class="streak-badge">🔥 ${streak} kun ketma-ket!</div>` : '';
+    const cl = d.checklist || [];
+    const checkedN = cl.filter((i) => i.done).length;
+    const items = cl.map((i) => `
+      <label class="cl-item ${i.done ? 'done' : ''}">
+        <input type="checkbox" class="cl-check" data-clid="${i.id}" ${i.done ? 'checked' : ''}>
+        <span class="cl-text">${esc(i.text)}</span></label>`).join('')
+      || '<div class="muted" style="padding:4px 0">Vazifa yo\'q — "Vazifalarni tahrirlash"dan qo\'shing.</div>';
     html += `
       <div class="rank-hero ${done ? 'rank-elite' : ''}" style="margin-bottom:16px">
         <div class="rh-left"><div class="rh-icon">${done ? '✅' : '🌙'}</div>
@@ -1347,33 +1353,43 @@ async function viewDaily() {
             : `<div class="rh-next" style="color:var(--green)">👍 Barcha ish kunlari yopilgan</div>`}
         </div>
       </div>
-      <div class="stats-grid">
-        ${statTile('🎥', s.bookings || 0, 'Bugungi studio bron', 'blue')}
-        ${statTile('📹', s.shoots || 0, 'Bugungi syomka', 'purple')}
-        ${statTile('✍️', s.scripts || 0, 'Bugungi ssenariy', 'green')}
-        ${statTile('✅', s.accepted || 0, 'Bugun qabul qilingan', 'orange')}
-      </div>
-      <div class="panel" style="margin-top:16px;text-align:center">
-        ${done
-          ? `<div style="font-size:16px;font-weight:700;color:var(--green)">✅ Bugungi sarhisob yopilgan</div>`
-          : `<p class="muted" style="margin-bottom:12px">Yuqoridagilarni ko'rib chiqib, kun sarhisobini yakunlang:</p>
-             <button class="btn-save" id="close_day" style="max-width:280px;margin:0 auto">🌙 Kunni yopish</button>`}
+      <div class="panel" style="margin-top:16px">
+        <div class="cl-head"><h3 style="margin:0">📋 Bugungi vazifalar <span class="muted">(${checkedN}/${cl.length})</span></h3>
+          <button class="btn-ghost" id="cl_manage">⚙️ Vazifalarni tahrirlash</button></div>
+        <p class="muted" style="margin:6px 0 12px">Bugun bajargan ishlaringizni belgilang va kunni yoping.</p>
+        <div class="cl-list">${items}</div>
+        <div style="text-align:center;margin-top:16px">
+          <button class="btn-save" id="close_day" style="max-width:300px;margin:0 auto">${done ? '💾 Saqlash' : '🌙 Kunni yopish'}</button>
+          ${done ? `<div class="muted" style="margin-top:8px">✅ Bugun yopilgan — belgilarni o'zgartirib qayta saqlashingiz mumkin</div>` : ''}
+        </div>
       </div>`;
   }
   if (d.overview) {
     html += `<div class="panel" style="margin-top:16px"><h3>Bugun kim yopdi</h3><div class="ceo-list">` +
-      d.overview.map((o) => `
+      d.overview.map((o) => {
+        const cl = o.checklist || [];
+        const cn = cl.filter((i) => i.done).length;
+        return `
         <div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${colorFor(o.name)}">${initials(o.name)}</div>
-          <div><div class="ci-name">${esc(o.name)}${o.streak >= 2 ? ` <span style="color:var(--orange)">🔥${o.streak}</span>` : ''}</div><div class="ci-sub">Shu oy ${o.closedCount} kun · yopilmagan ${o.missed}</div></div></div>
-          <span class="pill ${o.closedToday ? 'green' : 'red'}">${o.closedToday ? '✅ yopdi' : '⏳ yopmadi'}</span></div>`).join('') +
+          <div><div class="ci-name">${esc(o.name)}${o.streak >= 2 ? ` <span style="color:var(--orange)">🔥${o.streak}</span>` : ''}</div>
+            <div class="ci-sub">Shu oy ${o.closedCount} kun · yopilmagan ${o.missed}${cl.length ? ` · bugun ✓ ${cn}/${cl.length}` : ''}</div></div></div>
+          <div class="ci-right" style="display:flex;gap:8px;align-items:center">
+            <span class="pill ${o.closedToday ? 'green' : 'red'}">${o.closedToday ? '✅ yopdi' : '⏳ yopmadi'}</span>
+            <button class="btn-ghost cl-manage-ceo" data-person="${esc(o.name)}" title="Vazifalarini tahrirlash">⚙️</button></div></div>`;
+      }).join('') +
       `</div></div>`;
   }
   $('#content').innerHTML = html || emptyState();
   const cb = $('#close_day');
   if (cb) cb.addEventListener('click', async () => {
-    await api('/api/daily/close', { method: 'POST', body: '{}' });
-    toast('🌙 Kun yopildi — rahmat!'); render();
+    const ids = $$('.cl-check:checked').map((c) => parseInt(c.dataset.clid, 10));
+    const wasClosed = d.closedToday;
+    await api('/api/daily/close', { method: 'POST', body: JSON.stringify({ items: ids }) });
+    toast(wasClosed ? '💾 Saqlandi' : '🌙 Kun yopildi — rahmat!'); render();
   });
+  const clm = $('#cl_manage');
+  if (clm) clm.addEventListener('click', () => openChecklistModal(ME.name));
+  $$('.cl-manage-ceo').forEach((b) => b.addEventListener('click', () => openChecklistModal(b.dataset.person)));
   $('#content').querySelectorAll('[data-smmproj]').forEach((b) => b.addEventListener('click', async () => {
     const res = await api('/api/smm/toggle', { method: 'POST', body: JSON.stringify({ project: b.dataset.smmproj }) });
     if (res.error) { toast(res.error); return; }
@@ -1391,6 +1407,55 @@ async function viewDaily() {
     if (res.ok) { toast('🤖 Webhook ulandi!'); }
     else { alert('Xatolik: ' + (res.error || JSON.stringify(res.telegram || res))); }
   });
+}
+
+// Kun yopish cheklistini tahrirlash (o'zi yoki CEO boshqalarникini)
+async function openChecklistModal(person) {
+  const data = await api('/api/checklist?person=' + encodeURIComponent(person));
+  if (data.error) { toast(data.error); return; }
+  const render = (items) => {
+    const rows = items.map((i) => `
+      <div class="clm-row" data-id="${i.id}">
+        <input class="clm-text" value="${esc(i.text)}" />
+        <button class="mini-btn green clm-save">💾</button>
+        <button class="mini-btn red clm-del">🗑</button>
+      </div>`).join('') || '<div class="muted">Hozircha vazifa yo\'q.</div>';
+    openModal(`📋 ${esc(person)} — kunlik vazifalar`, `
+      <p class="muted" style="margin-bottom:10px">Vazifalarni tahrirlang, o'chiring yoki yangi qo'shing. Har kuni shu ro'yxatdan belgilaydi.</p>
+      <div class="clm-list">${rows}</div>
+      <div class="cl-add" style="margin-top:12px">
+        <input id="clm_new" placeholder="+ yangi vazifa (masalan: Amarkets — ssenariy)" />
+        <button class="btn-save" id="clm_add" style="max-width:130px">Qo'shish</button>
+      </div>`, () => {
+      $('#clm_add').addEventListener('click', async () => {
+        const t = $('#clm_new').value.trim();
+        if (!t) { toast('Matn kiriting'); return; }
+        const r = await api('/api/checklist/add', { method: 'POST', body: JSON.stringify({ person, text: t }) });
+        if (r.error) { toast(r.error); return; }
+        reopen();
+      });
+      $$('.clm-row').forEach((row) => {
+        const id = row.dataset.id;
+        row.querySelector('.clm-save').addEventListener('click', async () => {
+          const t = row.querySelector('.clm-text').value.trim();
+          if (!t) { toast('Matn bo\'sh'); return; }
+          const r = await api('/api/checklist/update', { method: 'POST', body: JSON.stringify({ id: parseInt(id, 10), text: t }) });
+          toast(r.error || '💾 Saqlandi');
+        });
+        row.querySelector('.clm-del').addEventListener('click', async () => {
+          if (!confirm('Bu vazifani o\'chirasizmi?')) return;
+          const r = await api('/api/checklist/delete', { method: 'POST', body: JSON.stringify({ id: parseInt(id, 10) }) });
+          if (r.error) { toast(r.error); return; }
+          reopen();
+        });
+      });
+    });
+  };
+  const reopen = async () => {
+    const fresh = await api('/api/checklist?person=' + encodeURIComponent(person));
+    render(fresh.items || []);
+  };
+  render(data.items || []);
 }
 
 // ============================================================

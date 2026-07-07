@@ -739,6 +739,24 @@ body {
 .smm-item.done { border-color: var(--green); background: rgba(48,209,88,.08); }
 .smm-check { font-size: 17px; }
 
+/* Kun yopish cheklisti */
+.cl-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.cl-list { display: flex; flex-direction: column; gap: 8px; }
+.cl-item { display: flex; align-items: center; gap: 12px; padding: 11px 14px; cursor: pointer;
+  background: var(--bg-soft, rgba(255,255,255,.03)); border: 1px solid var(--border, rgba(255,255,255,.07));
+  border-radius: 12px; transition: border-color .15s, background .15s; }
+.cl-item:hover { border-color: var(--blue); }
+.cl-item.done { border-color: var(--green); background: rgba(48,209,88,.08); }
+.cl-check { width: 20px; height: 20px; flex-shrink: 0; accent-color: var(--green); cursor: pointer; }
+.cl-text { flex: 1; font-size: 14px; }
+.cl-item.done .cl-text { color: var(--muted); text-decoration: line-through; }
+.cl-add { display: flex; gap: 8px; margin-top: 12px; }
+.cl-add input { flex: 1; }
+/* Cheklist tahrirlash modali */
+.clm-list { display: flex; flex-direction: column; gap: 8px; }
+.clm-row { display: flex; align-items: center; gap: 6px; }
+.clm-text { flex: 1; }
+
 /* Maosh kartasi qatorlari */
 .mrow.sal-auto span::before { content: '⚙ '; opacity: .6; }
 .mrow.sal-auto b { color: var(--blue); }
