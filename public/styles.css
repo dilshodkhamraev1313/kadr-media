@@ -666,6 +666,20 @@ body {
 .dl-soon { background: rgba(255,159,10,.16); color: var(--orange); }
 .dl-late { background: rgba(255,69,58,.16);  color: var(--red); }
 
+/* Bugun — vazifalar */
+.today-hi { font-size: 17px; margin-bottom: 16px; color: var(--text-2); }
+.today-hi b { color: var(--text); }
+.today-rems { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.today-rem { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: rgba(255,159,10,.1); border: 1px solid rgba(255,159,10,.3); border-radius: 11px; padding: 10px 14px; font-weight: 600; }
+.task-list { display: flex; flex-direction: column; gap: 8px; }
+.task-item { display: flex; align-items: center; gap: 12px; background: var(--surface);
+  border: 1px solid var(--border-soft); border-radius: 12px; padding: 11px 14px; }
+.task-main { flex: 1; min-width: 0; }
+.task-title { font-weight: 700; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-sub { font-size: 12px; color: var(--text-2); margin-top: 3px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.task-act { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+
 /* Budjet progress bar */
 .bud-bar { height: 10px; background: var(--border); border-radius: 6px; overflow: hidden; margin-top: 4px; }
 .bud-fill { height: 100%; border-radius: 6px; transition: width .4s; }

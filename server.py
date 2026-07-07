@@ -1239,6 +1239,50 @@ def api_videos(user, show_all=False):
     return result
 
 
+def api_my_tasks(user):
+    """Foydalanuvchining bugungi vazifalari — rolga qarab (montaj, sifat, qabul, joylash, syomka)."""
+    conn = get_db()
+    role = user["role"]
+    name = user["name"]
+    counts = _editor_accepted_counts(conn)
+
+    def dec(rows):
+        return [decorate_video(dict(r), counts, role, name) for r in rows]
+
+    tasks = {}
+    # Montaj qilish kerak (montajchi) — muddat bilan
+    if role == "editor":
+        tasks["montaj"] = dec(conn.execute(
+            "SELECT * FROM videos WHERE editor=? AND status IN ('biriktirildi','qaytarildi') ORDER BY id DESC",
+            (name,)).fetchall())
+    # Sifat nazorati + qabul (rahbarlar)
+    if role in APPROVER_ROLES:
+        tasks["qc"] = dec(conn.execute(
+            "SELECT * FROM videos WHERE status='montaj_qilindi' ORDER BY id DESC").fetchall())
+        acc = dec(conn.execute("SELECT * FROM videos WHERE status='sifat_ok' ORDER BY id DESC").fetchall())
+        if role == "lead":
+            pn = lead_project_names(name)
+            acc = [v for v in acc if v.get("project") in pn]
+        tasks["accept"] = acc
+    # Joylash (SMM / CEO / koordinator)
+    if role in SMM_ROLES:
+        tasks["post"] = dec(conn.execute(
+            "SELECT * FROM videos WHERE status='qabul_qilindi' ORDER BY id DESC").fetchall())
+    # Bugungi syomkalar (operator)
+    today = uz_today().isoformat()
+    if name in STUDIO_OPERATORS:
+        b = [dict(r) for r in conn.execute(
+            "SELECT * FROM studio_bookings WHERE operator=? AND bdate=? AND (status IS NULL OR status<>'bekor_qilindi') ORDER BY start_time",
+            (name, today)).fetchall()]
+        s = [dict(r) for r in conn.execute(
+            "SELECT * FROM shoots WHERE operator=? AND sdate=? AND (status IS NULL OR status<>'bekor_qilindi')",
+            (name, today)).fetchall()]
+        tasks["shoots"] = b + s
+    conn.close()
+    total = sum(len(v) for v in tasks.values())
+    return {"tasks": tasks, "total": total, "name": name}
+
+
 def api_qc(user):
     """Sifat nazorati uchun — montaj qilingan, tasdiq kutayotgan videolar (hammasi)."""
     conn = get_db()
@@ -2800,6 +2844,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_script_stats())
         if path == "/api/videos":
             return self._json(api_videos(user, show_all))
+        if path == "/api/my-tasks":
+            return self._json(api_my_tasks(user))
         if path == "/api/qc":
             return self._forbid() if role not in APPROVER_ROLES else self._json(api_qc(user))
         if path == "/api/payments":

@@ -213,7 +213,9 @@ async function startApp() {
 //  NAVIGATION (rolga qarab)
 // ============================================================
 const NAV_ITEMS = [
-  // Montajchi uchun (birinchi)
+  // Hamma uchun birinchi — bugungi vazifalar
+  { view: 'bugun',     icon: '🎯', label: 'Bugun',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'smm'] },
+  // Montajchi uchun
   { view: 'cabinet',   icon: '★', label: 'Mening kabinetim', roles: ['editor'] },
   { view: 'myvideos',  icon: '►', label: 'Videolarim',    roles: ['editor'] },
   // Mijoz uchun (birinchi)
@@ -299,6 +301,7 @@ const TITLES = {
   daily:     ['Kun yopish', 'Kunlik sarhisob va KPI intizomi'],
   stats:     ['Oylik statistika', 'Har oy noldan; o\'tgan oylar faqat ko\'rish'],
   budget:    ['Budjet', 'Oylik xarajatlar budjeti va mas\'ullar'],
+  bugun:     ['Bugun', 'Bugungi vazifalaringiz va muddatlar'],
   charity:   ['Xayriya fondi', 'Sof foydaning 5% — Alloh yo\'lida'],
   studio:    ['Kadr Studio', 'Syomka xonalari bandligi va bronlar'],
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
@@ -320,7 +323,8 @@ async function render() {
   $('#content').innerHTML = '<div class="empty"><div class="em-ic">⏳</div>Yuklanmoqda...</div>';
   buildTopbarActions();
   try {
-    if (VIEW === 'dashboard') await viewDashboard();
+    if (VIEW === 'bugun') await viewToday();
+    else if (VIEW === 'dashboard') await viewDashboard();
     else if (VIEW === 'projects') await viewProjects();
     else if (VIEW === 'scripts' || VIEW === 'cscripts') await viewScripts();
     else if (VIEW === 'videos') await viewVideos();
@@ -386,6 +390,59 @@ function statTile(ic, val, label, accent) {
 }
 function emptyState(msg) { return `<div class="empty"><div class="em-ic">📭</div>${msg || 'Hozircha bo\'sh'}</div>`; }
 function matchSearch(text) { return !SEARCH || (text || '').toLowerCase().includes(SEARCH); }
+
+// ============================================================
+//  BUGUN — shaxsiy vazifalar
+// ============================================================
+function taskVideoItem(v) {
+  const acts = videoActions(v);
+  return `<div class="task-item">
+    <div class="task-main"><div class="task-title">${esc(v.title)}</div>
+      <div class="task-sub">📁 ${esc(v.project) || '—'} · 🎞 ${esc(VIDEO_TYPE_LABEL[v.vtype] || 'Reels')} ${rankChip(v)} ${deadlineChip(v)}</div></div>
+    ${acts ? `<div class="task-act">${acts}</div>` : ''}</div>`;
+}
+
+async function viewToday() {
+  const [t, att, dc] = await Promise.all([
+    api('/api/my-tasks'), api('/api/attendance').catch(() => ({})), api('/api/daily').catch(() => ({})),
+  ]);
+  DATA.myTasks = t;
+  const tk = t.tasks || {};
+  // videoActionUI uchun barcha task-videolarni cache'ga
+  DATA.videos = [].concat(tk.montaj || [], tk.qc || [], tk.accept || [], tk.post || []);
+  let html = `<div class="today-hi">Assalomu alaykum, <b>${esc(t.name)}</b>! ${t.total ? `Bugun <b>${t.total}</b> ta vazifangiz bor 👇` : 'Bugun ochiq vazifa yo\'q — zo\'r ish! 🎉'}</div>`;
+
+  // Eslatmalar (kelish / kun yopish)
+  const rem = [];
+  if (att.amAttend && att.me && !att.me.todayIn) {
+    rem.push(`<div class="today-rem"><span>⏰ Bugun kelganingizni belgilamagansiz</span><button class="mini-btn green" id="t_checkin">✋ Keldim</button></div>`);
+  }
+  if (dc.amDaily && !dc.closedToday) {
+    rem.push(`<div class="today-rem"><span>🌙 Bugun kun sarhisobini yopmagansiz</span><button class="mini-btn blue" id="t_close">Kunni yopish</button></div>`);
+  }
+  if (rem.length) html += `<div class="panel today-rems">${rem.join('')}</div>`;
+
+  const section = (title, icon, arr) => (arr && arr.length)
+    ? `<div class="panel"><h3>${icon} ${title} <span class="muted">(${arr.length})</span></h3><div class="task-list">${arr.map(taskVideoItem).join('')}</div></div>` : '';
+  html += section('Montaj qilishim kerak', '🎬', tk.montaj);
+  html += section('Sifat nazorati kutmoqda', '🔎', tk.qc);
+  html += section('Qabul qilish', '✓', tk.accept);
+  html += section('Joylash kutmoqda', '📷', tk.post);
+  if (tk.shoots && tk.shoots.length) {
+    html += `<div class="panel"><h3>🎥 Bugungi syomkalar <span class="muted">(${tk.shoots.length})</span></h3><div class="task-list">` +
+      tk.shoots.map((s) => `<div class="task-item"><div class="task-main"><div class="task-title">${esc(s.client_name || s.project || 'Syomka')}</div>
+        <div class="task-sub">🎬 ${esc(SHOOT_TYPE_LABEL[s.shoot_type] || '')} ${s.start_time ? '· ⏱ ' + esc((s.start_time || '').slice(0, 5)) + '–' + esc((s.end_time || '').slice(0, 5)) : ''}</div></div></div>`).join('') +
+      `</div></div>`;
+  }
+  $('#content').innerHTML = html;
+  const ci = $('#t_checkin');
+  if (ci) ci.addEventListener('click', async () => { await api('/api/attendance/checkin', { method: 'POST', body: '{}' }); toast('🌅 Belgilandi'); render(); });
+  const cl = $('#t_close');
+  if (cl) cl.addEventListener('click', async () => { await api('/api/daily/close', { method: 'POST', body: '{}' }); toast('🌙 Kun yopildi'); render(); });
+  $('#content').querySelectorAll('[data-vact]').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation(); videoActionUI(b.dataset.id, b.dataset.vact);
+  }));
+}
 
 // ---------- DASHBOARD (loyihalar + stats) ----------
 async function viewDashboard() {
