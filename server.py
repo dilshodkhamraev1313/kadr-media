@@ -240,6 +240,13 @@ DONE_COLS = ["done_ssenariy", "done_syomka", "done_montaj", "done_tasdiq", "done
 APPROVER_ROLES = ("ceo", "coordinator", "lead")
 # Hamma narsani ko'radiganlar:
 ADMIN_ROLES = ("ceo", "coordinator")
+# Sifat nazorati — videoni tasdiqlash/qabul qilish FAQAT Said (+ CEO zaxira).
+# Loyiha rahbarlari videoni faqat biriktiradi, tasdiqlay olmaydi.
+QC_APPROVER = "Said"
+
+
+def is_qc_approver(user):
+    return bool(user) and (user["name"] == QC_APPROVER or user["role"] == "ceo")
 
 # Jamoa va kirish ma'lumotlari. (name, username, password, role, title, color, client_name)
 TEAM = [
@@ -495,6 +502,9 @@ def init_db():
     add_column_if_missing(conn, "studio_bookings", "operator_pay", "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "studio_bookings", "paid_amount", "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "studio_bookings", "status", "TEXT DEFAULT 'active'")
+    # shoots (Kadr Media syomkalari): syomka vaqti (nechidan nechigacha)
+    add_column_if_missing(conn, "shoots", "start_time", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "shoots", "end_time", "TEXT DEFAULT ''")
     conn.commit()
 
     # Seed (faqat bo'sh bo'lsa)
@@ -1259,15 +1269,12 @@ def api_my_tasks(user):
         tasks["montaj"] = dec(conn.execute(
             "SELECT * FROM videos WHERE editor=? AND status IN ('biriktirildi','qaytarildi') ORDER BY id DESC",
             (name,)).fetchall())
-    # Sifat nazorati + qabul (rahbarlar)
-    if role in APPROVER_ROLES:
+    # Sifat nazorati + qabul — FAQAT Said (+ CEO). Loyiha rahbarlari tasdiqlamaydi.
+    if is_qc_approver(user):
         tasks["qc"] = dec(conn.execute(
             "SELECT * FROM videos WHERE status='montaj_qilindi' ORDER BY id DESC").fetchall())
-        acc = dec(conn.execute("SELECT * FROM videos WHERE status='sifat_ok' ORDER BY id DESC").fetchall())
-        if role == "lead":
-            pn = lead_project_names(name)
-            acc = [v for v in acc if v.get("project") in pn]
-        tasks["accept"] = acc
+        tasks["accept"] = dec(conn.execute(
+            "SELECT * FROM videos WHERE status='sifat_ok' ORDER BY id DESC").fetchall())
     # Joylash (SMM / CEO / koordinator)
     if role in SMM_ROLES:
         tasks["post"] = dec(conn.execute(
@@ -1339,21 +1346,21 @@ def api_video_action(user, vid, b):
         )
         log_audit(conn, user["name"], "montaj tugatdi", f"#{vid} {ex['title']}")
         send_telegram(f"🎞 <b>Montaj tugatildi</b>\n{ex['title']}\n👤 {ex['editor']}\n→ Sifat nazoratiga")
-    elif action == "qc_ok" and role in APPROVER_ROLES:
+    elif action == "qc_ok" and is_qc_approver(user):
         conn.execute(
             "UPDATE videos SET status='sifat_ok', qc_by=?, qc_at=? WHERE id=?",
             (user["name"], now_local(), vid),
         )
         log_audit(conn, user["name"], "sifat tasdiqladi", f"#{vid} {ex['title']}")
-        send_telegram(f"🔎 <b>Sifat nazorati o'tdi</b>\n{ex['title']}\n👮 {user['name']} → Rahbar qabuliga")
-    elif action == "qc_return" and role in APPROVER_ROLES:
+        send_telegram(f"🔎 <b>Sifat nazorati o'tdi</b>\n{ex['title']}\n👮 {user['name']} → qabulga")
+    elif action == "qc_return" and is_qc_approver(user):
         conn.execute(
             "UPDATE videos SET status='qaytarildi', qc_by=?, qc_at=?, note=? WHERE id=?",
             (user["name"], now_local(), b.get("note") or ex["note"], vid),
         )
         log_audit(conn, user["name"], "sifat qaytardi", f"#{vid} {ex['title']}")
         send_telegram(f"↩️ <b>Sifatdan qaytarildi</b>\n{ex['title']}\n👤 {ex['editor']}\n👮 {user['name']}")
-    elif action == "accept" and role in APPROVER_ROLES:
+    elif action == "accept" and is_qc_approver(user):
         # Montajyor lavozimiga (shu paytgacha qabul qilingan video soni) qarab pul avtomatik hisoblanadi
         prev_accepted = conn.execute(
             "SELECT COUNT(*) AS n FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi')",
@@ -1383,7 +1390,7 @@ def api_video_action(user, vid, b):
             f"✅ <b>Video QABUL QILINDI</b>\n{ex['title']}\n👤 {ex['editor']} · {rk_label}\n"
             f"💰 {VIDEO_TYPES.get(vt, vt)} — {amount:,} so'm hisoblandi{late_note}\n👮 Tasdiqladi: {user['name']}\n→ Joylashga".replace(",", " ")
         )
-    elif action == "return" and role in APPROVER_ROLES:
+    elif action == "return" and is_qc_approver(user):
         conn.execute(
             "UPDATE videos SET status='qaytarildi', approved_by=?, approved_at=?, note=? WHERE id=?",
             (user["name"], now_local(), b.get("note") or ex["note"], vid),
@@ -2079,11 +2086,13 @@ def api_create_shoot(user, b):
     operator = b.get("operator") if b.get("operator") in STUDIO_OPERATORS else ""
     operator_pay = _op_pay(operator, shoot_type)
     sdate = b.get("sdate") or uz_today().isoformat()
+    start_time = (b.get("start_time") or "").strip()
+    end_time = (b.get("end_time") or "").strip()
     conn = get_db()
-    sql = """INSERT INTO shoots (project_id, project, shoot_type, operator, operator_pay, sdate, status, note, created_by)
-             VALUES (?,?,?,?,?,?,?,?,?)"""
+    sql = """INSERT INTO shoots (project_id, project, shoot_type, operator, operator_pay, sdate, start_time, end_time, status, note, created_by)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)"""
     params = (b.get("project_id"), b.get("project") or "", shoot_type, operator,
-              operator_pay, sdate, "active", b.get("note") or "", user["name"])
+              operator_pay, sdate, start_time, end_time, "active", b.get("note") or "", user["name"])
     if IS_PG:
         sid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:
@@ -2094,10 +2103,11 @@ def api_create_shoot(user, b):
     conn.commit()
     row = dict(conn.execute("SELECT * FROM shoots WHERE id=?", (sid,)).fetchone())
     conn.close()
+    time_str = (f" {start_time}–{end_time}" if start_time and end_time else (f" {start_time}" if start_time else ""))
     send_telegram(
         f"🎬 <b>Syomka belgilandi</b>\n📁 {b.get('project') or '—'}\n🎥 {SHOOT_TYPES[shoot_type]}"
         + (f"\n👤 Operator: {operator} (+{operator_pay:,} so'm)".replace(",", " ") if operator else "")
-        + f"\n📅 {sdate}\n👮 {user['name']}"
+        + f"\n📅 {sdate}{time_str}\n👮 {user['name']}"
     )
     return row
 
@@ -3105,7 +3115,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/my-tasks":
             return self._json(api_my_tasks(user))
         if path == "/api/qc":
-            return self._forbid() if role not in APPROVER_ROLES else self._json(api_qc(user))
+            return self._forbid() if not is_qc_approver(user) else self._json(api_qc(user))
         if path == "/api/payments":
             return self._json(api_payments(user))
         if path == "/api/cabinet":

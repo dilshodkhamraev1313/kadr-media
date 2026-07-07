@@ -230,8 +230,8 @@ const NAV_ITEMS = [
   { view: 'projects',  icon: '▣', label: 'Loyihalar',     roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'scripts',   icon: '✎', label: 'Ssenariylar',   roles: ['ceo', 'coordinator', 'lead', 'editor'] },
   { view: 'videos',    icon: '►', label: 'Montaj',        roles: ['ceo', 'coordinator', 'lead'] },
-  { view: 'qc',        icon: '🔎', label: 'Sifat nazorati', roles: ['ceo', 'coordinator', 'lead'] },
-  { view: 'shoots',    icon: '📹', label: 'Syomkalar',     roles: ['ceo', 'coordinator', 'lead'] },
+  { view: 'qc',        icon: '🔎', label: 'Sifat nazorati', roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Said'] },
+  { view: 'shoots',    icon: '📹', label: 'Kadr Media',     roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'studio',    icon: '🎥', label: 'Kadr Studio',   roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Gulmira', 'Xonzoda', 'Said'] },
   { view: 'myscripts', icon: '✍️', label: 'Ssenariylarim', roles: ['coordinator', 'editor', 'lead'], names: ['Xonzoda', 'Umida'] },
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
@@ -298,7 +298,7 @@ const TITLES = {
   scripts:   ['Ssenariylar', 'Yozish, tasdiqlash, versiyalar'],
   videos:    ['Montaj — videolar', 'Biriktirish va qabul qilish'],
   qc:        ['Sifat nazorati', 'Montaj qilingan, tasdiq kutayotgan videolar'],
-  shoots:    ['Syomkalar', 'Loyiha syomkalari — operator va pul'],
+  shoots:    ['Kadr Media', 'Loyiha syomkalari — operator, vaqt va pul'],
   myscripts: ['Ssenariylarim', 'Tasdiqlangan ssenariylar va hisoblangan pul'],
   salary:    ['Maosh', 'Fiksa, rahbarlik va daromadlar'],
   daily:     ['Kun yopish', 'Kunlik sarhisob va KPI intizomi'],
@@ -403,9 +403,10 @@ function matchSearch(text) { return !SEARCH || (text || '').toLowerCase().includ
 // ============================================================
 function taskVideoItem(v) {
   const acts = videoActions(v);
+  const who = v.editor ? `👤 ${esc(v.editor)} · ` : '';
   return `<div class="task-item">
     <div class="task-main"><div class="task-title">${esc(v.title)}</div>
-      <div class="task-sub">📁 ${esc(v.project) || '—'} · 🎞 ${esc(VIDEO_TYPE_LABEL[v.vtype] || 'Reels')} ${rankChip(v)} ${deadlineChip(v)}</div></div>
+      <div class="task-sub">${who}📁 ${esc(v.project) || '—'} · 🎞 ${esc(VIDEO_TYPE_LABEL[v.vtype] || 'Reels')} ${rankChip(v)} ${deadlineChip(v)}</div></div>
     ${acts ? `<div class="task-act">${acts}</div>` : ''}</div>`;
 }
 
@@ -625,16 +626,18 @@ function bindVideoCards() {
 function videoActions(v) {
   const role = ME.role;
   const isApprover = ['ceo', 'coordinator', 'lead'].includes(role);
+  // Sifat nazorati (tasdiq/qabul) — faqat Said va CEO
+  const isQc = ME.name === 'Said' || role === 'ceo';
   const b = [];
   if ((v.editor === ME.name || ['ceo', 'coordinator'].includes(role)) && (v.status === 'biriktirildi' || v.status === 'qaytarildi'))
     b.push(`<button class="mini-btn blue" data-vact="montaj_done" data-id="${v.id}">✓ Montaj qildim</button>`);
   if (isApprover && (v.status === 'biriktirildi' || v.status === 'qaytarildi'))
     b.push(`<button class="mini-btn gray" data-vact="cancel" data-id="${v.id}">🚫 Bekor qilish</button>`);
-  if (isApprover && v.status === 'montaj_qilindi') {
+  if (isQc && v.status === 'montaj_qilindi') {
     b.push(`<button class="mini-btn green" data-vact="qc_ok" data-id="${v.id}">✓ Sifat OK</button>`);
     b.push(`<button class="mini-btn red" data-vact="qc_return" data-id="${v.id}">↩ Qaytar</button>`);
   }
-  if (isApprover && v.status === 'sifat_ok') {
+  if (isQc && v.status === 'sifat_ok') {
     b.push(`<button class="mini-btn green" data-vact="accept" data-id="${v.id}">✓ Qabul (pul)</button>`);
     b.push(`<button class="mini-btn red" data-vact="return" data-id="${v.id}">↩ Qaytar</button>`);
   }
@@ -1084,7 +1087,7 @@ function shootCard(s) {
         ${(s.operator && !cancelled) ? `<span class="money-chip">💰 ${money(s.operator_pay)}</span>` : ''}
       </div>
       ${s.note ? `<div class="pc-problem soft">📝 ${esc(s.note)}</div>` : ''}
-      <div class="pc-foot"><div class="muted">📅 ${fmtDate(s.sdate)} · 👮 ${esc(s.created_by || '')}</div></div>
+      <div class="pc-foot"><div class="muted">📅 ${fmtDate(s.sdate)}${s.start_time ? ' · ⏱ ' + esc(s.start_time) + (s.end_time ? '–' + esc(s.end_time) : '') : ''} · 👮 ${esc(s.created_by || '')}</div></div>
     </div>`;
 }
 
@@ -1105,6 +1108,10 @@ async function openShootModal() {
     </div>
     <div id="sh_oppay" class="calc-line"></div>
     <div class="field"><label>Sana</label><input id="sh_date" type="date" /></div>
+    <div class="field-row">
+      <div class="field"><label>Boshlanish vaqti</label><input id="sh_start" type="time" /></div>
+      <div class="field"><label>Tugash vaqti</label><input id="sh_end" type="time" /></div>
+    </div>
     <div class="field"><label>Izoh</label><textarea id="sh_note" placeholder="masalan: mijoz manzilida, 2 lokatsiya"></textarea></div>
     <div class="modal-actions"><button class="btn-save" id="sh_save">🎬 Belgilash</button></div>`,
   () => {
@@ -1123,6 +1130,7 @@ async function openShootModal() {
         project: sel.value, project_id: opt ? opt.dataset.id : null,
         shoot_type: $('#sh_type').value, operator: $('#sh_op').value,
         sdate: $('#sh_date').value || null, note: $('#sh_note').value,
+        start_time: $('#sh_start').value || '', end_time: $('#sh_end').value || '',
       };
       await api('/api/shoots', { method: 'POST', body: JSON.stringify(body) });
       closeModal(); toast('🎬 Syomka belgilandi'); render();
@@ -1143,6 +1151,7 @@ function openShootDetailModal(s) {
       <div class="mrow"><span>🎥 Syomka turi</span><b>${esc(st)}</b></div>
       ${s.operator ? `<div class="mrow"><span>👤 Operator</span><b>${esc(s.operator)}${cancelled ? '' : ` · ${money(s.operator_pay)}`}</b></div>` : ''}
       <div class="mrow"><span>📅 Sana</span><b>${fmtDate(s.sdate)}</b></div>
+      ${s.start_time ? `<div class="mrow"><span>⏱ Vaqt</span><b>${esc(s.start_time)}${s.end_time ? '–' + esc(s.end_time) : ''}</b></div>` : ''}
       <div class="mrow"><span>👮 Belgiladi</span><b>${esc(s.created_by || '—')}</b></div>
     </div>
     ${s.note ? `<div class="pc-problem soft" style="margin-bottom:12px">📝 ${esc(s.note)}</div>` : ''}
