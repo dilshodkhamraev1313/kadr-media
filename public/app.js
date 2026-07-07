@@ -64,6 +64,7 @@ const DATA = {}; // cache: projects, scripts, videos, editors, team, clients, fi
 
 // ---------- Utils ----------
 const $ = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
 const esc = (s) => (s == null ? '' : String(s)).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const initials = (n) => (n || '?').trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 const colorFor = (n) => { let h = 0; for (const c of (n || '')) h = c.charCodeAt(0) + ((h << 5) - h); return COLORS[Math.abs(h) % COLORS.length]; };
@@ -235,6 +236,7 @@ const NAV_ITEMS = [
   { view: 'myscripts', icon: '✍️', label: 'Ssenariylarim', roles: ['coordinator', 'editor', 'lead'], names: ['Xonzoda', 'Umida'] },
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
+  { view: 'cashflow',  icon: '💵', label: 'Pul oqimi',     roles: ['ceo'] },
   { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
@@ -307,6 +309,7 @@ const TITLES = {
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
   editors:   ['Montajchilar', 'Kabinetlar va hisob-kitob'],
   finance:   ['Moliya', 'Montaj xarajatlari va to\'lovlar'],
+  cashflow:  ['Pul oqimi', 'Mijoz to\'lovlari va umumiy kirim-chiqim'],
   team:      ['Jamoa yuklamasi', 'Rahbarlar yuklamasi'],
   audit:     ['Audit log', 'Barcha harakatlar tarixi'],
   cabinet:   ['Mening kabinetim', 'Ishlagan, to\'langan, qolgan'],
@@ -340,6 +343,7 @@ async function render() {
     else if (VIEW === 'studio') await viewStudio();
     else if (VIEW === 'editors') await viewEditors();
     else if (VIEW === 'finance') await viewFinance();
+    else if (VIEW === 'cashflow') await viewCashflow();
     else if (VIEW === 'team') await viewTeam();
     else if (VIEW === 'audit') await viewAudit();
     else if (VIEW === 'cabinet') await viewCabinet();
@@ -1742,6 +1746,68 @@ async function viewFinance() {
         <div class="panel"><h3>📁 Loyiha bo'yicha montaj xarajati</h3><div class="money-rows">${proj}</div></div>
       </div>
     </div>`;
+}
+
+// ============================================================
+//  CASHFLOW (Pul oqimi) — mijoz to'lovlari + umumiy kirim/chiqim
+// ============================================================
+async function viewCashflow() {
+  const f = await api('/api/cashflow');
+  DATA.cashflow = f;
+  const clients = (f.clients || []).map((c) => {
+    const badge = c.paid
+      ? '<span class="pill green">✓ To\'landi</span>'
+      : (c.received > 0
+          ? `<span class="pill orange">Qisman ${money(c.received)}</span>`
+          : '<span class="pill red">Kutilmoqda</span>');
+    return `<div class="cf-row">
+      <div class="cf-cl"><div class="cf-name">${esc(c.project)}</div>
+        <div class="cf-sub">${c.responsible ? '👤 ' + esc(c.responsible) + ' · ' : ''}${money(c.fee)}/oy</div></div>
+      <div class="cf-right">${badge}
+        <button class="btn-ghost cf-toggle" data-pay="${esc(c.project)}">${c.paid ? 'Bekor' : 'To\'landi'}</button></div>
+    </div>`;
+  }).join('') || emptyState('Loyihalarga oylik to\'lov kiritilmagan');
+
+  const netR = f.netReceived || 0;
+  $('#content').innerHTML = `
+    <div class="sec-label" style="margin-bottom:10px">💵 Bu oy pul oqimi (${esc(f.month)})</div>
+    <div class="stats-grid">
+      ${statTile('📥', money(f.incomeReceived || 0), 'Kirim (qo\'lga tushgan)', 'green')}
+      ${statTile('📤', money(f.expensesTotal || 0), 'Chiqim (maosh + xarajat)', 'orange')}
+      ${statTile(netR >= 0 ? '📈' : '📉', money(netR), 'Sof (qo\'lga tushgan − chiqim)', netR >= 0 ? 'green' : 'red')}
+      ${statTile('⏳', money(f.mediaOutstanding || 0), 'Mijozlardan kutilayotgan', 'blue')}
+    </div>
+
+    <div class="panel" style="margin:14px 0">
+      <h3>🧾 Mijoz to'lovlari holati</h3>
+      <div class="cf-list">${clients}</div>
+      <div class="cf-tot">
+        <span>Kutilgan: <b>${money(f.mediaExpected || 0)}</b></span>
+        <span>Tushdi: <b style="color:var(--green)">${money(f.mediaReceived || 0)}</b></span>
+        <span>Qoldi: <b style="color:var(--orange)">${money(f.mediaOutstanding || 0)}</b></span>
+      </div>
+    </div>
+
+    <div class="ceo-grid">
+      <div class="panel"><h3>📊 Kirim manbalari</h3><div class="money-rows">
+        <div class="mrow"><span>Mijoz to'lovlari (tushdi)</span><b>${money(f.mediaReceived || 0)}</b></div>
+        <div class="mrow"><span>Kadr Studio (to'langan bron)</span><b>${money(f.studioPaid || 0)}</b></div>
+        <div class="mrow"><span>Studio kutilayotgan</span><b class="muted">${money(f.studioUnpaid || 0)}</b></div>
+      </div></div>
+      <div class="panel"><h3>📉 Chiqim manbalari</h3><div class="money-rows">
+        <div class="mrow"><span>Jamoa maoshi (payroll)</span><b>${money(f.payrollTotal || 0)}</b></div>
+        <div class="mrow"><span>Studio xarajatlari</span><b>${money(f.studioExpenses || 0)}</b></div>
+        <div class="mrow"><span>Jami chiqim</span><b style="color:var(--orange)">${money(f.expensesTotal || 0)}</b></div>
+      </div></div>
+    </div>
+    <p class="muted" style="margin-top:10px">💡 Oylik to'lovni o'zgartirish: Loyihalar → loyihani oching → "💵 Oylik to'lov".</p>`;
+
+  $$('.cf-toggle').forEach((b) => b.addEventListener('click', async () => {
+    b.disabled = true;
+    const res = await api('/api/cashflow/pay', { method: 'POST', body: JSON.stringify({ project: b.dataset.pay }) });
+    if (res && res.ok) { toast(res.paid ? '✓ To\'landi deb belgilandi' : 'Bekor qilindi'); render(); }
+    else { b.disabled = false; toast('Xatolik'); }
+  }));
 }
 
 // ============================================================

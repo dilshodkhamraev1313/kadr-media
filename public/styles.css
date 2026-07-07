@@ -306,6 +306,18 @@ body {
 .pill.green { background: rgba(48,209,88,.16); color: var(--green); }
 .pill.blue { background: rgba(10,132,255,.16); color: var(--blue); }
 
+/* Pul oqimi (cashflow) */
+.cf-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.cf-row { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; background: var(--bg-soft, rgba(255,255,255,.03)); border-radius: 12px; }
+.cf-name { font-weight: 600; }
+.cf-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.cf-right { display: flex; align-items: center; gap: 8px; }
+.cf-toggle { font-size: 12px; padding: 5px 10px; }
+.cf-toggle:disabled { opacity: .5; }
+.cf-tot { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--border, rgba(255,255,255,.08)); font-size: 13px; color: var(--muted); }
+
 .activity-item { display: flex; gap: 11px; padding: 10px 0; border-bottom: 1px solid var(--border-soft); font-size: 13px; }
 .activity-item:last-child { border: none; }
 .activity-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-top: 6px; flex-shrink: 0; }

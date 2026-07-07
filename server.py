@@ -465,6 +465,9 @@ def init_db():
         on_time INTEGER DEFAULT 0, source TEXT DEFAULT 'bot', created_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS smm_done (
         id {pk}, person TEXT, project TEXT, ym TEXT)""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS client_payments (
+        id {pk}, project TEXT, ym TEXT, amount INTEGER DEFAULT 0,
+        pdate TEXT, note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
 
     # users jadvaliga login ustunlarini qo'shish (idempotent)
     add_column_if_missing(conn, "users", "username", "TEXT")
@@ -1562,6 +1565,104 @@ def api_finance():
         "mediaNet": media_income - payroll_total,
         "projectIncome": [{"name": p["name"], "fee": p["monthly_fee"]} for p in fee_rows],
     }
+
+
+def api_cashflow(user):
+    """CEO uchun — mijoz to'lovlari holati + umumiy pul oqimi (kirim/chiqim/sof).
+    Kadr Media (mijoz oylik to'lovlari) + Kadr Studio bronlari kirim;
+    payroll + studio xarajatlari chiqim."""
+    conn = get_db()
+    ym = uz_now().strftime("%Y-%m")
+    rate = get_usd_rate()
+
+    # --- Mijoz oylik to'lovlari (loyihalar) ---
+    fee_rows = [dict(r) for r in conn.execute(
+        "SELECT name, monthly_fee, responsible FROM projects WHERE monthly_fee>0 ORDER BY monthly_fee DESC").fetchall()]
+    paid_rows = conn.execute(
+        "SELECT project, COALESCE(SUM(amount),0) AS s FROM client_payments WHERE ym=? GROUP BY project",
+        (ym,)).fetchall()
+    paid_map = {r["project"]: (r["s"] or 0) for r in paid_rows}
+    clients = []
+    media_expected = 0
+    media_received = 0
+    for p in fee_rows:
+        fee = p["monthly_fee"] or 0
+        rec = paid_map.get(p["name"], 0)
+        media_expected += fee
+        media_received += rec
+        clients.append({
+            "project": p["name"],
+            "responsible": p.get("responsible") or "",
+            "fee": fee,
+            "received": rec,
+            "paid": rec >= fee and fee > 0,
+        })
+    media_outstanding = max(media_expected - media_received, 0)
+
+    # --- Kadr Studio bronlari (shu oy) ---
+    srows = [dict(r) for r in conn.execute(
+        "SELECT amount, paid FROM studio_bookings WHERE bdate LIKE ? "
+        "AND (status IS NULL OR status<>'bekor_qilindi')", (ym + "%",)).fetchall()]
+    studio_total = sum(r["amount"] or 0 for r in srows)
+    studio_paid = sum((r["amount"] or 0) for r in srows if r.get("paid"))
+    studio_unpaid = max(studio_total - studio_paid, 0)
+
+    # --- Chiqim: payroll + studio xarajatlari (shu oy) ---
+    payroll_total = 0
+    for n in SALARY:
+        s = compute_salary(conn, n, rate)
+        if s:
+            payroll_total += s["total"]
+    studio_exp = conn.execute(
+        "SELECT COALESCE(SUM(amount),0) AS s FROM studio_expenses WHERE edate LIKE ?",
+        (ym + "%",)).fetchone()["s"] or 0
+    conn.close()
+
+    income_received = media_received + studio_paid
+    income_expected = media_expected + studio_total
+    expenses_total = payroll_total + studio_exp
+    return {
+        "month": ym,
+        "clients": clients,
+        "mediaExpected": media_expected,
+        "mediaReceived": media_received,
+        "mediaOutstanding": media_outstanding,
+        "studioTotal": studio_total,
+        "studioPaid": studio_paid,
+        "studioUnpaid": studio_unpaid,
+        "payrollTotal": payroll_total,
+        "studioExpenses": studio_exp,
+        "expensesTotal": expenses_total,
+        "incomeReceived": income_received,
+        "incomeExpected": income_expected,
+        "netReceived": income_received - expenses_total,
+        "netExpected": income_expected - expenses_total,
+    }
+
+
+def api_mark_client_payment(user, b):
+    """CEO loyiha uchun shu oy mijoz to'lovini belgilaydi/olib tashlaydi (toggle)."""
+    project = (b.get("project") or "").strip()
+    if not project:
+        return {"error": "Loyiha kerak"}, 400
+    ym = (b.get("ym") or uz_now().strftime("%Y-%m")).strip()
+    conn = get_db()
+    ex = conn.execute("SELECT id FROM client_payments WHERE project=? AND ym=?", (project, ym)).fetchone()
+    if ex:
+        conn.execute("DELETE FROM client_payments WHERE project=? AND ym=?", (project, ym))
+        conn.commit()
+        conn.close()
+        return {"ok": True, "paid": False}
+    prow = conn.execute("SELECT monthly_fee FROM projects WHERE name=?", (project,)).fetchone()
+    amount = b.get("amount")
+    if amount is None:
+        amount = (prow["monthly_fee"] if prow else 0) or 0
+    conn.execute(
+        "INSERT INTO client_payments (project, ym, amount, pdate, note, created_by) VALUES (?,?,?,?,?,?)",
+        (project, ym, int(amount), uz_today().isoformat(), (b.get("note") or ""), user["name"]))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "paid": True, "amount": int(amount)}
 
 
 def api_tiers():
@@ -2957,6 +3058,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role not in ADMIN_ROLES else self._json(api_audit())
         if path == "/api/finance":
             return self._forbid() if role != "ceo" else self._json(api_finance())
+        if path == "/api/cashflow":
+            return self._forbid() if role != "ceo" else self._json(api_cashflow(user))
         if path == "/api/studio":
             return self._forbid() if not can_view_studio(user) else self._json(api_studio(user))
         if path == "/api/studio/finance":
@@ -3042,6 +3145,10 @@ class Handler(BaseHTTPRequestHandler):
             if r not in ADMIN_ROLES:
                 return self._forbid()
             return self._json(api_create_payment(user, b), 201)
+        if path == "/api/cashflow/pay":
+            if r != "ceo":
+                return self._forbid()
+            return self._json(api_mark_client_payment(user, b))
         if path == "/api/studio":
             if not can_edit_studio(user):
                 return self._forbid()
