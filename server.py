@@ -210,6 +210,48 @@ def eff_count(name, accepted):
 
 # Montaj deadline (biriktirilgandan qabulgacha). Kechiksa: reels — pul yo'q, podcast/youtube — yarim.
 DEADLINE_HOURS = {"reels": 24, "podcast": 48, "youtube": 48}
+REELS_PER_DAY = 3  # montajchiga kuniga nechta reels deadline (24 soatlik) qo'yiladi
+
+
+def _parse_dt(s):
+    try:
+        return datetime.datetime.strptime((s or "")[:19], "%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return None
+
+
+def _video_deadline_dt(v):
+    """Videoning deadline datetime'i: rejalashtirilgan due_at bo'lsa o'sha,
+    aks holda assigned_at + tur bo'yicha soat."""
+    due = _parse_dt(v.get("due_at"))
+    if due:
+        return due
+    vt = v.get("vtype") if v.get("vtype") in DEADLINE_HOURS else "reels"
+    a = _parse_dt(v.get("assigned_at") or v.get("created_at"))
+    return (a + datetime.timedelta(hours=DEADLINE_HOURS.get(vt, 24))) if a else None
+
+
+def _next_reel_slot(conn, editor, assign_date):
+    """Montajchiga yangi reels uchun keyingi bo'sh kun-slot deadline'i.
+    Kuniga REELS_PER_DAY ta, ertadan boshlab, yakshanba o'tkaziladi;
+    montajchining hozir turgan (bajarilmagan) reelslari ham hisobga olinadi."""
+    day_counts = {}
+    for r in conn.execute(
+        "SELECT assigned_at, due_at, vtype, created_at FROM videos "
+        "WHERE editor=? AND vtype='reels' AND status IN ('biriktirildi','qaytarildi')",
+        (editor,)).fetchall():
+        dl = _video_deadline_dt(dict(r))
+        if dl:
+            day_counts[dl.date()] = day_counts.get(dl.date(), 0) + 1
+    day = assign_date + datetime.timedelta(days=1)  # ertadan boshlaymiz (24 soat)
+    for _ in range(180):
+        if day.weekday() == 6:  # yakshanba — dam kuni, o'tkazamiz
+            day += datetime.timedelta(days=1)
+            continue
+        if day_counts.get(day, 0) < REELS_PER_DAY:
+            break
+        day += datetime.timedelta(days=1)
+    return datetime.datetime(day.year, day.month, day.day, 23, 59, 59)
 
 
 def _deadline_check(assigned_at, vtype, approved_at):
@@ -530,6 +572,8 @@ def init_db():
     # videos: deadline uchun biriktirilgan vaqt (Toshkent) va kechikish belgisi
     add_column_if_missing(conn, "videos", "assigned_at", "TEXT")
     add_column_if_missing(conn, "videos", "is_late", "INTEGER DEFAULT 0")
+    # reels deadline avtomatik taqsimoti uchun rejalashtirilgan muddat (Toshkent)
+    add_column_if_missing(conn, "videos", "due_at", "TEXT")
     # studio_bookings: operator, syomka turi, operator puli, avans, holat
     add_column_if_missing(conn, "studio_bookings", "operator", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "studio_bookings", "shoot_type", "TEXT DEFAULT 'reels'")
@@ -1288,16 +1332,13 @@ def decorate_video(d, counts, role, username, self_post_names=None):
         d["pay_visible"] = False
     # Deadline ma'lumoti (hali jarayonda bo'lgan videolar uchun)
     d["deadline_hours"] = DEADLINE_HOURS.get(d.get("vtype") or "reels", 24)
-    if d.get("assigned_at") and d.get("status") in ("biriktirildi", "montaj_qilindi", "sifat_ok", "qaytarildi"):
-        try:
-            a = datetime.datetime.strptime(d["assigned_at"][:19], "%Y-%m-%d %H:%M:%S")
-            deadline = a + datetime.timedelta(hours=d["deadline_hours"])
+    if (d.get("assigned_at") or d.get("due_at")) and d.get("status") in ("biriktirildi", "montaj_qilindi", "sifat_ok", "qaytarildi"):
+        deadline = _video_deadline_dt(d)
+        if deadline:
             now = uz_now().replace(tzinfo=None)
             d["deadline_at"] = deadline.strftime("%Y-%m-%d %H:%M")
             d["overdue"] = now > deadline
             d["hours_left"] = round((deadline - now).total_seconds() / 3600, 1)
-        except (ValueError, TypeError):
-            pass
     return d
 
 
@@ -1386,12 +1427,17 @@ def api_create_video(user, b):
     editor = b.get("editor") or ""
     title = b.get("title") or "Nomsiz video"
     vtype = b.get("vtype") if b.get("vtype") in VIDEO_TYPES else "reels"
-    sql = """INSERT INTO videos (project_id, project, client, script_id, title, editor, vdate, drive_link, note, status, assigned_by, vtype, assigned_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"""
+    # Reels — deadline avtomatik taqsimlanadi (kuniga 3 ta, yakshanba o'tkaziladi).
+    # Boshqa turlar (podcast/youtube) — assigned_at + soat bo'yicha (due_at bo'sh).
+    due_at = None
+    if vtype == "reels" and editor:
+        due_at = _next_reel_slot(conn, editor, uz_today()).strftime("%Y-%m-%d %H:%M:%S")
+    sql = """INSERT INTO videos (project_id, project, client, script_id, title, editor, vdate, drive_link, note, status, assigned_by, vtype, assigned_at, due_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
     params = (
         b.get("project_id"), b.get("project") or "", b.get("client") or "", b.get("script_id"),
         title, editor, b.get("vdate") or uz_today().isoformat(),
-        b.get("drive_link") or "", b.get("note") or "", "biriktirildi", user["name"], vtype, now_local(),
+        b.get("drive_link") or "", b.get("note") or "", "biriktirildi", user["name"], vtype, now_local(), due_at,
     )
     if IS_PG:
         vid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
@@ -1401,7 +1447,10 @@ def api_create_video(user, b):
     conn.commit()
     row = conn.execute("SELECT * FROM videos WHERE id=?", (vid,)).fetchone()
     conn.close()
-    send_telegram(f"🎬 <b>Yangi montaj biriktirildi</b>\n{title}\n🎞 Tur: {VIDEO_TYPES.get(vtype, vtype)}\n👤 Montajchi: {editor}\n📁 {b.get('project') or '—'}\n👮 {user['name']}")
+    dline = (" ".join(due_at.split(" ")[:1]) if due_at else "")
+    send_telegram(f"🎬 <b>Yangi montaj biriktirildi</b>\n{title}\n🎞 Tur: {VIDEO_TYPES.get(vtype, vtype)}\n👤 Montajchi: {editor}\n📁 {b.get('project') or '—'}"
+                  + (f"\n⏰ Muddat: {dline}" if dline else "")
+                  + f"\n👮 {user['name']}")
     return dict(row)
 
 
@@ -1447,8 +1496,11 @@ def api_video_action(user, vid, b):
         amount, rk = editor_pay(eff_count(ex["editor"], prev_accepted), vt)
         rk_label = next((r["label"] for r in RANKS if r["key"] == rk), rk)
         now_s = now_local()
-        # Deadline: kechiksa reels — pul yo'q, podcast/youtube — yarim
-        late, _ = _deadline_check(ex.get("assigned_at") or ex.get("created_at"), vt, now_s)
+        # Deadline: kechiksa reels — pul yo'q, podcast/youtube — yarim.
+        # Reelsda rejalashtirilgan due_at (3/kun taqsimot), aks holda assigned_at + soat.
+        _dl = _video_deadline_dt(ex)
+        _now_dt = _parse_dt(now_s)
+        late = bool(_dl and _now_dt and _now_dt > _dl)
         late_note = ""
         if late:
             if vt == "reels":
@@ -3006,19 +3058,16 @@ def api_cron_deadline_check():
     now = uz_now().replace(tzinfo=None)
     rows = conn.execute(
         "SELECT * FROM videos WHERE status IN ('biriktirildi','qaytarildi') "
-        "AND assigned_at IS NOT NULL AND assigned_at<>'' "
+        "AND (assigned_at IS NOT NULL AND assigned_at<>'' OR due_at IS NOT NULL) "
         "AND (deadline_reminded IS NULL OR deadline_reminded=0)"
     ).fetchall()
     warned, expired = [], []
     for r in rows:
         v = dict(r)
         vtype = v.get("vtype") or "reels"
-        hours = DEADLINE_HOURS.get(vtype if vtype in DEADLINE_HOURS else "reels", 24)
-        try:
-            a = datetime.datetime.strptime((v.get("assigned_at") or "")[:19], "%Y-%m-%d %H:%M:%S")
-        except (ValueError, TypeError):
+        deadline = _video_deadline_dt(v)
+        if not deadline:
             continue
-        deadline = a + datetime.timedelta(hours=hours)
         left = (deadline - now).total_seconds() / 3600.0
         if left > 3:
             continue  # hali erta

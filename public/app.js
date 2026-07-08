@@ -51,6 +51,8 @@ function deadlineChip(v) {
     const h = v.hours_left;
     if (h != null) {
       const cls = h < 6 ? 'dl-soon' : 'dl-ok';
+      // Ko'p kunlik muddat bo'lsa — sanani ko'rsatamiz (3/kun taqsimot)
+      if (h >= 24) return `<span class="dl-chip ${cls}">📅 ${fmtDate(v.deadline_at)} gacha</span>`;
       const txt = h >= 1 ? `${Math.round(h)} soat` : `${Math.round(h * 60)} daq`;
       return `<span class="dl-chip ${cls}">⏱ ${txt} qoldi</span>`;
     }
@@ -2176,6 +2178,7 @@ async function openVideoModal() {
       <div class="field"><label>Material/Drive link</label><input id="vf_drive" placeholder="https://drive..." /></div>
     </div>
     <div class="field"><label>Izoh / topshiriq</label><textarea id="vf_note" placeholder="Montajchiga ko'rsatma..."></textarea></div>
+    <p class="muted" style="margin:2px 0 10px">⏰ Reels muddati avtomatik: montajchiga kuniga 3 tadan taqsimlanadi (yakshanba dam). Ortiqchasi keyingi kunga o'tadi.</p>
     <div class="modal-actions"><button class="btn-save" id="vf_save">🎬 Biriktirish</button></div>`,
   () => {
     $('#vf_save').addEventListener('click', async () => {
@@ -2184,8 +2187,10 @@ async function openVideoModal() {
       const body = { title: $('#vf_title').value.trim() || 'Nomsiz video', project: $('#vf_project').value, client,
         vtype: $('#vf_vtype').value, editor: $('#vf_editor').value, script_id: $('#vf_script').value || null,
         vdate: $('#vf_date').value || null, drive_link: $('#vf_drive').value, note: $('#vf_note').value };
-      await api('/api/videos', { method: 'POST', body: JSON.stringify(body) });
-      closeModal(); toast('🎬 Biriktirildi'); render();
+      const res = await api('/api/videos', { method: 'POST', body: JSON.stringify(body) });
+      closeModal();
+      toast(res && res.due_at ? `🎬 Biriktirildi · muddat ${fmtDate(res.due_at)}` : '🎬 Biriktirildi');
+      render();
     });
   });
 }
