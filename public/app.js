@@ -1382,6 +1382,7 @@ async function viewDaily() {
                 <div class="ci-sub">Shu oy ${o.closedCount} kun · yopilmagan ${o.missed}${cl.length ? ` · bugun ✓ ${cn}/${cl.length}` : ''}</div></div></div>
             <div class="ci-right" style="display:flex;gap:8px;align-items:center">
               <span class="pill ${o.closedToday ? 'green' : 'red'}">${o.closedToday ? '✅ yopdi' : '⏳ yopmadi'}</span>
+              ${o.closedToday ? `<button class="btn-ghost cl-reopen" data-person="${esc(o.name)}" title="Kunni qayta ochish">↩</button>` : ''}
               <button class="btn-ghost cl-manage-ceo" data-person="${esc(o.name)}" title="Vazifalarini tahrirlash">⚙️</button></div>
           </div>
           ${detail ? `<div class="cl-report-list">${detail}</div>` : ''}
@@ -1409,6 +1410,12 @@ async function viewDaily() {
   const clm = $('#cl_manage');
   if (clm) clm.addEventListener('click', () => openChecklistModal(ME.name));
   $$('.cl-manage-ceo').forEach((b) => b.addEventListener('click', () => openChecklistModal(b.dataset.person)));
+  $$('.cl-reopen').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm(b.dataset.person + ' — bugungi kunni qayta ochasizmi? (belgilar tozalanadi)')) return;
+    const r = await api('/api/daily/reopen', { method: 'POST', body: JSON.stringify({ person: b.dataset.person }) });
+    if (r.error) { toast(r.error); return; }
+    toast('↩ Kun qayta ochildi'); render();
+  }));
   $('#content').querySelectorAll('[data-smmproj]').forEach((b) => b.addEventListener('click', async () => {
     const res = await api('/api/smm/toggle', { method: 'POST', body: JSON.stringify({ project: b.dataset.smmproj }) });
     if (res.error) { toast(res.error); return; }

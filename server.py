@@ -2789,6 +2789,23 @@ def api_close_day(user, b=None):
     return {"ok": True, "closedToday": True}
 
 
+def api_reopen_day(user, b):
+    """CEO xato yopilgan kunni qayta ochadi (bugungi belgilar ham tozalanadi)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    person = (b.get("person") or "").strip()
+    if person not in DAILY_CLOSE_USERS:
+        return {"error": "Noto'g'ri xodim"}, 400
+    today = uz_today().isoformat()
+    conn = get_db()
+    conn.execute("DELETE FROM daily_close WHERE person=? AND cdate=?", (person, today))
+    conn.execute("DELETE FROM checklist_done WHERE person=? AND cdate=?", (person, today))
+    log_audit(conn, user["name"], "kunni qayta ochdi", f"{person} · {today}")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "closedToday": False}
+
+
 def api_checklist_get(user, person):
     """Kishining cheklist shabloni (tahrirlash uchun) — CEO yoki o'zi."""
     person = person or user["name"]
@@ -3441,6 +3458,8 @@ class Handler(BaseHTTPRequestHandler):
             if not is_daily_user(user):
                 return self._forbid()
             return self._json(api_close_day(user, b))
+        if path == "/api/daily/reopen":
+            return self._json(api_reopen_day(user, b))
         if path == "/api/checklist/add":
             return self._json(api_checklist_add(user, b))
         if path == "/api/checklist/update":
