@@ -1290,6 +1290,15 @@ async function viewSalary() {
 // ============================================================
 //  KUN YOPISH (kunlik sarhisob + KPI)
 // ============================================================
+function evidenceHTML(ev) {
+  if (!ev || !ev.length) return '';
+  const chips = ev.map((e) => `<span class="ev-chip ${e.count > 0 ? 'has' : ''}">${e.label}: <b>${e.count}</b></span>`).join('');
+  const total = ev.reduce((s, e) => s + (e.count || 0), 0);
+  return `<div class="ev-box ${total > 0 ? '' : 'ev-empty'}">
+    <div class="ev-title">📊 Bugun tizimda qayd etilgan${total > 0 ? '' : ' — hali hech narsa yo\'q'}:</div>
+    <div class="ev-chips">${chips}</div></div>`;
+}
+
 async function viewDaily() {
   const [d, att, smm] = await Promise.all([
     api('/api/daily'), api('/api/attendance').catch(() => ({})), api('/api/smm').catch(() => ({})),
@@ -1359,7 +1368,8 @@ async function viewDaily() {
       <div class="panel" style="margin-top:16px">
         <div class="cl-head"><h3 style="margin:0">📋 Bugungi vazifalar <span class="muted">(${checkedN}/${cl.length})</span></h3>
           <button class="btn-ghost" id="cl_manage">⚙️ Vazifalarni tahrirlash</button></div>
-        <p class="muted" style="margin:6px 0 12px">Bugun bajargan ishlaringizni belgilang va kunni yoping.</p>
+        ${evidenceHTML(d.evidence)}
+        <p class="muted" style="margin:6px 0 12px">Bugun bajargan ishlaringizni belgilang va <b>har biriga nima qilganingizni yozing</b> — keyin kunni yoping.</p>
         <div class="cl-list">${items}</div>
         <div style="text-align:center;margin-top:16px">
           <button class="btn-save" id="close_day" style="max-width:300px;margin:0 auto">${done ? '💾 Saqlash' : '🌙 Kunni yopish'}</button>
@@ -1373,7 +1383,8 @@ async function viewDaily() {
         const cl = o.checklist || [];
         const cn = cl.filter((i) => i.done).length;
         const detail = cl.filter((i) => i.done || i.note).map((i) =>
-          `<div class="cl-report"><span>${i.done ? '✅' : '▫️'} ${esc(i.text)}</span>${i.note ? `<b>${esc(i.note)}</b>` : ''}</div>`).join('');
+          `<div class="cl-report"><span>${i.done ? '✅' : '▫️'} ${esc(i.text)}</span>${i.note ? `<b>${esc(i.note)}</b>` : ''}</div>`).join('')
+          + ((o.evidence && o.evidence.length) ? `<div class="cl-report ev-line">📊 Tizim: ${o.evidence.map((e) => esc(e.label) + ' ' + e.count).join(' · ')}</div>` : '');
         return `
         <div class="ceo-item ceo-item-col">
           <div class="ceo-item-main">
@@ -1398,15 +1409,31 @@ async function viewDaily() {
   });
   const cb = $('#close_day');
   if (cb) cb.addEventListener('click', async () => {
-    const items = $$('.cl-item[data-clrow]').map((row) => ({
+    const rows = $$('.cl-item[data-clrow]');
+    const items = rows.map((row) => ({
       id: parseInt(row.dataset.clrow, 10),
       done: row.querySelector('.cl-check').checked,
       note: (row.querySelector('.cl-note').value || '').trim(),
     }));
+    // Frontend tekshiruv: kamida 1 belgilangan + har belgilanganga izoh
+    const ticked = items.filter((i) => i.done);
+    if (!ticked.length) { toast('⚠️ Kamida bitta bajarilgan vazifani belgilang'); return; }
+    const missingNote = rows.find((row) => row.querySelector('.cl-check').checked
+      && (row.querySelector('.cl-note').value || '').trim().length < 3);
+    if (missingNote) {
+      const note = missingNote.querySelector('.cl-note');
+      missingNote.classList.add('cl-need-note');
+      note.focus();
+      toast('⚠️ Belgilangan vazifaga nima qilganingizni yozing');
+      return;
+    }
     const wasClosed = d.closedToday;
-    await api('/api/daily/close', { method: 'POST', body: JSON.stringify({ items }) });
+    const res = await api('/api/daily/close', { method: 'POST', body: JSON.stringify({ items }) });
+    if (res && res.error) { toast('⚠️ ' + res.error); return; }
     toast(wasClosed ? '💾 Saqlandi' : '🌙 Kun yopildi — rahmat!'); render();
   });
+  // izoh yozilganda ogohlantirishni olib tashlash
+  $$('.cl-note').forEach((n) => n.addEventListener('input', () => n.closest('.cl-item').classList.remove('cl-need-note')));
   const clm = $('#cl_manage');
   if (clm) clm.addEventListener('click', () => openChecklistModal(ME.name));
   $$('.cl-manage-ceo').forEach((b) => b.addEventListener('click', () => openChecklistModal(b.dataset.person)));

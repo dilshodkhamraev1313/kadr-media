@@ -763,6 +763,20 @@ body {
   background: rgba(0,0,0,.14); border-radius: 10px; }
 .cl-report { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--muted); }
 .cl-report b { color: var(--text); text-align: right; }
+.cl-report.ev-line { color: var(--blue); border-top: 1px dashed var(--border, rgba(255,255,255,.1)); padding-top: 5px; margin-top: 2px; }
+/* Tizim dalili paneli */
+.ev-box { background: rgba(10,132,255,.08); border: 1px solid rgba(10,132,255,.2); border-radius: 10px;
+  padding: 10px 12px; margin: 4px 0 12px; }
+.ev-box.ev-empty { background: rgba(255,159,10,.08); border-color: rgba(255,159,10,.25); }
+.ev-title { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+.ev-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ev-chip { font-size: 12.5px; padding: 4px 10px; border-radius: 20px; background: rgba(255,255,255,.05);
+  color: var(--muted); }
+.ev-chip.has { background: rgba(10,132,255,.18); color: var(--text); }
+.ev-chip b { color: var(--blue); }
+/* Izoh kerak — ogohlantirish */
+.cl-item.cl-need-note { border-color: var(--orange); background: rgba(255,159,10,.08); }
+.cl-item.cl-need-note .cl-note { border-color: var(--orange); }
 .cl-add { display: flex; gap: 8px; margin-top: 12px; }
 .cl-add input { flex: 1; }
 /* Cheklist tahrirlash modali */

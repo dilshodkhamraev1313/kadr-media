@@ -2721,6 +2721,44 @@ def can_edit_checklist(user, person):
     return bool(user) and (user["name"] == person or user["role"] == "ceo")
 
 
+# Har kishi uchun "bugun tizimda qayd etilgan" real faoliyat (obyektiv dalil).
+EVIDENCE_FIELDS = {
+    "Said": ["shoots", "qc", "accepted"],
+    "Gulmira": ["studio_created"],
+    "Xonzoda": ["scripts"],
+    "Umida": ["posted", "scripts"],
+}
+EVIDENCE_LABEL = {
+    "shoots": "🎥 Syomka", "qc": "🔎 Sifat tekshirdi", "accepted": "✅ Video qabul qildi",
+    "studio_created": "🎬 Studio bron kiritdi", "scripts": "✍️ Ssenariy", "posted": "📷 Instagram'ga joyladi",
+}
+
+
+def _today_evidence(conn, person, today):
+    """Kishining bugungi real tizim faoliyati — qo'l bilan emas, tizim sanaydi."""
+    tstr = today.isoformat()
+    like = tstr + "%"
+
+    def c(sql, params):
+        return conn.execute(sql, params).fetchone()["n"] or 0
+
+    metrics = {
+        "shoots": (lambda: c("SELECT COUNT(*) AS n FROM shoots WHERE operator=? AND sdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (person, tstr))
+                           + c("SELECT COUNT(*) AS n FROM studio_bookings WHERE operator=? AND bdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (person, tstr))),
+        "qc": (lambda: c("SELECT COUNT(*) AS n FROM videos WHERE qc_by=? AND qc_at LIKE ?", (person, like))),
+        "accepted": (lambda: c("SELECT COUNT(*) AS n FROM videos WHERE approved_by=? AND approved_at LIKE ? AND status IN ('qabul_qilindi','joylandi')", (person, like))),
+        "studio_created": (lambda: c("SELECT COUNT(*) AS n FROM studio_bookings WHERE created_by=? AND created_at LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (person, like))),
+        "scripts": (lambda: c("SELECT COUNT(*) AS n FROM scenarist_scripts WHERE author=? AND sdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (person, tstr))),
+        "posted": (lambda: c("SELECT COUNT(*) AS n FROM videos WHERE posted_by=? AND posted_at LIKE ? AND status='joylandi'", (person, like))),
+    }
+    out = []
+    for key in EVIDENCE_FIELDS.get(person, []):
+        fn = metrics.get(key)
+        if fn:
+            out.append({"label": EVIDENCE_LABEL.get(key, key), "count": fn()})
+    return out
+
+
 def api_daily(user):
     conn = get_db()
     today = uz_today()
@@ -2737,6 +2775,7 @@ def api_daily(user):
         res["missed"] = _missed_workdays(conn, user["name"], today)
         res["streak"] = _close_streak(conn, user["name"], today)
         res["checklist"] = _checklist_for(conn, user["name"], tstr)
+        res["evidence"] = _today_evidence(conn, user["name"], today)
     if user["role"] == "ceo":
         res["overview"] = [{
             "name": nm, "closedToday": tstr in _closed_dates(conn, nm, ym),
@@ -2744,9 +2783,13 @@ def api_daily(user):
             "missed": _missed_workdays(conn, nm, today),
             "streak": _close_streak(conn, nm, today),
             "checklist": _checklist_for(conn, nm, tstr),
+            "evidence": _today_evidence(conn, nm, today),
         } for nm in DAILY_CLOSE_USERS]
     conn.close()
     return res
+
+
+MIN_CLOSE_NOTE_LEN = 3  # belgilangan vazifa izohining eng kam uzunligi
 
 
 def api_close_day(user, b=None):
@@ -2755,35 +2798,54 @@ def api_close_day(user, b=None):
     b = b or {}
     conn = get_db()
     today = uz_today().isoformat()
+
+    # Kelgan vazifalarni normallashtiramiz (id, done, note)
+    raw = b.get("items")
+    valid = {r["id"] for r in conn.execute(
+        "SELECT id FROM checklist_items WHERE person=?", (user["name"],)).fetchall()}
+    parsed = []
+    for it in (raw or []):
+        if isinstance(it, dict):
+            iid, done, note = it.get("id"), (1 if it.get("done") else 0), (it.get("note") or "").strip()
+        else:  # eski format: shunchaki id ro'yxati
+            iid, done, note = it, 1, ""
+        try:
+            iid = int(iid)
+        except (ValueError, TypeError):
+            continue
+        if iid in valid:
+            parsed.append({"id": iid, "done": done, "note": note})
+
+    # --- Anti-fake tekshiruv (faqat items yuborilganda) ---
+    if raw is not None:
+        ticked = [p for p in parsed if p["done"]]
+        if not ticked:
+            conn.close()
+            return {"error": "Kunni yopish uchun kamida bitta bajarilgan vazifani belgilang."}, 400
+        no_note = [p for p in ticked if len(p["note"]) < MIN_CLOSE_NOTE_LEN]
+        if no_note:
+            texts = conn.execute(
+                "SELECT id, text FROM checklist_items WHERE person=?", (user["name"],)).fetchall()
+            tmap = {r["id"]: r["text"] for r in texts}
+            first = tmap.get(no_note[0]["id"], "vazifa")
+            conn.close()
+            return {"error": f"Belgilangan har vazifaga izoh yozing (nima qildingiz). Masalan: «{first}»"}, 400
+
     ex = conn.execute("SELECT id FROM daily_close WHERE person=? AND cdate=?", (user["name"], today)).fetchone()
     if not ex:
         conn.execute("INSERT INTO daily_close (person, cdate, closed_at) VALUES (?,?,?)",
                      (user["name"], today, now_local()))
         log_audit(conn, user["name"], "kunni yopdi", today)
     # Belgilangan vazifalar (galochka + qo'lda izoh) — bugungi to'plamni qayta yozamiz
-    items = b.get("items")
-    if items is not None:
+    if raw is not None:
         conn.execute("DELETE FROM checklist_done WHERE person=? AND cdate=?", (user["name"], today))
-        valid = {r["id"] for r in conn.execute(
-            "SELECT id FROM checklist_items WHERE person=?", (user["name"],)).fetchall()}
         seen = set()
-        for it in items:
-            if isinstance(it, dict):
-                iid = it.get("id")
-                done = 1 if it.get("done") else 0
-                note = (it.get("note") or "").strip()
-            else:  # eski format: shunchaki id ro'yxati
-                iid, done, note = it, 1, ""
-            try:
-                iid = int(iid)
-            except (ValueError, TypeError):
-                continue
-            # faqat belgilangan yoki izohli vazifalarni saqlaymiz
-            if iid in valid and iid not in seen and (done or note):
-                seen.add(iid)
+        for p in parsed:
+            if p["id"] not in seen and (p["done"] or p["note"]):
+                seen.add(p["id"])
                 conn.execute(
                     "INSERT INTO checklist_done (person, cdate, item_id, done, note) VALUES (?,?,?,?,?)",
-                    (user["name"], today, iid, done, note))
+                    (user["name"], today, p["id"], p["done"], p["note"]))
     conn.commit()
     conn.close()
     return {"ok": True, "closedToday": True}
@@ -3196,6 +3258,9 @@ CONTENT_TYPES = {
 
 class Handler(BaseHTTPRequestHandler):
     def _json(self, data, code=200):
+        # Funksiya ({...}, kod) tuple qaytarsa — statusni ajratamiz (xato javoblari uchun).
+        if isinstance(data, tuple) and len(data) == 2 and isinstance(data[1], int):
+            data, code = data
         # default=str — Postgres'dan keladigan sana-vaqt (datetime) obyektlarini
         # matnga aylantiradi, aks holda JSON serializatsiya xato beradi.
         body = json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
