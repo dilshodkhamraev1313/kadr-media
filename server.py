@@ -1296,13 +1296,33 @@ SMM_ROLES = ("smm", "ceo", "coordinator")
 
 
 def _editor_accepted_counts(conn):
-    """Har montajyor uchun qabul qilingan video soni (lavozim hisobi uchun)."""
+    """Har montajyor uchun qabul qilingan video soni (haqiqiy dona — ko'rsatish uchun)."""
     counts = {}
     for r in conn.execute(
         "SELECT editor, COUNT(*) AS n FROM videos WHERE status IN ('qabul_qilindi','joylandi') GROUP BY editor"
     ).fetchall():
         counts[r["editor"] or ""] = r["n"]
     return counts
+
+
+# Podcast ko'p vaqt oladi — lavozim (rank) uchun 1 podcast = PODCAST_RANK_WEIGHT video.
+PODCAST_RANK_WEIGHT = 3
+
+
+def _video_rank_points(v):
+    """Bitta videoning lavozimga qo'shadigan ball: podcast — 3, boshqasi — 1."""
+    return PODCAST_RANK_WEIGHT if (v.get("vtype") == "podcast") else 1
+
+
+def _editor_rank_points(conn):
+    """Har montajyor uchun lavozim ballari (podcast=3). rank_info shu ballardan hisoblanadi."""
+    pts = {}
+    for r in conn.execute(
+        "SELECT editor, SUM(CASE WHEN vtype='podcast' THEN %d ELSE 1 END) AS n "
+        "FROM videos WHERE status IN ('qabul_qilindi','joylandi') GROUP BY editor" % PODCAST_RANK_WEIGHT
+    ).fetchall():
+        pts[r["editor"] or ""] = r["n"] or 0
+    return pts
 
 
 def _self_post_names(conn):
@@ -1356,7 +1376,7 @@ def api_videos(user, show_all=False):
         ).fetchall()
     else:
         rows = conn.execute("SELECT * FROM videos ORDER BY id DESC").fetchall()
-    counts = _editor_accepted_counts(conn)
+    counts = _editor_rank_points(conn)
     sp = _self_post_names(conn)
     conn.close()
     result = [decorate_video(dict(r), counts, role, user["name"], sp) for r in rows]
@@ -1374,7 +1394,7 @@ def api_my_tasks(user):
     conn = get_db()
     role = user["role"]
     name = user["name"]
-    counts = _editor_accepted_counts(conn)
+    counts = _editor_rank_points(conn)
     sp = _self_post_names(conn)
 
     def dec(rows):
@@ -1416,7 +1436,7 @@ def api_qc(user):
     """Sifat nazorati uchun — montaj qilingan, tasdiq kutayotgan videolar (hammasi)."""
     conn = get_db()
     rows = conn.execute("SELECT * FROM videos WHERE status='montaj_qilindi' ORDER BY id DESC").fetchall()
-    counts = _editor_accepted_counts(conn)
+    counts = _editor_rank_points(conn)
     conn.close()
     return [decorate_video(dict(r), counts, user["role"], user["name"]) for r in rows]
 
@@ -1487,13 +1507,14 @@ def api_video_action(user, vid, b):
         log_audit(conn, user["name"], "sifat qaytardi", f"#{vid} {ex['title']}")
         send_telegram(f"↩️ <b>Sifatdan qaytarildi</b>\n{ex['title']}\n👤 {ex['editor']}\n👮 {user['name']}")
     elif action == "accept" and is_qc_approver(user):
-        # Montajyor lavozimiga (shu paytgacha qabul qilingan video soni) qarab pul avtomatik hisoblanadi
-        prev_accepted = conn.execute(
-            "SELECT COUNT(*) AS n FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi')",
+        # Montajyor lavozimiga (shu paytgacha to'plangan lavozim ballari — podcast=3) qarab pul avtomatik
+        prev_points = conn.execute(
+            "SELECT SUM(CASE WHEN vtype='podcast' THEN %d ELSE 1 END) AS n "
+            "FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi')" % PODCAST_RANK_WEIGHT,
             (ex["editor"],),
-        ).fetchone()["n"]
+        ).fetchone()["n"] or 0
         vt = ex.get("vtype") or "reels"
-        amount, rk = editor_pay(eff_count(ex["editor"], prev_accepted), vt)
+        amount, rk = editor_pay(eff_count(ex["editor"], prev_points), vt)
         rk_label = next((r["label"] for r in RANKS if r["key"] == rk), rk)
         now_s = now_local()
         # Deadline: kechiksa reels — pul yo'q, podcast/youtube — yarim.
@@ -1569,7 +1590,9 @@ def editor_summary(conn, name):
     by_project = {}
     for v in accepted:
         by_project[v["project"]] = by_project.get(v["project"], 0) + 1
-    rinfo = rank_info(eff_count(name, len(accepted)))
+    # Lavozim — ballar bo'yicha (podcast=3), lekin "accepted" soni haqiqiy dona qoladi
+    rank_points = sum(_video_rank_points(v) for v in accepted)
+    rinfo = rank_info(eff_count(name, rank_points))
     return {
         "name": name,
         "videos": len(vids),
@@ -2678,14 +2701,15 @@ def api_leaderboard(user):
     def cnt(sql, params):
         return conn.execute(sql, params).fetchone()["n"] or 0
 
-    allc = _editor_accepted_counts(conn)
+    allc = _editor_accepted_counts(conn)   # haqiqiy dona (jami)
+    pts = _editor_rank_points(conn)        # lavozim ballari (podcast=3)
     ed_rows = conn.execute("SELECT name FROM users WHERE role='editor' ORDER BY name").fetchall()
     montaj = []
     for e in ed_rows:
         nm = e["name"]
         mo = cnt("SELECT COUNT(*) AS n FROM videos WHERE editor=? AND approved_at LIKE ? "
                  "AND status IN ('qabul_qilindi','joylandi')", (nm, like))
-        ri = rank_info(allc.get(nm, 0))
+        ri = rank_info(eff_count(nm, pts.get(nm, 0)))
         montaj.append({"name": nm, "month": mo, "allTime": allc.get(nm, 0),
                        "rankLabel": ri["rank_label"], "rankIcon": ri["rank_icon"]})
     montaj.sort(key=lambda x: (-x["month"], -x["allTime"]))

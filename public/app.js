@@ -230,7 +230,7 @@ const NAV_ITEMS = [
   // Jamoa
   { view: 'dashboard', icon: '▦', label: 'Boshqaruv',     roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'projects',  icon: '▣', label: 'Loyihalar',     roles: ['ceo', 'coordinator', 'lead'] },
-  { view: 'scripts',   icon: '✎', label: 'Ssenariylar',   roles: ['ceo', 'coordinator', 'lead', 'editor'] },
+  { view: 'scripts',   icon: '✎', label: 'Ssenariylar',   roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'videos',    icon: '►', label: 'Montaj',        roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'qc',        icon: '🔎', label: 'Sifat nazorati', roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Said'] },
   { view: 'shoots',    icon: '📹', label: 'Kadr Media',     roles: ['ceo', 'coordinator', 'lead'] },
