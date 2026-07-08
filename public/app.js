@@ -1336,9 +1336,12 @@ async function viewDaily() {
     const cl = d.checklist || [];
     const checkedN = cl.filter((i) => i.done).length;
     const items = cl.map((i) => `
-      <label class="cl-item ${i.done ? 'done' : ''}">
-        <input type="checkbox" class="cl-check" data-clid="${i.id}" ${i.done ? 'checked' : ''}>
-        <span class="cl-text">${esc(i.text)}</span></label>`).join('')
+      <div class="cl-item ${i.done ? 'done' : ''}" data-clrow="${i.id}">
+        <label class="cl-top">
+          <input type="checkbox" class="cl-check" data-clid="${i.id}" ${i.done ? 'checked' : ''}>
+          <span class="cl-text">${esc(i.text)}</span></label>
+        <input class="cl-note" data-clid="${i.id}" placeholder="Aniqrog'i: nechta / qaysi holat..." value="${esc(i.note || '')}">
+      </div>`).join('')
       || '<div class="muted" style="padding:4px 0">Vazifa yo\'q — "Vazifalarni tahrirlash"dan qo\'shing.</div>';
     html += `
       <div class="rank-hero ${done ? 'rank-elite' : ''}" style="margin-bottom:16px">
@@ -1369,22 +1372,38 @@ async function viewDaily() {
       d.overview.map((o) => {
         const cl = o.checklist || [];
         const cn = cl.filter((i) => i.done).length;
+        const detail = cl.filter((i) => i.done || i.note).map((i) =>
+          `<div class="cl-report"><span>${i.done ? '✅' : '▫️'} ${esc(i.text)}</span>${i.note ? `<b>${esc(i.note)}</b>` : ''}</div>`).join('');
         return `
-        <div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${colorFor(o.name)}">${initials(o.name)}</div>
-          <div><div class="ci-name">${esc(o.name)}${o.streak >= 2 ? ` <span style="color:var(--orange)">🔥${o.streak}</span>` : ''}</div>
-            <div class="ci-sub">Shu oy ${o.closedCount} kun · yopilmagan ${o.missed}${cl.length ? ` · bugun ✓ ${cn}/${cl.length}` : ''}</div></div></div>
-          <div class="ci-right" style="display:flex;gap:8px;align-items:center">
-            <span class="pill ${o.closedToday ? 'green' : 'red'}">${o.closedToday ? '✅ yopdi' : '⏳ yopmadi'}</span>
-            <button class="btn-ghost cl-manage-ceo" data-person="${esc(o.name)}" title="Vazifalarini tahrirlash">⚙️</button></div></div>`;
+        <div class="ceo-item ceo-item-col">
+          <div class="ceo-item-main">
+            <div class="ci-left"><div class="mini-av" style="background:${colorFor(o.name)}">${initials(o.name)}</div>
+              <div><div class="ci-name">${esc(o.name)}${o.streak >= 2 ? ` <span style="color:var(--orange)">🔥${o.streak}</span>` : ''}</div>
+                <div class="ci-sub">Shu oy ${o.closedCount} kun · yopilmagan ${o.missed}${cl.length ? ` · bugun ✓ ${cn}/${cl.length}` : ''}</div></div></div>
+            <div class="ci-right" style="display:flex;gap:8px;align-items:center">
+              <span class="pill ${o.closedToday ? 'green' : 'red'}">${o.closedToday ? '✅ yopdi' : '⏳ yopmadi'}</span>
+              <button class="btn-ghost cl-manage-ceo" data-person="${esc(o.name)}" title="Vazifalarini tahrirlash">⚙️</button></div>
+          </div>
+          ${detail ? `<div class="cl-report-list">${detail}</div>` : ''}
+        </div>`;
       }).join('') +
       `</div></div>`;
   }
   $('#content').innerHTML = html || emptyState();
+  // checkbox belgilanganda kartani vizual yangilash
+  $$('.cl-item').forEach((row) => {
+    const chk = row.querySelector('.cl-check');
+    if (chk) chk.addEventListener('change', () => row.classList.toggle('done', chk.checked));
+  });
   const cb = $('#close_day');
   if (cb) cb.addEventListener('click', async () => {
-    const ids = $$('.cl-check:checked').map((c) => parseInt(c.dataset.clid, 10));
+    const items = $$('.cl-item[data-clrow]').map((row) => ({
+      id: parseInt(row.dataset.clrow, 10),
+      done: row.querySelector('.cl-check').checked,
+      note: (row.querySelector('.cl-note').value || '').trim(),
+    }));
     const wasClosed = d.closedToday;
-    await api('/api/daily/close', { method: 'POST', body: JSON.stringify({ items: ids }) });
+    await api('/api/daily/close', { method: 'POST', body: JSON.stringify({ items }) });
     toast(wasClosed ? '💾 Saqlandi' : '🌙 Kun yopildi — rahmat!'); render();
   });
   const clm = $('#cl_manage');

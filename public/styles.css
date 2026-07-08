@@ -747,9 +747,22 @@ body {
   border-radius: 12px; transition: border-color .15s, background .15s; }
 .cl-item:hover { border-color: var(--blue); }
 .cl-item.done { border-color: var(--green); background: rgba(48,209,88,.08); }
+.cl-item { flex-direction: column; align-items: stretch; gap: 8px; }
+.cl-top { display: flex; align-items: center; gap: 12px; cursor: pointer; }
 .cl-check { width: 20px; height: 20px; flex-shrink: 0; accent-color: var(--green); cursor: pointer; }
 .cl-text { flex: 1; font-size: 14px; }
 .cl-item.done .cl-text { color: var(--muted); text-decoration: line-through; }
+.cl-note { width: 100%; margin-left: 32px; max-width: calc(100% - 32px); font-size: 13px;
+  padding: 7px 10px; background: rgba(0,0,0,.15); border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: 8px; color: var(--text); }
+.cl-note::placeholder { color: var(--muted); opacity: .7; }
+/* CEO overview'da kunlik hisobot */
+.ceo-item-col { flex-direction: column; align-items: stretch; gap: 10px; }
+.ceo-item-main { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.cl-report-list { display: flex; flex-direction: column; gap: 5px; padding: 8px 12px; margin-left: 44px;
+  background: rgba(0,0,0,.14); border-radius: 10px; }
+.cl-report { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--muted); }
+.cl-report b { color: var(--text); text-align: right; }
 .cl-add { display: flex; gap: 8px; margin-top: 12px; }
 .cl-add input { flex: 1; }
 /* Cheklist tahrirlash modali */

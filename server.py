@@ -539,6 +539,9 @@ def init_db():
     # shoots (Kadr Media syomkalari): syomka vaqti (nechidan nechigacha)
     add_column_if_missing(conn, "shoots", "start_time", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "shoots", "end_time", "TEXT DEFAULT ''")
+    # checklist_done: belgi (done) + qo'lda izoh (note — masalan nechta ssenariy)
+    add_column_if_missing(conn, "checklist_done", "done", "INTEGER DEFAULT 1")
+    add_column_if_missing(conn, "checklist_done", "note", "TEXT DEFAULT ''")
     _seed_checklist(conn)
     conn.commit()
 
@@ -2696,15 +2699,22 @@ def _seed_checklist(conn):
 
 
 def _checklist_for(conn, person, cdate=None):
-    """Kishining faol cheklisti; cdate berilsa — o'sha kundagi belgilangan holati bilan."""
+    """Kishining faol cheklisti; cdate berilsa — o'sha kundagi belgi + qo'lda izoh bilan."""
     items = conn.execute(
         "SELECT id, text FROM checklist_items WHERE person=? AND active=1 ORDER BY sort, id",
         (person,)).fetchall()
-    done = set()
+    state = {}
     if cdate:
-        done = {r["item_id"] for r in conn.execute(
-            "SELECT item_id FROM checklist_done WHERE person=? AND cdate=?", (person, cdate)).fetchall()}
-    return [{"id": r["id"], "text": r["text"], "done": r["id"] in done} for r in items]
+        for r in conn.execute(
+                "SELECT item_id, done, note FROM checklist_done WHERE person=? AND cdate=?",
+                (person, cdate)).fetchall():
+            state[r["item_id"]] = {"done": bool(r["done"]), "note": r["note"] or ""}
+    out = []
+    for r in items:
+        s = state.get(r["id"], {})
+        out.append({"id": r["id"], "text": r["text"],
+                    "done": s.get("done", False), "note": s.get("note", "")})
+    return out
 
 
 def can_edit_checklist(user, person):
@@ -2750,22 +2760,30 @@ def api_close_day(user, b=None):
         conn.execute("INSERT INTO daily_close (person, cdate, closed_at) VALUES (?,?,?)",
                      (user["name"], today, now_local()))
         log_audit(conn, user["name"], "kunni yopdi", today)
-    # Belgilangan vazifalar (galochka) — bugungi to'plamni qayta yozamiz (tahrirlash uchun)
+    # Belgilangan vazifalar (galochka + qo'lda izoh) — bugungi to'plamni qayta yozamiz
     items = b.get("items")
     if items is not None:
         conn.execute("DELETE FROM checklist_done WHERE person=? AND cdate=?", (user["name"], today))
         valid = {r["id"] for r in conn.execute(
             "SELECT id FROM checklist_items WHERE person=?", (user["name"],)).fetchall()}
         seen = set()
-        for iid in items:
+        for it in items:
+            if isinstance(it, dict):
+                iid = it.get("id")
+                done = 1 if it.get("done") else 0
+                note = (it.get("note") or "").strip()
+            else:  # eski format: shunchaki id ro'yxati
+                iid, done, note = it, 1, ""
             try:
                 iid = int(iid)
             except (ValueError, TypeError):
                 continue
-            if iid in valid and iid not in seen:
+            # faqat belgilangan yoki izohli vazifalarni saqlaymiz
+            if iid in valid and iid not in seen and (done or note):
                 seen.add(iid)
-                conn.execute("INSERT INTO checklist_done (person, cdate, item_id) VALUES (?,?,?)",
-                             (user["name"], today, iid))
+                conn.execute(
+                    "INSERT INTO checklist_done (person, cdate, item_id, done, note) VALUES (?,?,?,?,?)",
+                    (user["name"], today, iid, done, note))
     conn.commit()
     conn.close()
     return {"ok": True, "closedToday": True}
