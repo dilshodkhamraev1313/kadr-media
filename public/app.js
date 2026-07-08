@@ -362,6 +362,7 @@ function buildTopbarActions() {
   const canSearch = ['projects', 'scripts', 'videos', 'qc', 'shoots', 'salary', 'budget', 'joylash', 'editors', 'client', 'cscripts', 'cvideos', 'myvideos'].includes(VIEW);
   if (canSearch) html += `<div class="search-box"><span>⌕</span><input id="searchInput" placeholder="Qidirish..." value="${esc(SEARCH)}" /></div>`;
   const role = ME.role;
+  if (VIEW === 'projects' && role === 'ceo') html += `<button class="btn-ghost" data-act="reset-stats">🔄 Oyni yangilash</button>`;
   if ((VIEW === 'projects') && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-project">+ Loyiha</button>`;
   if ((VIEW === 'scripts') && role !== 'client') html += `<button class="btn-primary" data-act="add-script">+ Ssenariy</button>`;
   if (VIEW === 'videos' && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-video">+ Video biriktirish</button>`;
@@ -386,6 +387,7 @@ function buildTopbarActions() {
     if (act === 'add-booking') openStudioBookingModal();
     if (act === 'studio-finance') openStudioFinanceModal();
     if (act === 'studio-expenses') openStudioExpensesModal();
+    if (act === 'reset-stats') resetProjectStats();
   }));
 }
 
@@ -498,11 +500,11 @@ function projectCard(p) {
     <div class="project-card ${clickable ? 'clickable' : ''}" data-id="${p.id}">
       <div class="pc-top"><div class="pc-name">${esc(p.name)}</div><div class="pc-badges">${badges.join('')}</div></div>
       <div class="pc-client">📁 ${esc(p.client) || '—'}${ME.role === 'ceo' ? ` · 💵 ${p.monthly_fee ? money(p.monthly_fee) : 'to\'lov 0'}` : ''}</div>
-      <div class="pc-stages">${STAGES.map((s) => `<div class="stage-dot ${p[s.key]}">${s.label}</div>`).join('')}</div>
+      <div class="pc-stages">${STAGES.filter((s) => !(p.selfPost && s.key === 'joylash')).map((s) => `<div class="stage-dot ${p[s.key]}">${s.label}</div>`).join('')}${p.selfPost ? '<div class="stage-dot self-post" title="Mijoz o\'zi joylaydi">🙅 Joylash</div>' : ''}</div>
       ${p.plan ? `
       <div class="plan-box">
         <div class="plan-head"><span>📅 Oylik reja (${p.plan} ta/oy)</span><b>${p.planDone}/${p.planTotal} · ${p.planPct}%</b></div>
-        <div class="plan-grid">${STAGES.map((s) => {
+        <div class="plan-grid">${STAGES.filter((s) => !(p.selfPost && s.key === 'joylash')).map((s) => {
           const dn = p['done_' + s.key] || 0; const pct = p.plan ? Math.min(Math.round(dn / p.plan * 100), 100) : 0;
           const full = dn >= p.plan;
           return `<div class="plan-stage"><div class="pl-top"><span>${s.label}</span><b class="${full ? 'full' : ''}">${dn}/${p.plan}</b></div>
@@ -641,7 +643,7 @@ function videoActions(v) {
     b.push(`<button class="mini-btn green" data-vact="accept" data-id="${v.id}">✓ Qabul (pul)</button>`);
     b.push(`<button class="mini-btn red" data-vact="return" data-id="${v.id}">↩ Qaytar</button>`);
   }
-  if (['smm', 'ceo', 'coordinator'].includes(role) && v.status === 'qabul_qilindi')
+  if (['smm', 'ceo', 'coordinator'].includes(role) && v.status === 'qabul_qilindi' && !v.self_post)
     b.push(`<button class="mini-btn blue" data-vact="posted" data-id="${v.id}">📷 Joyladim</button>`);
   return b.join('');
 }
@@ -2059,6 +2061,8 @@ async function openProjectModal(project) {
         <button data-v="jarayonda" class="${PDRAFT[s.key] === 'jarayonda' ? 'on-j' : ''}">Jarayonda</button>
         <button data-v="tayyor" class="${PDRAFT[s.key] === 'tayyor' ? 'on-t' : ''}">Tayyor</button></div></div>`).join('')}</div>
     <div class="divider"></div>
+    <label class="pf-check"><input type="checkbox" id="pf_selfpost" ${PDRAFT.self_post ? 'checked' : ''} />
+      <span>🙅 Mijoz o'zi joylaydi — bu loyihada <b>joylash bosqichi yo'q</b> (biz Instagram'ga joylamaymiz)</span></label>
     <div class="field"><label>⚠ Muammo</label><textarea id="pf_muammo">${esc(PDRAFT.muammo)}</textarea></div>
     <div class="field"><label>Izoh</label><textarea id="pf_izoh">${esc(PDRAFT.izoh)}</textarea></div>
     <div class="modal-actions">${project ? '<button class="btn-del" id="pf_del">O\'chirish</button>' : ''}<button class="btn-save" id="pf_save">${project ? 'Saqlash' : 'Qo\'shish'}</button></div>`,
@@ -2079,7 +2083,8 @@ async function saveProject() {
     plan: parseInt($('#pf_plan').value || '0', 10),
     done_ssenariy: parseInt($('#pf_done_ssenariy').value || '0', 10), done_syomka: parseInt($('#pf_done_syomka').value || '0', 10),
     done_montaj: parseInt($('#pf_done_montaj').value || '0', 10), done_tasdiq: parseInt($('#pf_done_tasdiq').value || '0', 10),
-    done_joylash: parseInt($('#pf_done_joylash').value || '0', 10) };
+    done_joylash: parseInt($('#pf_done_joylash').value || '0', 10),
+    self_post: $('#pf_selfpost') && $('#pf_selfpost').checked };
   const fee = $('#pf_fee');
   if (fee) body.monthly_fee = parseInt(fee.value || '0', 10);
   if (EDIT_P) await api(`/api/projects/${EDIT_P.id}`, { method: 'PUT', body: JSON.stringify(body) });
@@ -2089,6 +2094,12 @@ async function saveProject() {
 async function deleteProject() {
   if (!confirm('O\'chirilsinmi?')) return;
   await api(`/api/projects/${EDIT_P.id}`, { method: 'DELETE' }); closeModal(); toast('O\'chirildi'); render();
+}
+async function resetProjectStats() {
+  if (!confirm('Barcha loyihalar statistikasi nolga tushiriladi (ssenariy/syomka/montaj/tasdiq/joylash — soni va holati). Yangi oy uchun. Davom etilsinmi?')) return;
+  const r = await api('/api/projects/reset-stats', { method: 'POST', body: '{}' });
+  if (r && r.error) { toast('⚠️ ' + r.error); return; }
+  toast(`🔄 ${r.count || ''} loyiha yangilandi`); render();
 }
 
 // ---- Script modal ----

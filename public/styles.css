@@ -249,6 +249,11 @@ body {
 }
 .stage-dot.jarayonda { color: var(--orange); background: rgba(255,159,10,.12); }
 .stage-dot.tayyor { color: var(--green); background: rgba(48,209,88,.14); }
+.stage-dot.self-post { color: var(--muted); background: rgba(255,255,255,.03); opacity: .55;
+  text-decoration: line-through; font-size: 9px; }
+.pf-check { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin: 4px 0 8px;
+  background: rgba(255,159,10,.06); border: 1px solid rgba(255,159,10,.2); border-radius: 10px; cursor: pointer; font-size: 13px; }
+.pf-check input { width: 18px; height: 18px; margin-top: 1px; flex-shrink: 0; accent-color: var(--orange); }
 
 .pc-foot {
   display: flex; align-items: center; justify-content: space-between;

@@ -542,6 +542,8 @@ def init_db():
     # checklist_done: belgi (done) + qo'lda izoh (note — masalan nechta ssenariy)
     add_column_if_missing(conn, "checklist_done", "done", "INTEGER DEFAULT 1")
     add_column_if_missing(conn, "checklist_done", "note", "TEXT DEFAULT ''")
+    # projects: mijoz o'zi joylaydigan loyihalar (joylash bosqichi yo'q)
+    add_column_if_missing(conn, "projects", "self_post", "INTEGER DEFAULT 0")
     _seed_checklist(conn)
     conn.commit()
 
@@ -616,10 +618,15 @@ def ensure_project_plans(conn):
 # ------------------------------------------------------------
 def decorate(row):
     p = dict(row)
-    done = sum(1 for s in STAGES if p.get(s) == "tayyor")
+    self_post = bool(p.get("self_post"))
+    p["selfPost"] = self_post
+    # Mijoz o'zi joylaydigan loyihalarda "joylash" bosqichi hisobga olinmaydi
+    stages = [s for s in STAGES if not (self_post and s == "joylash")]
+    done = sum(1 for s in stages if p.get(s) == "tayyor")
     p["doneCount"] = done
-    p["progress"] = round(done / len(STAGES) * 100)
-    p["fullyDone"] = done == len(STAGES)
+    p["stageCount"] = len(stages)
+    p["progress"] = round(done / len(stages) * 100) if stages else 0
+    p["fullyDone"] = done == len(stages)
 
     days_left = None
     overdue = False
@@ -638,12 +645,13 @@ def decorate(row):
         (days_left is not None and days_left <= 2 and p["progress"] < 60) or has_problem
     )
 
-    # Oylik reja progressi (har bosqich uchun plan dona)
+    # Oylik reja progressi (har bosqich uchun plan dona) — selfPost'da joylash yo'q
     plan = p.get("plan") or 0
-    done_total = sum(p.get(c) or 0 for c in DONE_COLS)
-    p["planTotal"] = plan * len(STAGES)
+    done_cols = [c for c in DONE_COLS if not (self_post and c == "done_joylash")]
+    done_total = sum(p.get(c) or 0 for c in done_cols)
+    p["planTotal"] = plan * len(done_cols)
     p["planDone"] = done_total
-    p["planPct"] = round(done_total / (plan * len(STAGES)) * 100) if plan else 0
+    p["planPct"] = round(done_total / (plan * len(done_cols)) * 100) if plan and done_cols else 0
     return p
 
 
@@ -684,6 +692,21 @@ def api_get_project(pid):
     return decorate(row) if row else None
 
 
+def api_reset_project_stats(user):
+    """CEO — yangi oy uchun barcha loyihalar statistikasini nolga tushiradi:
+    har bosqich soni (done_) = 0 va bosqich holati = kutilmoqda. Yozuvlar o'chmaydi."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    sets = ", ".join([f"{c}=0" for c in DONE_COLS] + [f"{s}='kutilmoqda'" for s in STAGES])
+    conn.execute(f"UPDATE projects SET {sets}, updated_at=CURRENT_TIMESTAMP")
+    n = conn.execute("SELECT COUNT(*) AS n FROM projects").fetchone()["n"]
+    log_audit(conn, user["name"], "loyiha statistikasi reset qilindi", f"{n} loyiha · {uz_today().isoformat()}")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "count": n}
+
+
 def api_create_project(b):
     def st(v):
         return v if v in STATUSES else "kutilmoqda"
@@ -696,14 +719,15 @@ def api_create_project(b):
     conn = get_db()
     sql = """INSERT INTO projects
            (name,client,responsible,ssenariy,syomka,montaj,tasdiq,joylash,deadline,muammo,izoh,
-            plan,monthly_fee,done_ssenariy,done_syomka,done_montaj,done_tasdiq,done_joylash)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
+            plan,monthly_fee,done_ssenariy,done_syomka,done_montaj,done_tasdiq,done_joylash,self_post)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
     params = (
         b.get("name") or "Nomsiz loyiha", b.get("client") or "",
         b.get("responsible") or "", st(b.get("ssenariy")), st(b.get("syomka")),
         st(b.get("montaj")), st(b.get("tasdiq")), st(b.get("joylash")),
         b.get("deadline") or None, b.get("muammo") or "", b.get("izoh") or "",
         iv("plan"), iv("monthly_fee"), iv("done_ssenariy"), iv("done_syomka"), iv("done_montaj"), iv("done_tasdiq"), iv("done_joylash"),
+        1 if b.get("self_post") else 0,
     )
     if IS_PG:
         pid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
@@ -759,6 +783,7 @@ def api_update_project(pid, b):
         "done_ssenariy": iv("done_ssenariy"), "done_syomka": iv("done_syomka"),
         "done_montaj": iv("done_montaj"), "done_tasdiq": iv("done_tasdiq"),
         "done_joylash": iv("done_joylash"),
+        "self_post": (1 if b.get("self_post") else 0) if "self_post" in b else (existing.get("self_post") or 0),
     }
 
     # Faollik jurnali — qaysi bosqich "tayyor" bo'ldi
@@ -781,13 +806,13 @@ def api_update_project(pid, b):
         """UPDATE projects SET name=?,client=?,responsible=?,ssenariy=?,syomka=?,montaj=?,
            tasdiq=?,joylash=?,deadline=?,muammo=?,izoh=?,
            plan=?,monthly_fee=?,done_ssenariy=?,done_syomka=?,done_montaj=?,done_tasdiq=?,done_joylash=?,
-           updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+           self_post=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
         (
             merged["name"], merged["client"], merged["responsible"], merged["ssenariy"],
             merged["syomka"], merged["montaj"], merged["tasdiq"], merged["joylash"],
             merged["deadline"], merged["muammo"], merged["izoh"],
             merged["plan"], merged["monthly_fee"], merged["done_ssenariy"], merged["done_syomka"],
-            merged["done_montaj"], merged["done_tasdiq"], merged["done_joylash"], pid,
+            merged["done_montaj"], merged["done_tasdiq"], merged["done_joylash"], merged["self_post"], pid,
         ),
     )
     conn.commit()
@@ -1236,8 +1261,16 @@ def _editor_accepted_counts(conn):
     return counts
 
 
-def decorate_video(d, counts, role, username):
+def _self_post_names(conn):
+    """Mijoz o'zi joylaydigan loyihalar nomlari (joylash bosqichi yo'q)."""
+    return {r["name"] for r in conn.execute(
+        "SELECT name FROM projects WHERE self_post=1").fetchall()}
+
+
+def decorate_video(d, counts, role, username, self_post_names=None):
     """Videoga montajyor lavozimini qo'shadi va pulni faqat CEO/o'z montajyoriga ko'rsatadi."""
+    if self_post_names is not None:
+        d["self_post"] = d.get("project") in self_post_names
     ed = d.get("editor") or ""
     cnt = eff_count(ed, counts.get(ed, 0))
     info = rank_info(cnt)
@@ -1283,8 +1316,12 @@ def api_videos(user, show_all=False):
     else:
         rows = conn.execute("SELECT * FROM videos ORDER BY id DESC").fetchall()
     counts = _editor_accepted_counts(conn)
+    sp = _self_post_names(conn)
     conn.close()
-    result = [decorate_video(dict(r), counts, role, user["name"]) for r in rows]
+    result = [decorate_video(dict(r), counts, role, user["name"], sp) for r in rows]
+    # SMM (joylash) — mijoz o'zi joylaydigan loyihalarni ko'rsatmaymiz
+    if role == "smm":
+        result = [r for r in result if not r.get("self_post")]
     if role == "lead" and not show_all:
         names = lead_project_names(user["name"])
         result = [r for r in result if r.get("project") in names]
@@ -1297,9 +1334,10 @@ def api_my_tasks(user):
     role = user["role"]
     name = user["name"]
     counts = _editor_accepted_counts(conn)
+    sp = _self_post_names(conn)
 
     def dec(rows):
-        return [decorate_video(dict(r), counts, role, name) for r in rows]
+        return [decorate_video(dict(r), counts, role, name, sp) for r in rows]
 
     tasks = {}
     # Montaj qilish kerak (montajchi) — muddat bilan
@@ -1313,10 +1351,11 @@ def api_my_tasks(user):
             "SELECT * FROM videos WHERE status='montaj_qilindi' ORDER BY id DESC").fetchall())
         tasks["accept"] = dec(conn.execute(
             "SELECT * FROM videos WHERE status='sifat_ok' ORDER BY id DESC").fetchall())
-    # Joylash (SMM / CEO / koordinator)
+    # Joylash (SMM / CEO / koordinator) — mijoz o'zi joylaydiganlar bundan mustasno
     if role in SMM_ROLES:
-        tasks["post"] = dec(conn.execute(
+        tasks["post"] = [v for v in dec(conn.execute(
             "SELECT * FROM videos WHERE status='qabul_qilindi' ORDER BY id DESC").fetchall())
+            if not v.get("self_post")]
     # Bugungi syomkalar (operator)
     today = uz_today().isoformat()
     if name in STUDIO_OPERATORS:
@@ -3450,6 +3489,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_change_password(user, b))
         if path == "/api/avatar":
             return self._json(api_set_avatar(user, b))
+        if path == "/api/projects/reset-stats":
+            return self._json(api_reset_project_stats(user))
         if path == "/api/projects":
             if r not in APPROVER_ROLES:
                 return self._forbid()
