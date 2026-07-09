@@ -199,8 +199,8 @@ RANK_PRICES = {
 
 
 # Ba'zi montajyorlar yuqori lavozimdan boshlanadi — qabul soniga qo'shiladigan bonus.
-# Oygul Pro lavozimidan boshlanib hisoblanadi (1 lavozim = RANK_STEP qabul).
-EDITOR_RANK_BASE = {"Oygul": RANK_STEP}
+# Oygul Elite lavozimidan boshlanib hisoblanadi (2 lavozim = 2×RANK_STEP qabul).
+EDITOR_RANK_BASE = {"Oygul": 2 * RANK_STEP}
 
 
 def eff_count(name, accepted):
@@ -1580,6 +1580,33 @@ def api_delete_video(user, vid):
     conn.commit()
     conn.close()
     return {"ok": True}
+
+
+def api_recompute_editor(user, editor):
+    """CEO — montajchining qabul qilingan videolari summasini JORIY lavozimi
+    bo'yicha qayta hisoblaydi (kechikish holati saqlanadi). Lavozim o'zgargach ishlatiladi."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi') "
+        "ORDER BY approved_at, id", (editor,)).fetchall()]
+    prev_points = 0
+    changed = []
+    for v in rows:
+        vt = v.get("vtype") or "reels"
+        amount, rk = editor_pay(eff_count(editor, prev_points), vt)
+        if v.get("is_late"):
+            amount = 0 if vt == "reels" else amount // 2
+        if (v.get("amount") or 0) != amount or (v.get("tier") or "") != rk:
+            conn.execute("UPDATE videos SET amount=?, tier=? WHERE id=?", (amount, rk, v["id"]))
+            changed.append({"id": v["id"], "title": v.get("title"),
+                            "old": v.get("amount") or 0, "new": amount, "rank": rk})
+        prev_points += _video_rank_points(v)
+    log_audit(conn, user["name"], "montaj summalari qayta hisoblandi", f"{editor}: {len(changed)} video")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "editor": editor, "changed": changed}
 
 
 # ============================================================
@@ -3670,6 +3697,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_set_avatar(user, b))
         if path == "/api/projects/reset-stats":
             return self._json(api_reset_project_stats(user))
+        if path == "/api/editors/recompute":
+            return self._json(api_recompute_editor(user, (b.get("editor") or "").strip()))
         if path == "/api/projects":
             if r not in APPROVER_ROLES:
                 return self._forbid()
