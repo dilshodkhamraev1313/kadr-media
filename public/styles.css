@@ -788,6 +788,18 @@ body {
 .clm-list { display: flex; flex-direction: column; gap: 8px; }
 .clm-row { display: flex; align-items: center; gap: 6px; }
 .clm-text { flex: 1; }
+/* Biriktirilgan vazifalar (majburiy) */
+.at-box { background: rgba(191,90,242,.08); border: 1px solid rgba(191,90,242,.25);
+  border-radius: 12px; padding: 12px; margin-bottom: 14px; }
+.at-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; color: var(--purple, #bf5af2); }
+.cl-item.at-item { background: rgba(191,90,242,.06); border-color: rgba(191,90,242,.2); }
+.cl-item.at-item .cl-check, .at-check { accent-color: var(--purple, #bf5af2); }
+.at-by { font-size: 11px; color: var(--muted); margin-left: 32px; }
+.at-manage-list { display: flex; flex-direction: column; gap: 12px; }
+.at-manage-grp { display: flex; flex-direction: column; gap: 6px; }
+.at-manage-grp > b { font-size: 13px; }
+.at-manage-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 10px; background: var(--bg-soft, rgba(255,255,255,.03)); border-radius: 8px; font-size: 13px; }
 
 /* Maosh kartasi qatorlari */
 .mrow.sal-auto span::before { content: '⚙ '; opacity: .6; }

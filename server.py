@@ -551,6 +551,9 @@ def init_db():
         id {pk}, person TEXT, text TEXT, sort INTEGER DEFAULT 0, active INTEGER DEFAULT 1)""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS checklist_done (
         id {pk}, person TEXT, cdate TEXT, item_id INTEGER)""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS assigned_tasks (
+        id {pk}, assignee TEXT, text TEXT, tdate TEXT, done INTEGER DEFAULT 0,
+        note TEXT DEFAULT '', done_at TEXT DEFAULT '', assigned_by TEXT, created_at {ts})""")
 
     # users jadvaliga login ustunlarini qo'shish (idempotent)
     add_column_if_missing(conn, "users", "username", "TEXT")
@@ -2836,6 +2839,75 @@ def can_edit_checklist(user, person):
     return bool(user) and (user["name"] == person or user["role"] == "ceo")
 
 
+# Kunlik vazifa biriktirish — Dilshod (CEO) va Xonzoda.
+def can_assign_tasks(user):
+    return bool(user) and (user["role"] == "ceo" or user["name"] == "Xonzoda")
+
+
+def _assigned_tasks_for(conn, person, tdate):
+    """Kishiga o'sha kunga biriktirilgan vazifalar (majburiy — kun yopishga bog'liq)."""
+    return [{"id": r["id"], "text": r["text"], "done": bool(r["done"]),
+             "note": r["note"] or "", "assigned_by": r["assigned_by"]}
+            for r in conn.execute(
+                "SELECT id, text, done, note, assigned_by FROM assigned_tasks "
+                "WHERE assignee=? AND tdate=? ORDER BY id", (person, tdate)).fetchall()]
+
+
+def api_assign_task(user, b):
+    """Dilshod/Xonzoda jamoa a'zosiga (kun yopadigan 4 kishiga) kunlik vazifa biriktiradi."""
+    if not can_assign_tasks(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    assignee = (b.get("assignee") or "").strip()
+    if assignee not in DAILY_CLOSE_USERS:
+        return {"error": "Faqat kun yopadigan 4 kishiga biriktirish mumkin"}, 400
+    text = (b.get("text") or "").strip()
+    if not text:
+        return {"error": "Vazifa matni kerak"}, 400
+    tdate = (b.get("tdate") or uz_today().isoformat()).strip()
+    conn = get_db()
+    sql = "INSERT INTO assigned_tasks (assignee, text, tdate, assigned_by) VALUES (?,?,?,?)"
+    params = (assignee, text, tdate, user["name"])
+    if IS_PG:
+        tid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        tid = conn.execute(sql, params).lastrowid
+    log_audit(conn, user["name"], "vazifa biriktirdi", f"{assignee} · {tdate}: {text[:40]}")
+    conn.commit()
+    conn.close()
+    send_telegram(f"📌 <b>Yangi vazifa</b>\n👤 {assignee}\n📅 {tdate}\n📝 {text}\n👮 {user['name']}")
+    return {"ok": True, "id": tid}
+
+
+def api_delete_assigned_task(user, tid):
+    conn = get_db()
+    row = conn.execute("SELECT assigned_by FROM assigned_tasks WHERE id=?", (tid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if not can_assign_tasks(user):
+        conn.close()
+        return {"error": "Ruxsat yo'q"}, 403
+    conn.execute("DELETE FROM assigned_tasks WHERE id=?", (tid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_assigned_list(user, person, date):
+    """Biriktiruvchi (Dilshod/Xonzoda) — tanlangan kun/odam bo'yicha vazifalar ro'yxati."""
+    if not can_assign_tasks(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    tdate = (date or uz_today().isoformat())
+    conn = get_db()
+    if person and person in DAILY_CLOSE_USERS:
+        people = [person]
+    else:
+        people = list(DAILY_CLOSE_USERS)
+    out = {p: _assigned_tasks_for(conn, p, tdate) for p in people}
+    conn.close()
+    return {"date": tdate, "tasks": out, "people": list(DAILY_CLOSE_USERS)}
+
+
 # Har kishi uchun "bugun tizimda qayd etilgan" real faoliyat (obyektiv dalil).
 EVIDENCE_FIELDS = {
     "Said": ["shoots", "qc", "accepted"],
@@ -2891,6 +2963,8 @@ def api_daily(user):
         res["streak"] = _close_streak(conn, user["name"], today)
         res["checklist"] = _checklist_for(conn, user["name"], tstr)
         res["evidence"] = _today_evidence(conn, user["name"], today)
+        res["assignedTasks"] = _assigned_tasks_for(conn, user["name"], tstr)
+    res["canAssign"] = can_assign_tasks(user)
     if user["role"] == "ceo":
         res["overview"] = [{
             "name": nm, "closedToday": tstr in _closed_dates(conn, nm, ym),
@@ -2899,6 +2973,7 @@ def api_daily(user):
             "streak": _close_streak(conn, nm, today),
             "checklist": _checklist_for(conn, nm, tstr),
             "evidence": _today_evidence(conn, nm, today),
+            "assignedTasks": _assigned_tasks_for(conn, nm, tstr),
         } for nm in DAILY_CLOSE_USERS]
     conn.close()
     return res
@@ -2931,12 +3006,32 @@ def api_close_day(user, b=None):
         if iid in valid:
             parsed.append({"id": iid, "done": done, "note": note})
 
-    # --- Anti-fake tekshiruv (faqat items yuborilganda) ---
+    # Biriktirilgan vazifalar (Dilshod/Xonzoda bergan) — bugungisi + kelayotgan holat
+    assigned_in = {}
+    for a in (b.get("assigned") or []):
+        try:
+            aid = int(a.get("id"))
+        except (ValueError, TypeError):
+            continue
+        assigned_in[aid] = {"done": 1 if a.get("done") else 0, "note": (a.get("note") or "").strip()}
+    assigned_today = conn.execute(
+        "SELECT id, text, done FROM assigned_tasks WHERE assignee=? AND tdate=?",
+        (user["name"], today)).fetchall()
+
+    # --- Tekshiruv (faqat items yuborilganda, ya'ni haqiqiy yopish) ---
     if raw is not None:
+        # 1) Barcha biriktirilgan vazifa bajarilishi shart
+        for a in assigned_today:
+            eff_done = assigned_in.get(a["id"], {}).get("done", a["done"])
+            if not eff_done:
+                conn.close()
+                return {"error": f"Sizga biriktirilgan vazifa bajarilmagan: «{a['text']}». Bajarib belgilang."}, 400
         ticked = [p for p in parsed if p["done"]]
-        if not ticked:
+        # 2) Kamida bitta ish qilingan bo'lsin (cheklist yoki biriktirilgan vazifa)
+        if not ticked and not assigned_today:
             conn.close()
             return {"error": "Kunni yopish uchun kamida bitta bajarilgan vazifani belgilang."}, 400
+        # 3) Belgilangan cheklist vazifalariga izoh majburiy
         no_note = [p for p in ticked if len(p["note"]) < MIN_CLOSE_NOTE_LEN]
         if no_note:
             texts = conn.execute(
@@ -2945,6 +3040,13 @@ def api_close_day(user, b=None):
             first = tmap.get(no_note[0]["id"], "vazifa")
             conn.close()
             return {"error": f"Belgilangan har vazifaga izoh yozing (nima qildingiz). Masalan: «{first}»"}, 400
+
+    # Biriktirilgan vazifalar holatini saqlaymiz (belgi + izoh)
+    if raw is not None and assigned_in:
+        for aid, st in assigned_in.items():
+            conn.execute(
+                "UPDATE assigned_tasks SET done=?, note=?, done_at=? WHERE id=? AND assignee=?",
+                (st["done"], st["note"], now_local() if st["done"] else "", aid, user["name"]))
 
     ex = conn.execute("SELECT id FROM daily_close WHERE person=? AND cdate=?", (user["name"], today)).fetchone()
     if not ex:
@@ -2977,6 +3079,7 @@ def api_reopen_day(user, b):
     conn = get_db()
     conn.execute("DELETE FROM daily_close WHERE person=? AND cdate=?", (person, today))
     conn.execute("DELETE FROM checklist_done WHERE person=? AND cdate=?", (person, today))
+    conn.execute("UPDATE assigned_tasks SET done=0, done_at='' WHERE assignee=? AND tdate=?", (person, today))
     log_audit(conn, user["name"], "kunni qayta ochdi", f"{person} · {today}")
     conn.commit()
     conn.close()
@@ -3512,6 +3615,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/checklist":
             person = (parse_qs(urlparse(self.path).query).get("person") or [""])[0]
             return self._json(api_checklist_get(user, person))
+        if path == "/api/tasks":
+            q = parse_qs(urlparse(self.path).query)
+            return self._json(api_assigned_list(user, (q.get("person") or [""])[0], (q.get("date") or [""])[0]))
         if path == "/api/month-stats":
             if role not in APPROVER_ROLES:
                 return self._forbid()
@@ -3645,6 +3751,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_checklist_update(user, b))
         if path == "/api/checklist/delete":
             return self._json(api_checklist_delete(user, b))
+        if path == "/api/tasks/assign":
+            return self._json(api_assign_task(user, b))
         if path == "/api/attendance/checkin":
             if not is_attend_user(user):
                 return self._forbid()
@@ -3718,6 +3826,9 @@ class Handler(BaseHTTPRequestHandler):
         if len(seg) == 3 and seg[1] == "videos":
             vid = self._int(seg[2])
             return self._json(api_delete_video(user, vid)) if vid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 3 and seg[1] == "tasks":
+            tid = self._int(seg[2])
+            return self._json(api_delete_assigned_task(user, tid)) if tid else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 4 and seg[1] == "studio" and seg[2] == "expenses":
             if not can_edit_studio(user):
                 return self._forbid()

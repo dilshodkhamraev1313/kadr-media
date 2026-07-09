@@ -434,6 +434,16 @@ async function viewToday() {
   }
   if (rem.length) html += `<div class="panel today-rems">${rem.join('')}</div>`;
 
+  // Biriktirilgan vazifalar (Dilshod/Xonzoda) — majburiy, kun yopishga bog'liq
+  const at = dc.assignedTasks || [];
+  if (at.length) {
+    html += `<div class="panel"><h3>📌 Sizga biriktirilgan vazifalar <span class="muted">(majburiy)</span></h3><div class="task-list">` +
+      at.map((a) => `<div class="task-item"><div class="task-main">
+        <div class="task-title">${a.done ? '✅' : '⬜'} ${esc(a.text)}</div>
+        <div class="task-sub">👮 ${esc(a.assigned_by || '')}${a.note ? ' · 📝 ' + esc(a.note) : ''}</div></div></div>`).join('') +
+      `</div><p class="muted" style="margin-top:8px">Belgilash va yopish — "🌙 Kun yopish" bo'limida.</p></div>`;
+  }
+
   const section = (title, icon, arr) => (arr && arr.length)
     ? `<div class="panel"><h3>${icon} ${title} <span class="muted">(${arr.length})</span></h3><div class="task-list">${arr.map(taskVideoItem).join('')}</div></div>` : '';
   html += section('Montaj qilishim kerak', '🎬', tk.montaj);
@@ -1309,6 +1319,12 @@ async function viewDaily() {
   ]);
   DATA.daily = d; DATA.attend = att; DATA.smm = smm;
   let html = '';
+  // --- Vazifa biriktirish (Dilshod / Xonzoda) ---
+  if (d.canAssign) {
+    html += `<div class="panel" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div><b>📌 Kunlik vazifa biriktirish</b><div class="muted" style="font-size:13px">Jamoaga (kun yopadigan 4 kishiga) vazifa bering — bajarmasa kunini yopolmaydi.</div></div>
+      <button class="btn-primary" id="assign_task">➕ Vazifa biriktirish</button></div>`;
+  }
   // --- SMM loyihalari (Umida) ---
   if (smm && smm.projects) {
     const items = smm.projects.map((p) => `
@@ -1356,6 +1372,21 @@ async function viewDaily() {
         <input class="cl-note" data-clid="${i.id}" placeholder="Aniqrog'i: nechta / qaysi holat..." value="${esc(i.note || '')}">
       </div>`).join('')
       || '<div class="muted" style="padding:4px 0">Vazifa yo\'q — "Vazifalarni tahrirlash"dan qo\'shing.</div>';
+    // Biriktirilgan vazifalar (Dilshod/Xonzoda) — majburiy
+    const at = d.assignedTasks || [];
+    const atItems = at.map((a) => `
+      <div class="cl-item at-item ${a.done ? 'done' : ''}" data-atrow="${a.id}">
+        <label class="cl-top">
+          <input type="checkbox" class="at-check" data-atid="${a.id}" ${a.done ? 'checked' : ''}>
+          <span class="cl-text">${esc(a.text)}</span></label>
+        <input class="cl-note at-note" data-atid="${a.id}" placeholder="Izoh (ixtiyoriy)..." value="${esc(a.note || '')}">
+        ${a.assigned_by ? `<div class="at-by">👮 ${esc(a.assigned_by)}</div>` : ''}
+      </div>`).join('');
+    const atSection = at.length ? `
+      <div class="at-box">
+        <div class="at-title">📌 Sizga biriktirilgan vazifalar <span class="muted">(majburiy — bajarmasa kun yopilmaydi)</span></div>
+        <div class="cl-list">${atItems}</div>
+      </div>` : '';
     html += `
       <div class="rank-hero ${done ? 'rank-elite' : ''}" style="margin-bottom:16px">
         <div class="rh-left"><div class="rh-icon">${done ? '✅' : '🌙'}</div>
@@ -1373,6 +1404,7 @@ async function viewDaily() {
         <div class="cl-head"><h3 style="margin:0">📋 Bugungi vazifalar <span class="muted">(${checkedN}/${cl.length})</span></h3>
           <button class="btn-ghost" id="cl_manage">⚙️ Vazifalarni tahrirlash</button></div>
         ${evidenceHTML(d.evidence)}
+        ${atSection}
         <p class="muted" style="margin:6px 0 12px">Bugun bajargan ishlaringizni belgilang va <b>har biriga nima qilganingizni yozing</b> — keyin kunni yoping.</p>
         <div class="cl-list">${items}</div>
         <div style="text-align:center;margin-top:16px">
@@ -1386,7 +1418,11 @@ async function viewDaily() {
       d.overview.map((o) => {
         const cl = o.checklist || [];
         const cn = cl.filter((i) => i.done).length;
-        const detail = cl.filter((i) => i.done || i.note).map((i) =>
+        const oat = o.assignedTasks || [];
+        const atLines = oat.map((a) =>
+          `<div class="cl-report"><span>📌 ${a.done ? '✅' : '⬜'} ${esc(a.text)}</span>${a.note ? `<b>${esc(a.note)}</b>` : ''}</div>`).join('');
+        const detail = atLines
+          + cl.filter((i) => i.done || i.note).map((i) =>
           `<div class="cl-report"><span>${i.done ? '✅' : '▫️'} ${esc(i.text)}</span>${i.note ? `<b>${esc(i.note)}</b>` : ''}</div>`).join('')
           + ((o.evidence && o.evidence.length) ? `<div class="cl-report ev-line">📊 Tizim: ${o.evidence.map((e) => esc(e.label) + ' ' + e.count).join(' · ')}</div>` : '');
         return `
@@ -1408,7 +1444,7 @@ async function viewDaily() {
   $('#content').innerHTML = html || emptyState();
   // checkbox belgilanganda kartani vizual yangilash
   $$('.cl-item').forEach((row) => {
-    const chk = row.querySelector('.cl-check');
+    const chk = row.querySelector('.cl-check, .at-check');
     if (chk) chk.addEventListener('change', () => row.classList.toggle('done', chk.checked));
   });
   const cb = $('#close_day');
@@ -1419,9 +1455,23 @@ async function viewDaily() {
       done: row.querySelector('.cl-check').checked,
       note: (row.querySelector('.cl-note').value || '').trim(),
     }));
-    // Frontend tekshiruv: kamida 1 belgilangan + har belgilanganga izoh
+    const atRows = $$('.cl-item[data-atrow]');
+    const assigned = atRows.map((row) => ({
+      id: parseInt(row.dataset.atrow, 10),
+      done: row.querySelector('.at-check').checked,
+      note: (row.querySelector('.at-note').value || '').trim(),
+    }));
+    // Frontend tekshiruv: barcha biriktirilgan vazifa bajarilishi shart
+    const undone = atRows.find((row) => !row.querySelector('.at-check').checked);
+    if (undone) {
+      undone.classList.add('cl-need-note');
+      toast('⚠️ Sizga biriktirilgan vazifani bajarib belgilang');
+      undone.scrollIntoView({ block: 'center' });
+      return;
+    }
+    // kamida 1 ish (cheklist yoki biriktirilgan) + belgilangan cheklistga izoh
     const ticked = items.filter((i) => i.done);
-    if (!ticked.length) { toast('⚠️ Kamida bitta bajarilgan vazifani belgilang'); return; }
+    if (!ticked.length && !assigned.length) { toast('⚠️ Kamida bitta bajarilgan vazifani belgilang'); return; }
     const missingNote = rows.find((row) => row.querySelector('.cl-check').checked
       && (row.querySelector('.cl-note').value || '').trim().length < 3);
     if (missingNote) {
@@ -1432,10 +1482,12 @@ async function viewDaily() {
       return;
     }
     const wasClosed = d.closedToday;
-    const res = await api('/api/daily/close', { method: 'POST', body: JSON.stringify({ items }) });
+    const res = await api('/api/daily/close', { method: 'POST', body: JSON.stringify({ items, assigned }) });
     if (res && res.error) { toast('⚠️ ' + res.error); return; }
     toast(wasClosed ? '💾 Saqlandi' : '🌙 Kun yopildi — rahmat!'); render();
   });
+  const at = $('#assign_task');
+  if (at) at.addEventListener('click', () => openAssignTaskModal());
   // izoh yozilganda ogohlantirishni olib tashlash
   $$('.cl-note').forEach((n) => n.addEventListener('input', () => n.closest('.cl-item').classList.remove('cl-need-note')));
   const clm = $('#cl_manage');
@@ -1513,6 +1565,49 @@ async function openChecklistModal(person) {
     render(fresh.items || []);
   };
   render(data.items || []);
+}
+
+// Kunlik vazifa biriktirish (Dilshod / Xonzoda)
+async function openAssignTaskModal() {
+  const load = (date) => api('/api/tasks' + (date ? '?date=' + date : ''));
+  const first = await load('');
+  if (first.error) { toast(first.error); return; }
+  const people = first.people || ['Said', 'Gulmira', 'Xonzoda', 'Umida'];
+  const draw = (st) => {
+    const listHtml = (st.people || []).map((p) => {
+      const tasks = st.tasks[p] || [];
+      if (!tasks.length) return '';
+      return `<div class="at-manage-grp"><b>${esc(p)}</b>` + tasks.map((t) =>
+        `<div class="at-manage-row"><span>${t.done ? '✅' : '⬜'} ${esc(t.text)}</span>
+          <button class="mini-btn red at-del" data-id="${t.id}">🗑</button></div>`).join('') + `</div>`;
+    }).join('') || '<div class="muted">Bu kunga vazifa yo\'q</div>';
+    openModal('📌 Kunlik vazifa biriktirish', `
+      <div class="field-row">
+        <div class="field"><label>Kimga</label><select id="at_person">${people.map((p) => `<option>${esc(p)}</option>`).join('')}</select></div>
+        <div class="field"><label>Sana</label><input id="at_date" type="date" value="${st.date}"></div>
+      </div>
+      <div class="field"><label>Vazifa (qo'lda yozing)</label><textarea id="at_text" placeholder="masalan: AMARKETS storyboardni tayyorla"></textarea></div>
+      <div class="modal-actions"><button class="btn-save" id="at_add">➕ Biriktirish</button></div>
+      <div class="divider"></div>
+      <div class="sec-label">📅 ${fmtDate(st.date)} — biriktirilgan vazifalar</div>
+      <div class="at-manage-list">${listHtml}</div>`, () => {
+      $('#at_date').addEventListener('change', async () => { draw(await load($('#at_date').value)); });
+      $('#at_add').addEventListener('click', async () => {
+        const text = $('#at_text').value.trim();
+        if (!text) { toast('Vazifa matnini yozing'); return; }
+        const r = await api('/api/tasks/assign', { method: 'POST', body: JSON.stringify({ assignee: $('#at_person').value, text, tdate: $('#at_date').value }) });
+        if (r.error) { toast('⚠️ ' + r.error); return; }
+        toast('📌 Biriktirildi'); draw(await load($('#at_date').value));
+      });
+      $$('.at-del').forEach((b) => b.addEventListener('click', async () => {
+        if (!confirm('Vazifa o\'chirilsinmi?')) return;
+        const r = await api('/api/tasks/' + b.dataset.id, { method: 'DELETE' });
+        if (r.error) { toast(r.error); return; }
+        draw(await load($('#at_date').value));
+      }));
+    });
+  };
+  draw(first);
 }
 
 // ============================================================
