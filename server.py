@@ -2934,7 +2934,7 @@ def _today_evidence(conn, person, today):
                            + c("SELECT COUNT(*) AS n FROM studio_bookings WHERE operator=? AND bdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (person, tstr))),
         "qc": (lambda: c("SELECT COUNT(*) AS n FROM videos WHERE qc_by=? AND qc_at LIKE ?", (person, like))),
         "accepted": (lambda: c("SELECT COUNT(*) AS n FROM videos WHERE approved_by=? AND approved_at LIKE ? AND status IN ('qabul_qilindi','joylandi')", (person, like))),
-        "studio_created": (lambda: c("SELECT COUNT(*) AS n FROM studio_bookings WHERE created_by=? AND created_at LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (person, like))),
+        "studio_created": (lambda: c("SELECT COUNT(*) AS n FROM studio_bookings WHERE created_by=? AND CAST(created_at AS TEXT) LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (person, like))),
         "scripts": (lambda: c("SELECT COUNT(*) AS n FROM scenarist_scripts WHERE author=? AND sdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (person, tstr))),
         "posted": (lambda: c("SELECT COUNT(*) AS n FROM videos WHERE posted_by=? AND posted_at LIKE ? AND status='joylandi'", (person, like))),
     }
