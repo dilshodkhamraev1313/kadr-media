@@ -1609,6 +1609,54 @@ def api_recompute_editor(user, editor):
     return {"ok": True, "editor": editor, "changed": changed}
 
 
+def _full_pay(v):
+    """Videoning kechikishsiz (to'liq) haqi — saqlangan lavozim (tier) va turi bo'yicha."""
+    vt = v.get("vtype") if v.get("vtype") in ("reels", "podcast", "youtube") else "reels"
+    tier = v.get("tier") if v.get("tier") in RANK_PRICES else "junior"
+    return RANK_PRICES.get(tier, RANK_PRICES["junior"]).get(vt, 0)
+
+
+def api_late_videos(user):
+    """CEO — deadline o'tib puli kamaygan/hisoblanmagan qabul qilingan videolar ro'yxati."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM videos WHERE is_late=1 AND status IN ('qabul_qilindi','joylandi') "
+        "ORDER BY approved_at DESC, id DESC").fetchall()]
+    conn.close()
+    return [{
+        "id": v["id"], "title": v.get("title"), "editor": v.get("editor"),
+        "project": v.get("project"), "vtype": v.get("vtype") or "reels",
+        "amount": v.get("amount") or 0, "full": _full_pay(v),
+        "rank": v.get("tier") or "junior", "approved_at": v.get("approved_at"),
+    } for v in rows]
+
+
+def api_restore_video_pay(user, vid):
+    """CEO — kechikkan videoning to'liq pulini tiklaydi (is_late olib tashlanadi)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT * FROM videos WHERE id=?", (vid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    v = dict(row)
+    if v["status"] not in DONE_STATUSES:
+        conn.close()
+        return {"error": "Faqat qabul qilingan video"}, 400
+    full = _full_pay(v)
+    conn.execute("UPDATE videos SET amount=?, is_late=0 WHERE id=?", (full, vid))
+    log_audit(conn, user["name"], "kechikkan video puli tiklandi",
+              f"#{vid} {v.get('title')} · {v.get('editor')} → {full} so'm")
+    conn.commit()
+    conn.close()
+    send_telegram(f"💰 <b>Kechikkan video puli tiklandi</b>\n{v.get('title')}\n👤 {v.get('editor')}\n"
+                  f"{full:,} so'm hisoblandi\n👮 {user['name']}".replace(",", " "))
+    return {"ok": True, "amount": full}
+
+
 # ============================================================
 #  MONTAJCHILAR KABINETI + STATISTIKA
 # ============================================================
@@ -3617,6 +3665,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role != "ceo" else self._json(api_finance())
         if path == "/api/cashflow":
             return self._forbid() if role != "ceo" else self._json(api_cashflow(user))
+        if path == "/api/late-videos":
+            return self._forbid() if role != "ceo" else self._json(api_late_videos(user))
         if path == "/api/studio":
             return self._forbid() if not can_view_studio(user) else self._json(api_studio(user))
         if path == "/api/studio/finance":
@@ -3816,6 +3866,9 @@ class Handler(BaseHTTPRequestHandler):
             vid = self._int(seg[2])
             res = api_video_action(user, vid, b) if vid else None
             return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "videos" and seg[3] == "restore-pay":
+            vid = self._int(seg[2])
+            return self._json(api_restore_video_pay(user, vid)) if vid else self._json({"error": "Topilmadi"}, 404)
         return self._json({"error": "Topilmadi"}, 404)
 
     def do_PUT(self):

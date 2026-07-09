@@ -239,6 +239,7 @@ const NAV_ITEMS = [
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
   { view: 'cashflow',  icon: '💵', label: 'Pul oqimi',     roles: ['ceo'] },
+  { view: 'late',      icon: '⏰', label: 'Kechikkanlar',   roles: ['ceo'] },
   { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
@@ -314,6 +315,7 @@ const TITLES = {
   editors:   ['Montajchilar', 'Kabinetlar va hisob-kitob'],
   finance:   ['Moliya', 'Montaj xarajatlari va to\'lovlar'],
   cashflow:  ['Pul oqimi', 'Mijoz to\'lovlari va umumiy kirim-chiqim'],
+  late:      ['Kechikkanlar', 'Deadline o\'tib puli kamaygan videolar — pulni tiklash'],
   team:      ['Jamoa yuklamasi', 'Rahbarlar yuklamasi'],
   audit:     ['Audit log', 'Barcha harakatlar tarixi'],
   cabinet:   ['Mening kabinetim', 'Ishlagan, to\'langan, qolgan'],
@@ -349,6 +351,7 @@ async function render() {
     else if (VIEW === 'editors') await viewEditors();
     else if (VIEW === 'finance') await viewFinance();
     else if (VIEW === 'cashflow') await viewCashflow();
+    else if (VIEW === 'late') await viewLate();
     else if (VIEW === 'team') await viewTeam();
     else if (VIEW === 'audit') await viewAudit();
     else if (VIEW === 'cabinet') await viewCabinet();
@@ -2036,6 +2039,37 @@ async function viewCashflow() {
     const res = await api('/api/cashflow/pay', { method: 'POST', body: JSON.stringify({ project: b.dataset.pay }) });
     if (res && res.ok) { toast(res.paid ? '✓ To\'landi deb belgilandi' : 'Bekor qilindi'); render(); }
     else { b.disabled = false; toast('Xatolik'); }
+  }));
+}
+
+// ============================================================
+//  KECHIKKANLAR (deadline o'tgan videolar — pulni tiklash, CEO)
+// ============================================================
+async function viewLate() {
+  const list = await api('/api/late-videos');
+  DATA.late = list;
+  const rows = (list || []).map((v) => `
+    <div class="late-row" data-lid="${v.id}">
+      <div class="late-main">
+        <div class="late-title">${esc(v.title) || '—'}</div>
+        <div class="late-sub">👤 ${esc(v.editor) || '—'} · 📁 ${esc(v.project) || '—'} · 🎞 ${esc(VIDEO_TYPE_LABEL[v.vtype] || 'Reels')}</div>
+      </div>
+      <div class="late-pay">
+        <div class="late-amt"><s>${money(v.amount)}</s> → <b>${money(v.full)}</b></div>
+        <button class="btn-primary late-restore" data-id="${v.id}" data-full="${v.full}">💰 Pulni hisobla</button>
+      </div>
+    </div>`).join('');
+  $('#content').innerHTML = `
+    <div class="panel">
+      <p class="muted" style="margin-bottom:12px">Deadline o'tib puli kamaygan (yoki hisoblanmagan) videolar. Jamoa hali o'rganayotgani uchun — kerak bo'lsa pulini to'liq tiklang.</p>
+      ${list && list.length ? `<div class="late-list">${rows}</div>` : emptyState('Kechikkan video yo\'q ✓')}
+    </div>`;
+  $$('.late-restore').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Bu videoning to\'liq puli hisoblansinmi?')) return;
+    b.disabled = true;
+    const r = await api(`/api/videos/${b.dataset.id}/restore-pay`, { method: 'POST', body: '{}' });
+    if (r && r.error) { b.disabled = false; toast('⚠️ ' + r.error); return; }
+    toast(`💰 ${money(r.amount)} hisoblandi`); render();
   }));
 }
 
