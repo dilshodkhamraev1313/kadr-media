@@ -3021,6 +3021,24 @@ def _today_evidence(conn, person, today):
     return out
 
 
+def _studio_debt_on(conn, tdate):
+    """O'sha kundagi Kadr Studio bronlaridan qarzli (to'liq to'lanmagan) bo'lganlari."""
+    out = []
+    for r in conn.execute(
+        "SELECT id, client_name, amount, paid_amount FROM studio_bookings "
+        "WHERE bdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (tdate,)).fetchall():
+        amt = r["amount"] or 0
+        paid = r["paid_amount"] or 0
+        if amt > 0 and paid < amt:
+            out.append({"id": r["id"], "client": r["client_name"], "amount": amt,
+                        "paid": paid, "debt": amt - paid})
+    return out
+
+
+# Kadr Studio qarzi kun yopishga bog'langan xodim.
+STUDIO_DEBT_CLOSER = "Gulmira"
+
+
 def api_daily(user):
     conn = get_db()
     today = uz_today()
@@ -3039,6 +3057,8 @@ def api_daily(user):
         res["checklist"] = _checklist_for(conn, user["name"], tstr)
         res["evidence"] = _today_evidence(conn, user["name"], today)
         res["assignedTasks"] = _assigned_tasks_for(conn, user["name"], tstr)
+        if user["name"] == STUDIO_DEBT_CLOSER:
+            res["studioDebt"] = _studio_debt_on(conn, tstr)
     res["canAssign"] = can_assign_tasks(user)
     if user["role"] == "ceo":
         res["overview"] = [{
@@ -3095,6 +3115,13 @@ def api_close_day(user, b=None):
 
     # --- Tekshiruv (faqat items yuborilganda, ya'ni haqiqiy yopish) ---
     if raw is not None:
+        # 0) Gulmira — bugungi Kadr Studio bronlarida qarz bo'lsa kun yopilmaydi
+        if user["name"] == STUDIO_DEBT_CLOSER:
+            debts = _studio_debt_on(conn, today)
+            if debts:
+                names = ", ".join(f"{d['client']} ({d['debt']:,} so'm)".replace(",", " ") for d in debts)
+                conn.close()
+                return {"error": f"Kadr Studio qarzdorligi bor — avval to'lovni kiriting: {names}"}, 400
         # 1) Barcha biriktirilgan vazifa bajarilishi shart
         for a in assigned_today:
             eff_done = assigned_in.get(a["id"], {}).get("done", a["done"])

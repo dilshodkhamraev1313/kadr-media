@@ -1390,6 +1390,20 @@ async function viewDaily() {
         <div class="at-title">📌 Sizga biriktirilgan vazifalar <span class="muted">(majburiy — bajarmasa kun yopilmaydi)</span></div>
         <div class="cl-list">${atItems}</div>
       </div>` : '';
+    // Kadr Studio qarzdorligi (Gulmira) — kun yopishga to'siq
+    const debts = d.studioDebt || [];
+    const debtPanel = debts.length ? `
+      <div class="panel debt-panel" style="margin-top:16px">
+        <h3 style="margin:0 0 4px;color:var(--red)">⚠️ Kadr Studio qarzdorligi</h3>
+        <p class="muted" style="margin-bottom:10px">Bugungi bronlarda to'lanmagan summa bor. Kun yopilishi uchun avval to'lovni kiriting.</p>
+        <div class="debt-list">${debts.map((x) => `
+          <div class="debt-row">
+            <div><b>${esc(x.client) || '—'}</b><div class="muted" style="font-size:12px">To'langan ${money(x.paid)} / ${money(x.amount)}</div></div>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <span class="pill red">Qarz ${money(x.debt)}</span>
+              <button class="btn-primary debt-pay" data-id="${x.id}" data-rem="${x.debt}">💰 To'lov</button></div>
+          </div>`).join('')}</div>
+      </div>` : '';
     html += `
       <div class="rank-hero ${done ? 'rank-elite' : ''}" style="margin-bottom:16px">
         <div class="rh-left"><div class="rh-icon">${done ? '✅' : '🌙'}</div>
@@ -1403,6 +1417,7 @@ async function viewDaily() {
             : `<div class="rh-next" style="color:var(--green)">👍 Barcha ish kunlari yopilgan</div>`}
         </div>
       </div>
+      ${debtPanel}
       <div class="panel" style="margin-top:16px">
         <div class="cl-head"><h3 style="margin:0">📋 Bugungi vazifalar <span class="muted">(${checkedN}/${cl.length})</span></h3>
           <button class="btn-ghost" id="cl_manage">⚙️ Vazifalarni tahrirlash</button></div>
@@ -1458,6 +1473,8 @@ async function viewDaily() {
       done: row.querySelector('.cl-check').checked,
       note: (row.querySelector('.cl-note').value || '').trim(),
     }));
+    // Kadr Studio qarzi (Gulmira) — avval to'lov
+    if ((d.studioDebt || []).length) { toast('⚠️ Kadr Studio qarzini avval to\'lang'); return; }
     const atRows = $$('.cl-item[data-atrow]');
     const assigned = atRows.map((row) => ({
       id: parseInt(row.dataset.atrow, 10),
@@ -1491,6 +1508,8 @@ async function viewDaily() {
   });
   const at = $('#assign_task');
   if (at) at.addEventListener('click', () => openAssignTaskModal());
+  $$('.debt-pay').forEach((b) => b.addEventListener('click', () =>
+    openStudioPayModal({ id: parseInt(b.dataset.id, 10) }, parseInt(b.dataset.rem, 10))));
   // izoh yozilganda ogohlantirishni olib tashlash
   $$('.cl-note').forEach((n) => n.addEventListener('input', () => n.closest('.cl-item').classList.remove('cl-need-note')));
   const clm = $('#cl_manage');

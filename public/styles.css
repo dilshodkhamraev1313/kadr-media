@@ -335,6 +335,12 @@ body {
 .late-amt b { color: var(--green); }
 .late-restore { font-size: 13px; }
 
+/* Kadr Studio qarzdorligi (Gulmira kun yopish) */
+.debt-panel { border: 1px solid rgba(255,69,58,.3); background: rgba(255,69,58,.06); }
+.debt-list { display: flex; flex-direction: column; gap: 8px; }
+.debt-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; background: rgba(0,0,0,.12); border-radius: 10px; }
+
 /* Reyting + trend */
 .lb-grid { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 16px; margin-top: 16px; align-items: start; }
 .lb-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
