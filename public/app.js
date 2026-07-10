@@ -1286,7 +1286,14 @@ function openScenaristModal() {
 function salaryCard(p) {
   const rows = p.components.map((c) => {
     const cls = c.kind === 'auto' ? 'sal-auto' : (c.kind === 'lead' ? 'sal-lead' : '');
-    return `<div class="mrow ${cls}"><span>${esc(c.label)}</span><b>${money(c.amount)}</b></div>`;
+    let html = `<div class="mrow ${cls}"><span>${esc(c.label)}</span><b>${money(c.amount)}</b></div>`;
+    if (c.kind === 'lead' && c.detail && c.detail.length) {
+      html += c.detail.map((d) => {
+        const info = d.byPlan ? `reja ${d.pct}%` : (d.full ? 'to\'liq' : 'yarim');
+        return `<div class="mrow sal-sub"><span>↳ ${esc(d.matched || d.project)} · ${info}</span><b class="muted">$${d.usd}</b></div>`;
+      }).join('');
+    }
+    return html;
   }).join('');
   return `
     <div class="team-card">

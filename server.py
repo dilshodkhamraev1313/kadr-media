@@ -2567,21 +2567,34 @@ def _find_project(projects, cfg_name):
 
 
 def _leadership_pay(conn, name, rate):
-    """Har rahbarlik loyihasi uchun: 5 bosqich (ssenariy/syomka/montaj/tasdiq/joylash)
-    hammasi 'tayyor' bo'lsa — to'liq $50, aks holda $25. Loyiha topilmasa — to'liq (baholab bo'lmaydi)."""
+    """Rahbarlik puli oylik REJAGA proportsional: $50 × (bajarilgan/reja foizi, cap 100%).
+    Reja kiritilmagan bo'lsa — eski 5-bosqich mantiqi ('tayyor' → $50, aks holda $25).
+    Loyiha dashboard'da topilmasa — to'liq (baholab bo'lmaydi)."""
     projects = [dict(r) for r in conn.execute("SELECT * FROM projects").fetchall()]
     total, details = 0, []
     for cfg_name in LEADERSHIP.get(name, []):
         p = _find_project(projects, cfg_name)
         if p:
-            fully = all((p.get(st) or "") == "tayyor" for st in LEAD_STAGES)
+            self_post = bool(p.get("self_post"))
+            plan = p.get("plan") or 0
+            done_cols = [c for c in DONE_COLS if not (self_post and c == "done_joylash")]
+            if plan > 0 and done_cols:
+                done_total = sum(p.get(c) or 0 for c in done_cols)
+                denom = plan * len(done_cols)
+                pct = min(done_total / denom, 1.0) if denom else 0.0
+                by_plan = True
+            else:
+                stages = [s for s in LEAD_STAGES if not (self_post and s == "joylash")]
+                pct = 1.0 if all((p.get(st) or "") == "tayyor" for st in stages) else 0.5
+                by_plan = False
             matched = p["name"]
         else:
-            fully = True  # dashboard'da yo'q — to'liq deb hisoblanadi
+            pct, by_plan = 1.0, False
             matched = None
-        usd = LEADERSHIP_USD_FULL if fully else LEADERSHIP_USD_HALF
+        usd = int(round(LEADERSHIP_USD_FULL * pct))
         total += usd * rate
-        details.append({"project": cfg_name, "matched": matched, "usd": usd, "full": fully})
+        details.append({"project": cfg_name, "matched": matched, "usd": usd,
+                        "pct": int(round(pct * 100)), "byPlan": by_plan, "full": pct >= 1.0})
     return total, details
 
 
@@ -2681,10 +2694,7 @@ def compute_salary(conn, name, rate):
         comps.append({"label": lbl, "amount": amt, "kind": kind})
     if cfg.get("lead"):
         lp, det = _leadership_pay(conn, name, rate)
-        nfull = sum(1 for d in det if d["full"])
-        nhalf = len(det) - nfull
-        lbl = f"Rahbarlik ({len(det)} loyiha"
-        lbl += f" · {nfull} to'liq" + (f", {nhalf} yarim" if nhalf else "") + ")"
+        lbl = f"Rahbarlik ({len(det)} loyiha · reja bajarilishiga qarab)"
         comps.append({"label": lbl, "amount": lp, "kind": "lead", "detail": det})
     if cfg.get("operator"):
         comps.append({"label": "Operator syomka puli", "amount": _op_earn(conn, name), "kind": "auto"})
