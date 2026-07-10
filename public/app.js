@@ -240,6 +240,7 @@ const NAV_ITEMS = [
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
   { view: 'cashflow',  icon: '💵', label: 'Pul oqimi',     roles: ['ceo'] },
   { view: 'late',      icon: '⏰', label: 'Kechikkanlar',   roles: ['ceo'] },
+  { view: 'income',    icon: '💳', label: 'To\'lovlar',      roles: ['ceo'] },
   { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
@@ -316,6 +317,7 @@ const TITLES = {
   finance:   ['Moliya', 'Montaj xarajatlari va to\'lovlar'],
   cashflow:  ['Pul oqimi', 'Mijoz to\'lovlari va umumiy kirim-chiqim'],
   late:      ['Kechikkanlar', 'Deadline o\'tib puli kamaygan videolar — pulni tiklash'],
+  income:    ['To\'lovlar', 'Kelib tushgan pullar — kim qabul qildi, naqt/plastik'],
   team:      ['Jamoa yuklamasi', 'Rahbarlar yuklamasi'],
   audit:     ['Audit log', 'Barcha harakatlar tarixi'],
   cabinet:   ['Mening kabinetim', 'Ishlagan, to\'langan, qolgan'],
@@ -352,6 +354,7 @@ async function render() {
     else if (VIEW === 'finance') await viewFinance();
     else if (VIEW === 'cashflow') await viewCashflow();
     else if (VIEW === 'late') await viewLate();
+    else if (VIEW === 'income') await viewIncome();
     else if (VIEW === 'team') await viewTeam();
     else if (VIEW === 'audit') await viewAudit();
     else if (VIEW === 'cabinet') await viewCabinet();
@@ -869,6 +872,19 @@ function openStudioDayModal(iso) {
   });
 }
 
+// To'lov shaffofligi — kim qabul qildi + usul (naqt/plastik)
+const INCOME_RECEIVERS = ['Dilshod Khamraev', 'Gulmira'];
+const INCOME_METHODS = [['naqt', 'Naqt'], ['plastik', 'Plastik']];
+function payMetaFields(recv, method) {
+  return `<div class="field-row">
+    <div class="field"><label>💰 Kim qabul qildi</label><select id="pm_recv">${INCOME_RECEIVERS.map((r) => `<option${r === recv ? ' selected' : ''}>${esc(r)}</option>`).join('')}</select></div>
+    <div class="field"><label>To'lov usuli</label><select id="pm_method">${INCOME_METHODS.map(([k, l]) => `<option value="${k}"${k === method ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+  </div>`;
+}
+function readPayMeta() {
+  return { received_by: $('#pm_recv') ? $('#pm_recv').value : '', method: $('#pm_method') ? $('#pm_method').value : '' };
+}
+
 function openStudioBookingModal(presetDate, edit) {
   const data = DATA.studio || {};
   const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
@@ -901,6 +917,7 @@ function openStudioBookingModal(presetDate, edit) {
       <div class="field"><label>Umumiy to'lov (so'm)</label><input id="sb_amount" type="number" inputmode="numeric" placeholder="masalan: 900000" value="${e.amount || ''}" /></div>
       <div class="field"><label>To'langan / avans (so'm)</label><input id="sb_paidamt" type="number" inputmode="numeric" placeholder="0" value="${e.paid_amount || ''}" /></div>
     </div>
+    ${payMetaFields()}
     <div class="field"><label>Izoh</label><textarea id="sb_note" placeholder="masalan: 2 kishi, rekvizit kerak">${esc(e.note || '')}</textarea></div>
     <div class="modal-actions"><button class="btn-save" id="sb_save">${edit ? '💾 Saqlash' : '🎥 Bron qilish'}</button></div>`,
   () => {
@@ -928,7 +945,7 @@ function openStudioBookingModal(presetDate, edit) {
         bdate, start_time: $('#sb_start').value, end_time: $('#sb_end').value,
         amount: parseInt($('#sb_amount').value || '0', 10),
         paid_amount: parseInt($('#sb_paidamt').value || '0', 10),
-        note: $('#sb_note').value,
+        note: $('#sb_note').value, ...readPayMeta(),
       };
       if (edit) await api(`/api/studio/${edit.id}`, { method: 'PUT', body: JSON.stringify(body) });
       else await api('/api/studio', { method: 'POST', body: JSON.stringify(body) });
@@ -995,11 +1012,12 @@ function openStudioPayModal(b, rem) {
   openModal('To\'lov qo\'shish', `
     <p class="muted" style="margin-bottom:10px">Qolgan summa: <b>${money(rem)}</b></p>
     <div class="field"><label>Qo'shiladigan to'lov (so'm)</label><input id="pay_amt" type="number" inputmode="numeric" value="${rem}" /></div>
+    ${payMetaFields()}
     <button class="btn-save" id="pay_ok">✅ To'lovni qo'shish</button>`, () => {
     $('#pay_ok').addEventListener('click', async () => {
       const a = parseInt($('#pay_amt').value || '0', 10);
       if (a <= 0) { toast('Summani kiriting'); return; }
-      await api(`/api/studio/${b.id}/pay`, { method: 'POST', body: JSON.stringify({ amount: a }) });
+      await api(`/api/studio/${b.id}/pay`, { method: 'POST', body: JSON.stringify({ amount: a, ...readPayMeta() }) });
       closeModal(); toast('💰 To\'lov qo\'shildi'); render();
     });
   });
@@ -2075,7 +2093,7 @@ async function viewCashflow() {
       <div class="cf-cl"><div class="cf-name">${esc(c.project)}</div>
         <div class="cf-sub">${c.responsible ? '👤 ' + esc(c.responsible) + ' · ' : ''}${money(c.fee)}/oy</div></div>
       <div class="cf-right">${badge}
-        <button class="btn-ghost cf-toggle" data-pay="${esc(c.project)}">${c.paid ? 'Bekor' : 'To\'landi'}</button></div>
+        <button class="btn-ghost cf-toggle" data-pay="${esc(c.project)}" data-paid="${c.paid ? 1 : 0}" data-fee="${c.fee || 0}">${c.paid ? 'Bekor' : 'To\'landi'}</button></div>
     </div>`;
   }).join('') || emptyState('Loyihalarga oylik to\'lov kiritilmagan');
 
@@ -2114,11 +2132,30 @@ async function viewCashflow() {
     <p class="muted" style="margin-top:10px">💡 Oylik to'lovni o'zgartirish: Loyihalar → loyihani oching → "💵 Oylik to'lov".</p>`;
 
   $$('.cf-toggle').forEach((b) => b.addEventListener('click', async () => {
-    b.disabled = true;
-    const res = await api('/api/cashflow/pay', { method: 'POST', body: JSON.stringify({ project: b.dataset.pay }) });
-    if (res && res.ok) { toast(res.paid ? '✓ To\'landi deb belgilandi' : 'Bekor qilindi'); render(); }
-    else { b.disabled = false; toast('Xatolik'); }
+    if (b.dataset.paid === '1') {
+      // to'lovni bekor qilish (to'g'ridan-to'g'ri)
+      b.disabled = true;
+      const res = await api('/api/cashflow/pay', { method: 'POST', body: JSON.stringify({ project: b.dataset.pay }) });
+      if (res && res.ok) { toast('Bekor qilindi'); render(); } else { b.disabled = false; toast('Xatolik'); }
+    } else {
+      openClientPayModal(b.dataset.pay, parseInt(b.dataset.fee, 10) || 0);
+    }
   }));
+}
+
+function openClientPayModal(project, fee) {
+  openModal(`💵 ${esc(project)} — to'lov qabul qilindi`, `
+    <p class="muted" style="margin-bottom:10px">Oylik summa: <b>${money(fee)}</b></p>
+    ${payMetaFields()}
+    <div class="field"><label>Summa (so'm)</label><input id="cp_amt" type="number" inputmode="numeric" value="${fee || ''}" /></div>
+    <div class="modal-actions"><button class="btn-save" id="cp_ok">✅ To'landi deb belgilash</button></div>`, () => {
+    $('#cp_ok').addEventListener('click', async () => {
+      const amt = parseInt($('#cp_amt').value || '0', 10);
+      const res = await api('/api/cashflow/pay', { method: 'POST', body: JSON.stringify({ project, amount: amt || fee, ...readPayMeta() }) });
+      if (res && res.ok) { closeModal(); toast('✓ To\'landi deb belgilandi'); render(); }
+      else { toast('⚠️ ' + (res && res.error || 'Xatolik')); }
+    });
+  });
 }
 
 // ============================================================
@@ -2150,6 +2187,34 @@ async function viewLate() {
     if (r && r.error) { b.disabled = false; toast('⚠️ ' + r.error); return; }
     toast(`💰 ${money(r.amount)} hisoblandi`); render();
   }));
+}
+
+// ============================================================
+//  TO'LOVLAR — kelib tushgan pullar shaffofligi (CEO)
+// ============================================================
+async function viewIncome() {
+  const d = await api('/api/income-ledger');
+  DATA.income = d;
+  const SRC = { studio: '🎥 Kadr Studio', client: '📁 Mijoz to\'lovi' };
+  const rows = (d.rows || []).map((r) => `
+    <div class="inc-row">
+      <div class="inc-main">
+        <div class="inc-src">${SRC[r.source_type] || r.source_type} · <b>${esc(r.source_label) || '—'}</b></div>
+        <div class="inc-sub">📅 ${fmtDate(r.pdate)}${r.note ? ' · ' + esc(r.note) : ''} · 👮 ${esc(r.created_by || '')}</div>
+      </div>
+      <div class="inc-meta">
+        <span class="pill ${r.method === 'plastik' ? 'blue' : 'green'}">${r.method === 'plastik' ? '💳 Plastik' : '💵 Naqt'}</span>
+        <span class="inc-recv">${esc(r.received_by)}</span>
+        <b>${money(r.amount)}</b>
+      </div>
+    </div>`).join('') || emptyState('Hali to\'lov qayd etilmagan');
+  const recv = (d.receivers || []).map((n) => `${statTile('👤', money((d.byReceiver || {})[n] || 0), n + ' (bu oy)', 'blue')}`).join('');
+  const meth = `${statTile('💵', money((d.byMethod || {}).naqt || 0), 'Naqt (bu oy)', 'green')}${statTile('💳', money((d.byMethod || {}).plastik || 0), 'Plastik (bu oy)', 'purple')}`;
+  $('#content').innerHTML = `
+    <div class="sec-label" style="margin-bottom:10px">💳 Bu oy kelib tushgan: ${money(d.monthTotal || 0)}</div>
+    <div class="stats-grid" style="margin-bottom:14px">${recv}${meth}</div>
+    <div class="panel"><h3>🧾 Barcha to'lovlar (kim qabul qildi · usul)</h3>
+      <div class="inc-list">${rows}</div></div>`;
 }
 
 // ============================================================

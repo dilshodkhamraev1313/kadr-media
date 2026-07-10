@@ -78,6 +78,11 @@ SHOOT_TYPES = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video
 OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 200000}
 STUDIO_OPERATORS = ("Said", "Umid")
 
+# Kelib tushgan pullar shaffofligi — kim qabul qildi + qanday usul.
+INCOME_RECEIVERS = ("Dilshod Khamraev", "Gulmira")
+INCOME_METHODS = ("naqt", "plastik")
+METHOD_LABEL = {"naqt": "Naqt", "plastik": "Plastik"}
+
 # Ssenaristlar va har tasdiqlangan ssenariy uchun haq (so'm).
 # Ssenarist o'z kabinetidan tasdiqlangan ssenariyni kiritadi — pul avtomatik hisoblanadi.
 SCENARIST_PAY = {"Xonzoda": 100000, "Umida": 50000}
@@ -554,6 +559,9 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS assigned_tasks (
         id {pk}, assignee TEXT, text TEXT, tdate TEXT, done INTEGER DEFAULT 0,
         note TEXT DEFAULT '', done_at TEXT DEFAULT '', assigned_by TEXT, created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS income_ledger (
+        id {pk}, source_type TEXT, source_id INTEGER, source_label TEXT, amount INTEGER DEFAULT 0,
+        received_by TEXT, method TEXT, pdate TEXT, note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
 
     # users jadvaliga login ustunlarini qo'shish (idempotent)
     add_column_if_missing(conn, "users", "username", "TEXT")
@@ -1897,6 +1905,7 @@ def api_mark_client_payment(user, b):
     conn.execute(
         "INSERT INTO client_payments (project, ym, amount, pdate, note, created_by) VALUES (?,?,?,?,?,?)",
         (project, ym, int(amount), uz_today().isoformat(), (b.get("note") or ""), user["name"]))
+    _add_income(conn, "client", None, project, int(amount), b, user, note="Mijoz oylik to'lovi")
     conn.commit()
     conn.close()
     return {"ok": True, "paid": True, "amount": int(amount)}
@@ -1996,6 +2005,9 @@ def api_create_studio_booking(user, b):
         bid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:
         bid = conn.execute(sql, params).lastrowid
+    if paid_amount > 0:
+        _add_income(conn, "studio", bid, b.get("client_name") or "Studio", paid_amount, b, user,
+                    note="Studio avans" if paid_amount < amount else "Studio to'liq")
     log_audit(conn, user["name"], "studio bron qildi",
               f"#{bid} {b.get('client_name')} · {STUDIO_ROOMS[room]['label']} · {SHOOT_TYPES[shoot_type]}"
               + (f" · operator {operator} (+{operator_pay})" if operator else ""))
@@ -2011,6 +2023,49 @@ def api_create_studio_booking(user, b):
         + ("\n✅ <b>To'liq to'landi</b>" if fully_paid else "")
     )
     return dict(row)
+
+
+def _add_income(conn, source_type, source_id, label, amount, b, user, note=""):
+    """Kelib tushgan pulni shaffoflik daftariga yozadi (kim qabul qildi + naqt/plastik)."""
+    if not amount or amount <= 0:
+        return
+    received_by = (b.get("received_by") or "").strip()
+    if received_by not in INCOME_RECEIVERS:
+        received_by = user["name"] if user["name"] in INCOME_RECEIVERS else INCOME_RECEIVERS[0]
+    method = (b.get("method") or "").strip().lower()
+    if method not in INCOME_METHODS:
+        method = "naqt"
+    conn.execute(
+        "INSERT INTO income_ledger (source_type, source_id, source_label, amount, received_by, method, pdate, note, created_by) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (source_type, source_id, label, int(amount), received_by, method,
+         b.get("pdate") or uz_today().isoformat(), note, user["name"]))
+
+
+def api_income_ledger(user):
+    """CEO — barcha kelib tushgan pullar: kim qabul qildi, naqt/plastik, qayerdan. Shaffof."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    ym = uz_now().strftime("%Y-%m")
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM income_ledger ORDER BY pdate DESC, id DESC LIMIT 300").fetchall()]
+    conn.close()
+    month_rows = [r for r in rows if (r.get("pdate") or "").startswith(ym)]
+    by_receiver = {}
+    by_method = {}
+    for r in month_rows:
+        by_receiver[r["received_by"]] = by_receiver.get(r["received_by"], 0) + (r["amount"] or 0)
+        by_method[r["method"]] = by_method.get(r["method"], 0) + (r["amount"] or 0)
+    return {
+        "month": ym,
+        "rows": rows,
+        "monthTotal": sum(r["amount"] or 0 for r in month_rows),
+        "byReceiver": by_receiver,
+        "byMethod": by_method,
+        "receivers": list(INCOME_RECEIVERS),
+        "methods": list(INCOME_METHODS),
+    }
 
 
 def api_studio_pay(user, bid, b):
@@ -2030,6 +2085,7 @@ def api_studio_pay(user, bid, b):
     fully = 1 if (total > 0 and new_paid >= total) else 0
     was_full = ex.get("paid") or 0
     conn.execute("UPDATE studio_bookings SET paid_amount=?, paid=? WHERE id=?", (new_paid, fully, bid))
+    _add_income(conn, "studio", bid, ex.get("client_name") or "Studio", add, b, user, note="Studio to'lov")
     log_audit(conn, user["name"], "studio to'lov qo'shdi", f"#{bid} +{add} so'm (jami {new_paid}/{total})")
     conn.commit()
     row = dict(conn.execute("SELECT * FROM studio_bookings WHERE id=?", (bid,)).fetchone())
@@ -3771,6 +3827,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role != "ceo" else self._json(api_cashflow(user))
         if path == "/api/late-videos":
             return self._forbid() if role != "ceo" else self._json(api_late_videos(user))
+        if path == "/api/income-ledger":
+            return self._forbid() if role != "ceo" else self._json(api_income_ledger(user))
         if path == "/api/studio":
             return self._forbid() if not can_view_studio(user) else self._json(api_studio(user))
         if path == "/api/studio/finance":
