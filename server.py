@@ -1671,20 +1671,24 @@ def api_restore_video_pay(user, vid):
 #  MONTAJCHILAR KABINETI + STATISTIKA
 # ============================================================
 def editor_summary(conn, name):
+    ym = uz_now().strftime("%Y-%m")
     vids = [dict(r) for r in conn.execute("SELECT * FROM videos WHERE editor=?", (name,)).fetchall()]
-    accepted = [v for v in vids if v["status"] in DONE_STATUSES]
-    earned = sum(v["amount"] or 0 for v in accepted)
-    paid = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE editor=?", (name,)).fetchone()["s"] or 0
+    accepted_all = [v for v in vids if v["status"] in DONE_STATUSES]
+    # Daromad/to'lov — FAQAT shu oy (oylik birlik; qolgan = shu oy ishlagan − shu oy to'langan)
+    accepted_m = [v for v in accepted_all if (v.get("approved_at") or "").startswith(ym)]
+    earned = sum(v["amount"] or 0 for v in accepted_m)
+    paid = _paid_to(conn, name, ym)
     by_project = {}
-    for v in accepted:
+    for v in accepted_m:
         by_project[v["project"]] = by_project.get(v["project"], 0) + 1
-    # Lavozim — ballar bo'yicha (podcast=3), lekin "accepted" soni haqiqiy dona qoladi
-    rank_points = sum(_video_rank_points(v) for v in accepted)
+    # Lavozim — butun kariyera ballari (podcast=3); "accepted" jami kariyera dona
+    rank_points = sum(_video_rank_points(v) for v in accepted_all)
     rinfo = rank_info(eff_count(name, rank_points))
     return {
         "name": name,
         "videos": len(vids),
-        "accepted": len(accepted),
+        "accepted": len(accepted_all),         # jami (kariyera) — lavozim uchun
+        "acceptedMonth": len(accepted_m),      # shu oy qabul qilingan
         **rinfo,
         # montaj qilishi kerak: biriktirilgan + qaytarilgan
         "toDo": sum(1 for v in vids if v["status"] in ("biriktirildi", "qaytarildi")),
@@ -1695,7 +1699,8 @@ def editor_summary(conn, name):
         "earned": earned,
         "paid": paid,
         "remaining": earned - paid,
-        "avg": round(earned / len(accepted)) if accepted else 0,
+        "month": ym,
+        "avg": round(earned / len(accepted_m)) if accepted_m else 0,
         "byProject": [{"project": k, "count": v} for k, v in sorted(by_project.items(), key=lambda x: -x[1])],
     }
 
@@ -2585,18 +2590,23 @@ def api_set_usd_rate(user, b):
     return {"ok": True, "rate": v}
 
 
-def _op_earn(conn, name):
-    a = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM studio_bookings WHERE operator=? AND (status IS NULL OR status<>'bekor_qilindi')", (name,)).fetchone()["s"] or 0
-    b = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM shoots WHERE operator=? AND (status IS NULL OR status<>'bekor_qilindi')", (name,)).fetchone()["s"] or 0
+# Piece-work daromadlari — FAQAT shu oy (maosh oylik bo'lishi uchun; sana bo'yicha filtr).
+def _op_earn(conn, name, ym=None):
+    ym = ym or uz_now().strftime("%Y-%m")
+    like = ym + "%"
+    a = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM studio_bookings WHERE operator=? AND bdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (name, like)).fetchone()["s"] or 0
+    b = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM shoots WHERE operator=? AND sdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (name, like)).fetchone()["s"] or 0
     return a + b
 
 
-def _scenarist_earn(conn, name):
-    return conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM scenarist_scripts WHERE author=? AND (status IS NULL OR status<>'bekor_qilindi')", (name,)).fetchone()["s"] or 0
+def _scenarist_earn(conn, name, ym=None):
+    ym = ym or uz_now().strftime("%Y-%m")
+    return conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM scenarist_scripts WHERE author=? AND sdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (name, ym + "%")).fetchone()["s"] or 0
 
 
-def _montaj_earn(conn, name):
-    return conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi')", (name,)).fetchone()["s"] or 0
+def _montaj_earn(conn, name, ym=None):
+    ym = ym or uz_now().strftime("%Y-%m")
+    return conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM videos WHERE editor=? AND approved_at LIKE ? AND status IN ('qabul_qilindi','joylandi')", (name, ym + "%")).fetchone()["s"] or 0
 
 
 LEAD_STAGES = ("ssenariy", "syomka", "montaj", "tasdiq", "joylash")
@@ -2755,11 +2765,11 @@ def compute_salary(conn, name, rate):
         lbl = f"Rahbarlik ({len(det)} loyiha · reja bajarilishiga qarab)"
         comps.append({"label": lbl, "amount": lp, "kind": "lead", "detail": det})
     if cfg.get("operator"):
-        comps.append({"label": "Operator syomka puli", "amount": _op_earn(conn, name), "kind": "auto"})
+        comps.append({"label": "Operator syomka puli (shu oy)", "amount": _op_earn(conn, name, ym), "kind": "auto"})
     if cfg.get("scenarist"):
-        comps.append({"label": "Ssenariy puli", "amount": _scenarist_earn(conn, name), "kind": "auto"})
+        comps.append({"label": "Ssenariy puli (shu oy)", "amount": _scenarist_earn(conn, name, ym), "kind": "auto"})
     if cfg.get("montaj"):
-        comps.append({"label": "Montaj puli", "amount": _montaj_earn(conn, name), "kind": "auto"})
+        comps.append({"label": "Montaj puli (shu oy)", "amount": _montaj_earn(conn, name, ym), "kind": "auto"})
     if cfg.get("studio_bonus"):
         comps.append({"label": "Studio mijoz bonusi", "amount": _studio_client_bonus(conn), "kind": "auto"})
     total = sum(c["amount"] for c in comps)

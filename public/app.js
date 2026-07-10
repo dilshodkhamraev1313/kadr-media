@@ -2026,14 +2026,14 @@ async function viewCabinet() {
     ${rankHero}
     <div class="stats-grid">
       ${statTile('🎬', c.toDo, 'Montaj qilish kerak', 'orange')}
-      ${statTile('💰', money(c.earned), 'Jami ishlangan', 'green')}
-      ${statTile('✅', money(c.paid || 0), 'To\'langan', 'blue')}
-      ${statTile('₿', money(c.remaining), 'Qolgan to\'lov', 'purple')}
+      ${statTile('💰', money(c.earned), 'Bu oy ishlangan', 'green')}
+      ${statTile('✅', money(c.paid || 0), 'Bu oy to\'langan', 'blue')}
+      ${statTile('₿', money(c.remaining), 'Bu oy qolgan', 'purple')}
     </div>
     <div class="panel"><h3>🎬 Montaj qilishim kerak (${todo.length})</h3><div class="ceo-list">${todoHtml}</div></div>
     <div class="ceo-grid">
-      <div class="panel"><h3>📁 Tasdiqlanganlar (loyiha bo'yicha)</h3><div class="money-rows">${grouped}</div>
-        <div class="ec-stats" style="margin-top:14px"><span>${c.videos} jami</span><span>${c.accepted} tasdiqlangan</span><span>${c.returned} qaytgan</span></div></div>
+      <div class="panel"><h3>📁 Bu oy tasdiqlanganlar (loyiha bo'yicha)</h3><div class="money-rows">${grouped}</div>
+        <div class="ec-stats" style="margin-top:14px"><span>${c.videos} jami</span><span>${c.acceptedMonth != null ? c.acceptedMonth : c.accepted} bu oy · ${c.accepted} kariyera</span><span>${c.returned} qaytgan</span></div></div>
       <div class="panel"><h3>💸 To'lov tarixim</h3>${pays}</div>
     </div>`;
   bindVideoCards();
@@ -2064,9 +2064,9 @@ async function viewFinance() {
     <div class="sec-label" style="margin:14px 0 10px">🎬 Montaj xarajatlari</div>
     <div class="stats-grid">
       ${statTile('📅', money(f.monthCost), 'Shu oy montaj xarajati', 'blue')}
-      ${statTile('💰', money(f.totalEarned), 'Jami hisoblangan', 'green')}
-      ${statTile('✓', money(f.totalPaid), 'Jami to\'langan', 'purple')}
-      ${statTile('⏳', money(f.totalRemaining), 'Qolgan qarz', 'orange')}
+      ${statTile('💰', money(f.totalEarned), 'Bu oy hisoblangan', 'green')}
+      ${statTile('✓', money(f.totalPaid), 'Bu oy to\'langan', 'purple')}
+      ${statTile('⏳', money(f.totalRemaining), 'Bu oy qolgan', 'orange')}
     </div>
     <div class="ceo-grid">
       <div><div class="panel"><h3>👥 Montajchilar daromadi</h3><div class="ceo-list">${eds || emptyState()}</div></div></div>
