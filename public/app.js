@@ -1295,14 +1295,36 @@ function salaryCard(p) {
     }
     return html;
   }).join('');
+  const paid = p.paid || 0;
+  const rem = (p.remaining != null) ? p.remaining : p.total;
+  const isCeo = ME.role === 'ceo';
   return `
     <div class="team-card">
       <div class="team-head"><div class="team-av" style="background:${colorFor(p.name)}">${initials(p.name)}</div>
         <div><div class="team-name">${esc(p.name)}</div><div class="team-role">${esc(p.title || '')}</div></div></div>
       <div class="money-rows">${rows}
-        <div class="mrow big" style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px"><span>Jami maosh</span><b style="color:var(--green)">${money(p.total)}</b></div>
+        <div class="mrow big" style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px"><span>Jami ishlagan (1 oy)</span><b style="color:var(--green)">${money(p.total)}</b></div>
+        <div class="mrow"><span style="color:var(--green)">✅ To'langan</span><b style="color:var(--green)">${money(paid)}</b></div>
+        <div class="mrow"><span style="color:var(--orange)">⏳ Qolgan</span><b style="color:var(--orange)">${money(rem)}</b></div>
       </div>
+      ${isCeo ? `<button class="btn-ghost pay-team" data-person="${esc(p.name)}" data-rem="${rem}" style="margin-top:10px;width:100%">💸 To'lov kiritish</button>` : ''}
     </div>`;
+}
+
+function openTeamPayModal(person, rem) {
+  openModal(`💸 ${esc(person)} — to'lov kiritish`, `
+    <p class="muted" style="margin-bottom:10px">Qolgan (bu oy): <b>${money(rem)}</b></p>
+    <div class="field"><label>Berilgan summa (so'm)</label><input id="tp_amt" type="number" inputmode="numeric" value="${rem > 0 ? rem : ''}" /></div>
+    <div class="field"><label>Izoh (ixtiyoriy)</label><input id="tp_note" placeholder="masalan: avans / to'liq" /></div>
+    <div class="modal-actions"><button class="btn-save" id="tp_ok">✅ To'lovni saqlash</button></div>`, () => {
+    $('#tp_ok').addEventListener('click', async () => {
+      const a = parseInt($('#tp_amt').value || '0', 10);
+      if (a <= 0) { toast('Summani kiriting'); return; }
+      const r = await api('/api/payments', { method: 'POST', body: JSON.stringify({ editor: person, amount: a, note: $('#tp_note').value }) });
+      if (r && r.error) { toast('⚠️ ' + r.error); return; }
+      closeModal(); toast('💸 To\'lov kiritildi'); render();
+    });
+  });
 }
 
 async function viewSalary() {
@@ -1338,6 +1360,8 @@ async function viewSalary() {
     if (res.error) { toast(res.error); return; }
     toast('💱 Kurs yangilandi — qayta hisoblandi'); render();
   });
+  $$('.pay-team').forEach((b) => b.addEventListener('click', () =>
+    openTeamPayModal(b.dataset.person, parseInt(b.dataset.rem, 10) || 0)));
 }
 
 // ============================================================
@@ -1984,8 +2008,8 @@ async function viewCabinet() {
     ${rankHero}
     <div class="stats-grid">
       ${statTile('🎬', c.toDo, 'Montaj qilish kerak', 'orange')}
-      ${statTile('⏳', c.inReview, 'Tasdiq jarayonida', 'blue')}
-      ${statTile('💰', money(c.earned), 'Ishlangan', 'green')}
+      ${statTile('💰', money(c.earned), 'Jami ishlangan', 'green')}
+      ${statTile('✅', money(c.paid || 0), 'To\'langan', 'blue')}
       ${statTile('₿', money(c.remaining), 'Qolgan to\'lov', 'purple')}
     </div>
     <div class="panel"><h3>🎬 Montaj qilishim kerak (${todo.length})</h3><div class="ceo-list">${todoHtml}</div></div>

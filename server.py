@@ -2704,8 +2704,18 @@ def compute_salary(conn, name, rate):
         comps.append({"label": "Montaj puli", "amount": _montaj_earn(conn, name), "kind": "auto"})
     if cfg.get("studio_bonus"):
         comps.append({"label": "Studio mijoz bonusi", "amount": _studio_client_bonus(conn), "kind": "auto"})
+    total = sum(c["amount"] for c in comps)
+    ym = uz_now().strftime("%Y-%m")
+    paid = _paid_to(conn, name, ym)
     return {"name": name, "title": cfg.get("title", ""), "components": comps,
-            "total": sum(c["amount"] for c in comps)}
+            "total": total, "paid": paid, "remaining": total - paid}
+
+
+def _paid_to(conn, name, ym):
+    """Shu oyda xodimga to'langan pul (payments jadvali, pdate shu oy)."""
+    return conn.execute(
+        "SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE editor=? AND pdate LIKE ?",
+        (name, ym + "%")).fetchone()["s"] or 0
 
 
 def api_payroll(user):
