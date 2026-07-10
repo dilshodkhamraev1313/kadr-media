@@ -2061,15 +2061,15 @@ async function viewFinance() {
     <div class="panel" style="margin:12px 0"><h3>📁 Loyihalar oylik daromadi</h3><div class="money-rows">${projInc}</div>
       <p class="muted" style="margin-top:8px">O'zgartirish: Loyihalar → loyihani oching → "💵 Oylik to'lov".</p></div>
     <div class="divider"></div>
-    <div class="sec-label" style="margin:14px 0 10px">🎬 Montaj xarajatlari</div>
+    <div class="sec-label" style="margin:14px 0 10px">🎬 Montajchilar — maosh holati (bu oy)</div>
     <div class="stats-grid">
-      ${statTile('📅', money(f.monthCost), 'Shu oy montaj xarajati', 'blue')}
-      ${statTile('💰', money(f.totalEarned), 'Bu oy hisoblangan', 'green')}
+      ${statTile('📅', money(f.monthCost), 'Bu oy montaj ish haqqi', 'blue')}
+      ${statTile('💰', money(f.totalEarned), 'Jami maosh (bu oy)', 'green')}
       ${statTile('✓', money(f.totalPaid), 'Bu oy to\'langan', 'purple')}
       ${statTile('⏳', money(f.totalRemaining), 'Bu oy qolgan', 'orange')}
     </div>
     <div class="ceo-grid">
-      <div><div class="panel"><h3>👥 Montajchilar daromadi</h3><div class="ceo-list">${eds || emptyState()}</div></div></div>
+      <div><div class="panel"><h3>👥 Montajchilar maoshi (bu oy)</h3><div class="ceo-list">${eds || emptyState()}</div></div></div>
       <div>
         <div class="panel"><h3>🏆 Eng faol montajchi</h3><div style="font-size:22px;font-weight:800">${esc(f.topEditor) || '—'}</div><div class="muted">${f.topEditorVideos} ta qabul qilingan video</div></div>
         <div class="panel"><h3>📁 Loyiha bo'yicha montaj xarajati</h3><div class="money-rows">${proj}</div></div>

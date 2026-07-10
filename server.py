@@ -1676,8 +1676,15 @@ def editor_summary(conn, name):
     accepted_all = [v for v in vids if v["status"] in DONE_STATUSES]
     # Daromad/to'lov — FAQAT shu oy (oylik birlik; qolgan = shu oy ishlagan − shu oy to'langan)
     accepted_m = [v for v in accepted_all if (v.get("approved_at") or "").startswith(ym)]
-    earned = sum(v["amount"] or 0 for v in accepted_m)
+    montaj_earned = sum(v["amount"] or 0 for v in accepted_m)
     paid = _paid_to(conn, name, ym)
+    # Salaried montajchi (SALARYda bor) uchun "ishlagan" = TO'LIQ oylik maosh
+    # (fiksa+intizom+montaj+...), aks holda (sof piece-rate) faqat montaj puli.
+    if name in SALARY:
+        _sal = compute_salary(conn, name, get_usd_rate())
+        earned = _sal["total"] if _sal else montaj_earned
+    else:
+        earned = montaj_earned
     by_project = {}
     for v in accepted_m:
         by_project[v["project"]] = by_project.get(v["project"], 0) + 1
@@ -1697,10 +1704,11 @@ def editor_summary(conn, name):
         "returned": sum(1 for v in vids if v["status"] == "qaytarildi"),
         "pending": sum(1 for v in vids if v["status"] in ("biriktirildi", "qaytarildi")),
         "earned": earned,
+        "montajEarned": montaj_earned,
         "paid": paid,
         "remaining": earned - paid,
         "month": ym,
-        "avg": round(earned / len(accepted_m)) if accepted_m else 0,
+        "avg": round(montaj_earned / len(accepted_m)) if accepted_m else 0,
         "byProject": [{"project": k, "count": v} for k, v in sorted(by_project.items(), key=lambda x: -x[1])],
     }
 
@@ -1784,12 +1792,13 @@ def api_finance():
     editors = api_editors({"role": "ceo"})
     total_earned = sum(e["earned"] for e in editors)
     total_paid = sum(e["paid"] for e in editors)
-    # Shu oydagi xarajat (qabul qilingan videolar)
+    # Shu oydagi xarajat (shu oy qabul qilingan videolar)
     accepted = [dict(r) for r in conn.execute("SELECT * FROM videos WHERE status IN ('qabul_qilindi','joylandi')").fetchall()]
-    month_cost = sum(v["amount"] or 0 for v in accepted if (v["approved_at"] or "").startswith(month))
-    # Loyiha bo'yicha montaj xarajati
+    accepted_m = [v for v in accepted if (v["approved_at"] or "").startswith(month)]
+    month_cost = sum(v["amount"] or 0 for v in accepted_m)
+    # Loyiha bo'yicha montaj xarajati (SHU OY)
     by_project = {}
-    for v in accepted:
+    for v in accepted_m:
         by_project[v["project"] or "—"] = by_project.get(v["project"] or "—", 0) + (v["amount"] or 0)
     # Kadr Media P&L: loyiha daromadi − jamoa maoshi
     rate = get_usd_rate()
