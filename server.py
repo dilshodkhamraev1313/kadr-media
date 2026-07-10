@@ -2151,7 +2151,8 @@ def api_studio_finance(user):
     for e in exps:
         m = M((e.get("edate") or "")[:7])
         m["expenses"] += e.get("amount") or 0
-        m["expensesList"].append({"name": e.get("name"), "amount": e.get("amount") or 0, "edate": e.get("edate")})
+        m["expensesList"].append({"name": e.get("name"), "amount": e.get("amount") or 0,
+                                  "edate": e.get("edate"), "note": e.get("note") or ""})
     for m in months.values():
         m["bookings"].sort(key=lambda x: (x.get("bdate") or ""))
     for m in months.values():

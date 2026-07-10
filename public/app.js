@@ -1013,7 +1013,7 @@ async function openStudioFinanceModal() {
       <div class="fm-item"><span>${esc(x.client) || '—'} · ${esc(SHOOT_TYPE_LABEL[x.shoot_type] || '')}${x.operator ? ' · 👤 ' + esc(x.operator) : ''} <span class="muted">(${fmtDate(x.bdate)})</span></span>
         <span>${money(x.amount)} ${x.debt > 0 ? `· <span style="color:var(--orange)">qarz ${money(x.debt)}</span>` : `· <span style="color:var(--green)">to'landi</span>`}</span></div>`).join('');
     const ex = (mo.expensesList || []).map((x) => `
-      <div class="fm-item"><span>🧾 ${esc(x.name)} <span class="muted">(${fmtDate(x.edate)})</span></span><span style="color:var(--pink)">−${money(x.amount)}</span></div>`).join('');
+      <div class="fm-item"><span>🧾 ${esc(x.name)}${x.note ? ` — <span style="color:var(--text-2,#ccc)">${esc(x.note)}</span>` : ''} <span class="muted">(${fmtDate(x.edate)})</span></span><span style="color:var(--pink)">−${money(x.amount)}</span></div>`).join('');
     return `
     <div class="fin-month">
       <button class="fm-head fm-toggle" data-idx="${idx}">
