@@ -2069,6 +2069,51 @@ def api_delete_studio_booking(user, bid):
     return {"ok": True}
 
 
+def api_update_studio_booking(user, bid, b):
+    """Mavjud bronni tahrirlash (Dilshod+Gulmira)."""
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM studio_bookings WHERE id=?", (bid,)).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    ex = dict(ex)
+    room = b.get("room") if b.get("room") in STUDIO_ROOMS else (ex.get("room") or "white")
+    start = b.get("start_time") or ex.get("start_time") or "10:00"
+    end = b.get("end_time") or ex.get("end_time") or "11:00"
+    hours = _calc_hours(start, end)
+    operator = (b.get("operator") if "operator" in b else ex.get("operator")) or ""
+    if operator not in STUDIO_OPERATORS:
+        operator = ""
+    shoot_type = b.get("shoot_type") if b.get("shoot_type") in SHOOT_TYPES else (ex.get("shoot_type") or "reels")
+    operator_pay = _op_pay(operator, shoot_type)
+
+    def iv(key, default):
+        v = b.get(key)
+        if v is None or v == "":
+            return default
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return default
+    amount = iv("amount", ex.get("amount") or 0)
+    paid_amount = iv("paid_amount", ex.get("paid_amount") or 0)
+    fully_paid = 1 if (amount > 0 and paid_amount >= amount) else 0
+    bdate = b.get("bdate") or ex.get("bdate")
+    conn.execute(
+        """UPDATE studio_bookings SET room=?, client_name=?, phone=?, bdate=?, start_time=?, end_time=?,
+           hours=?, amount=?, paid=?, paid_amount=?, operator=?, shoot_type=?, operator_pay=?, note=? WHERE id=?""",
+        (room, b.get("client_name") or ex.get("client_name"),
+         (b.get("phone") if "phone" in b else ex.get("phone")) or "", bdate, start, end,
+         hours, amount, fully_paid, paid_amount, operator, shoot_type, operator_pay,
+         (b.get("note") if "note" in b else ex.get("note")) or "", bid))
+    log_audit(conn, user["name"], "studio bron tahrirladi",
+              f"#{bid} {b.get('client_name') or ex.get('client_name')} · {bdate}")
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM studio_bookings WHERE id=?", (bid,)).fetchone())
+    conn.close()
+    return row
+
+
 def api_studio_finance(user):
     """Dilshod+Gulmira — oyma-oy tushum, operator puli, xarajat, sof foyda.
     Bekor qilingan bronlar hisobga OLINMAYDI. Sof foyda = tushum − operator puli − xarajatlar."""
@@ -2083,6 +2128,7 @@ def api_studio_finance(user):
         return months.setdefault(ym or "—", {
             "month": ym or "—", "total": 0, "operatorPay": 0, "expenses": 0, "net": 0,
             "paid": 0, "debt": 0, "count": 0, "white": 0, "black": 0,
+            "bookings": [], "expensesList": [],
         })
 
     for r in active:
@@ -2096,8 +2142,18 @@ def api_studio_finance(user):
         m["count"] += 1
         if r["room"] in ("white", "black"):
             m[r["room"]] += amt
+        m["bookings"].append({
+            "client": r.get("client_name"), "bdate": r.get("bdate"),
+            "shoot_type": r.get("shoot_type"), "operator": r.get("operator") or "",
+            "amount": amt, "paid": pa, "debt": max(amt - pa, 0),
+            "operator_pay": r.get("operator_pay") or 0,
+        })
     for e in exps:
-        M((e.get("edate") or "")[:7])["expenses"] += e.get("amount") or 0
+        m = M((e.get("edate") or "")[:7])
+        m["expenses"] += e.get("amount") or 0
+        m["expensesList"].append({"name": e.get("name"), "amount": e.get("amount") or 0, "edate": e.get("edate")})
+    for m in months.values():
+        m["bookings"].sort(key=lambda x: (x.get("bdate") or ""))
     for m in months.values():
         m["net"] = m["total"] - m["operatorPay"] - m["expenses"]
 
@@ -3917,6 +3973,14 @@ class Handler(BaseHTTPRequestHandler):
             if sid is None:
                 return self._json({"error": "Topilmadi"}, 404)
             row = api_update_script(user, sid, b)
+            return self._json(row) if row else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 3 and seg[1] == "studio":
+            if not can_edit_studio(user):
+                return self._forbid()
+            bid = self._int(seg[2])
+            if bid is None:
+                return self._json({"error": "Topilmadi"}, 404)
+            row = api_update_studio_booking(user, bid, b)
             return self._json(row) if row else self._json({"error": "Topilmadi"}, 404)
         return self._json({"error": "Topilmadi"}, 404)
 
