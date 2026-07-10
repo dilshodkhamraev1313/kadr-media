@@ -1582,6 +1582,8 @@ def api_video_action(user, vid, b):
 
 
 def api_delete_video(user, vid):
+    if user["role"] not in ADMIN_ROLES:
+        return {"error": "Ruxsat yo'q"}, 403
     conn = get_db()
     conn.execute("DELETE FROM videos WHERE id=?", (vid,))
     log_audit(conn, user["name"], "video o'chirdi", f"#{vid}")
@@ -4076,6 +4078,8 @@ class Handler(BaseHTTPRequestHandler):
             pid = self._int(seg[2])
             return self._json(api_delete_project(pid)) if pid else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 3 and seg[1] == "videos":
+            if r not in ADMIN_ROLES:
+                return self._forbid()
             vid = self._int(seg[2])
             return self._json(api_delete_video(user, vid)) if vid else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 3 and seg[1] == "tasks":
