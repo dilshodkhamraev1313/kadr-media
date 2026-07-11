@@ -559,6 +559,9 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS assigned_tasks (
         id {pk}, assignee TEXT, text TEXT, tdate TEXT, done INTEGER DEFAULT 0,
         note TEXT DEFAULT '', done_at TEXT DEFAULT '', assigned_by TEXT, created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS monthly_archive (
+        ym TEXT PRIMARY KEY, data TEXT, net INTEGER DEFAULT 0,
+        created_by TEXT, created_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS income_ledger (
         id {pk}, source_type TEXT, source_id INTEGER, source_label TEXT, amount INTEGER DEFAULT 0,
         received_by TEXT, method TEXT, pdate TEXT, note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
@@ -2809,6 +2812,89 @@ def api_payroll(user):
 
 
 # ------------------------------------------------------------
+#  OYLIK ARXIV (payroll + moliya snapshot — "muzlatish")
+# ------------------------------------------------------------
+def _month_snapshot(conn, ym, actor):
+    """Berilgan oyning to'liq moliyaviy holatini yig'adi (arxiv uchun)."""
+    rate = get_usd_rate()
+    salaries, payroll_total = [], 0
+    for n in SALARY:
+        s = compute_salary(conn, n, rate)
+        if s:
+            payroll_total += s["total"]
+            salaries.append({"name": n, "title": s.get("title", ""), "total": s["total"],
+                             "paid": s["paid"], "remaining": s["remaining"]})
+    media_income = conn.execute("SELECT COALESCE(SUM(monthly_fee),0) AS s FROM projects WHERE monthly_fee>0").fetchone()["s"] or 0
+    like = ym + "%"
+    active = [dict(r) for r in conn.execute(
+        "SELECT amount, paid_amount, operator_pay FROM studio_bookings "
+        "WHERE bdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (like,)).fetchall()]
+    st_total = sum(r["amount"] or 0 for r in active)
+    st_op = sum(r.get("operator_pay") or 0 for r in active)
+    st_paid = sum(r.get("paid_amount") or 0 for r in active)
+    st_exp = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM studio_expenses WHERE edate LIKE ?", (like,)).fetchone()["s"] or 0
+    st_net = st_total - st_op - st_exp
+    return {
+        "ym": ym, "rate": rate, "salaries": salaries, "payrollTotal": payroll_total,
+        "mediaIncome": media_income,
+        "studio": {"total": st_total, "operatorPay": st_op, "expenses": st_exp,
+                   "net": st_net, "paid": st_paid, "debt": max(st_total - st_paid, 0)},
+        "companyNet": media_income + st_net - payroll_total,
+        "generatedAt": now_local(), "by": actor,
+    }
+
+
+def api_archive_month(user):
+    """CEO — joriy oyni arxivlaydi (muzlatadi). Qayta bosilsa yangilanadi."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    ym = uz_now().strftime("%Y-%m")
+    conn = get_db()
+    snap = _month_snapshot(conn, ym, user["name"])
+    data = json.dumps(snap, ensure_ascii=False)
+    ex = conn.execute("SELECT ym FROM monthly_archive WHERE ym=?", (ym,)).fetchone()
+    if ex:
+        conn.execute("UPDATE monthly_archive SET data=?, net=?, created_by=?, created_at=? WHERE ym=?",
+                     (data, snap["companyNet"], user["name"], now_local(), ym))
+    else:
+        conn.execute("INSERT INTO monthly_archive (ym, data, net, created_by, created_at) VALUES (?,?,?,?,?)",
+                     (ym, data, snap["companyNet"], user["name"], now_local()))
+    log_audit(conn, user["name"], "oy arxivlandi (muzlatildi)", ym)
+    conn.commit()
+    conn.close()
+    return {"ok": True, "ym": ym, "snapshot": snap}
+
+
+def api_archives(user):
+    """CEO — muzlatilgan oylar ro'yxati + joriy oy (jonli) ko'rinishi."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT ym, net, created_by, created_at FROM monthly_archive ORDER BY ym DESC").fetchall()]
+    cur_ym = uz_now().strftime("%Y-%m")
+    preview = _month_snapshot(conn, cur_ym, user["name"])
+    conn.close()
+    return {
+        "archived": [{"ym": r["ym"], "net": r["net"], "by": r["created_by"], "at": r["created_at"]} for r in rows],
+        "current": preview,
+        "currentArchived": any(r["ym"] == cur_ym for r in rows),
+    }
+
+
+def api_archive_get(user, ym):
+    """CEO — muzlatilgan oyning to'liq snapshot'i."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT data FROM monthly_archive WHERE ym=?", (ym,)).fetchone()
+    conn.close()
+    if not row:
+        return {"error": "Topilmadi"}, 404
+    return json.loads(row["data"])
+
+
+# ------------------------------------------------------------
 #  XAYRIYA FONDI (Media+Studio sof foydasidan 5%) — Dilshod+Gulmira
 # ------------------------------------------------------------
 CHARITY_PCT = 0.05
@@ -3848,6 +3934,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role != "ceo" else self._json(api_cashflow(user))
         if path == "/api/late-videos":
             return self._forbid() if role != "ceo" else self._json(api_late_videos(user))
+        if path == "/api/archives":
+            return self._forbid() if role != "ceo" else self._json(api_archives(user))
+        if path == "/api/archive":
+            ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
+            return self._forbid() if role != "ceo" else self._json(api_archive_get(user, ym))
         if path == "/api/income-ledger":
             return self._forbid() if role != "ceo" else self._json(api_income_ledger(user))
         if path == "/api/studio":
@@ -3930,6 +4021,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_set_avatar(user, b))
         if path == "/api/projects/reset-stats":
             return self._json(api_reset_project_stats(user))
+        if path == "/api/archive":
+            return self._json(api_archive_month(user))
         if path == "/api/editors/recompute":
             return self._json(api_recompute_editor(user, (b.get("editor") or "").strip()))
         if path == "/api/projects":

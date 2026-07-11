@@ -240,6 +240,7 @@ const NAV_ITEMS = [
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
   { view: 'cashflow',  icon: '💵', label: 'Pul oqimi',     roles: ['ceo'] },
   { view: 'late',      icon: '⏰', label: 'Kechikkanlar',   roles: ['ceo'] },
+  { view: 'archive',   icon: '🗄', label: 'Oylik arxiv',    roles: ['ceo'] },
   { view: 'income',    icon: '💳', label: 'To\'lovlar',      roles: ['ceo'] },
   { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
@@ -317,6 +318,7 @@ const TITLES = {
   finance:   ['Moliya', 'Montaj xarajatlari va to\'lovlar'],
   cashflow:  ['Pul oqimi', 'Mijoz to\'lovlari va umumiy kirim-chiqim'],
   late:      ['Kechikkanlar', 'Deadline o\'tib puli kamaygan videolar — pulni tiklash'],
+  archive:   ['Oylik arxiv', 'Har oyni muzlatib saqlash — o\'tgan oylar o\'zgarmaydi'],
   income:    ['To\'lovlar', 'Kelib tushgan pullar — kim qabul qildi, naqt/plastik'],
   team:      ['Jamoa yuklamasi', 'Rahbarlar yuklamasi'],
   audit:     ['Audit log', 'Barcha harakatlar tarixi'],
@@ -354,6 +356,7 @@ async function render() {
     else if (VIEW === 'finance') await viewFinance();
     else if (VIEW === 'cashflow') await viewCashflow();
     else if (VIEW === 'late') await viewLate();
+    else if (VIEW === 'archive') await viewArchive();
     else if (VIEW === 'income') await viewIncome();
     else if (VIEW === 'team') await viewTeam();
     else if (VIEW === 'audit') await viewAudit();
@@ -2186,6 +2189,69 @@ async function viewLate() {
     const r = await api(`/api/videos/${b.dataset.id}/restore-pay`, { method: 'POST', body: '{}' });
     if (r && r.error) { b.disabled = false; toast('⚠️ ' + r.error); return; }
     toast(`💰 ${money(r.amount)} hisoblandi`); render();
+  }));
+}
+
+// ============================================================
+//  OYLIK ARXIV — har oyni muzlatib saqlash (CEO)
+// ============================================================
+const UZ_YM = (ym) => { const [y, m] = (ym || '').split('-'); return (UZ_MONTH_FULL[parseInt(m, 10) - 1] || m) + ' ' + y; };
+function snapCard(s) {
+  return `<div class="stats-grid" style="margin-bottom:10px">
+    ${statTile('📥', money(s.mediaIncome || 0), 'Media daromadi', 'blue')}
+    ${statTile('🎥', money((s.studio || {}).net || 0), 'Studio sof', 'purple')}
+    ${statTile('📤', money(s.payrollTotal || 0), 'Jamoa maoshi', 'orange')}
+    ${statTile((s.companyNet || 0) >= 0 ? '📈' : '📉', money(s.companyNet || 0), 'Kompaniya sof', (s.companyNet || 0) >= 0 ? 'green' : 'red')}
+  </div>
+  <div class="panel"><h3>👥 Maoshlar</h3><div class="money-rows">
+    ${(s.salaries || []).map((p) => `<div class="mrow"><span>${esc(p.name)}</span><b>${money(p.total)}</b> <span class="muted">· to'landi ${money(p.paid)} · qoldi ${money(p.remaining)}</span></div>`).join('')}
+  </div></div>
+  <div class="panel"><h3>🎥 Kadr Studio</h3><div class="money-rows">
+    <div class="mrow"><span>Tushum</span><b>${money((s.studio || {}).total || 0)}</b></div>
+    <div class="mrow"><span>Operator puli</span><b style="color:var(--pink)">−${money((s.studio || {}).operatorPay || 0)}</b></div>
+    <div class="mrow"><span>Xarajatlar</span><b style="color:var(--pink)">−${money((s.studio || {}).expenses || 0)}</b></div>
+    <div class="mrow"><span>To'langan / Qarz</span><b>${money((s.studio || {}).paid || 0)} / <span style="color:var(--orange)">${money((s.studio || {}).debt || 0)}</span></b></div>
+  </div></div>`;
+}
+async function viewArchive() {
+  const d = await api('/api/archives');
+  DATA.archives = d;
+  const cur = d.current || {};
+  const archList = (d.archived || []).map((a) => `
+    <div class="fin-month">
+      <button class="fm-head arc-toggle" data-ym="${a.ym}">
+        <span><b>${esc(UZ_YM(a.ym))}</b> <span class="muted">· ${a.by || ''} ${a.at ? '· ' + esc((a.at || '').slice(5, 16)) : ''}</span></span>
+        <span><b style="color:${a.net >= 0 ? 'var(--green)' : 'var(--red)'}">${money(a.net)}</b> <span class="fm-caret">▸</span></span>
+      </button>
+      <div class="fm-body arc-body" data-body="${a.ym}" hidden><div class="muted" style="padding:8px">Yuklanmoqda...</div></div>
+    </div>`).join('') || '<div class="muted">Hali arxivlangan oy yo\'q</div>';
+  $('#content').innerHTML = `
+    <div class="panel" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <div><b>📅 Joriy oy: ${esc(UZ_YM(cur.ym))}</b> <span class="pill ${d.currentArchived ? 'green' : 'orange'}">${d.currentArchived ? '✅ arxivlangan' : '⏳ jonli (hali muzlamagan)'}</span></div>
+        <button class="btn-primary" id="arc_save">🗄 ${d.currentArchived ? 'Qayta arxivlash' : 'Oyni arxivlash (muzlatish)'}</button>
+      </div>
+      <p class="muted" style="margin-bottom:10px">Arxivlansa — shu oyning maoshi va moliyasi muzlaydi. Keyin ma'lumot o'zgarsa ham, arxiv o'zgarmaydi.</p>
+      ${snapCard(cur)}
+    </div>
+    <div class="sec-label" style="margin-bottom:10px">🗄 Muzlatilgan oylar</div>
+    <div class="fin-months">${archList}</div>`;
+  $('#arc_save').addEventListener('click', async () => {
+    if (!confirm(`${UZ_YM(cur.ym)} oyini arxivlaysizmi? (hozirgi holat muzlatiladi)`)) return;
+    const r = await api('/api/archive', { method: 'POST', body: '{}' });
+    if (r && r.error) { toast('⚠️ ' + r.error); return; }
+    toast('🗄 Oy arxivlandi'); render();
+  });
+  $$('.arc-toggle').forEach((btn) => btn.addEventListener('click', async () => {
+    const body = $(`.arc-body[data-body="${btn.dataset.ym}"]`);
+    if (!body) return;
+    body.hidden = !body.hidden;
+    btn.classList.toggle('open', !body.hidden);
+    if (!body.hidden && !body.dataset.loaded) {
+      const snap = await api('/api/archive?ym=' + btn.dataset.ym);
+      body.dataset.loaded = '1';
+      body.innerHTML = snap.error ? `<div class="muted" style="padding:8px">${esc(snap.error)}</div>` : snapCard(snap);
+    }
   }));
 }
 
