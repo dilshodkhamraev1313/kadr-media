@@ -918,9 +918,9 @@ function openStudioBookingModal(presetDate, edit) {
     <div id="sb_hours" class="calc-line"></div>
     <div class="field-row">
       <div class="field"><label>Umumiy to'lov (so'm)</label><input id="sb_amount" type="number" inputmode="numeric" placeholder="masalan: 900000" value="${e.amount || ''}" /></div>
-      <div class="field"><label>To'langan / avans (so'm)</label><input id="sb_paidamt" type="number" inputmode="numeric" placeholder="0" value="${e.paid_amount || ''}" /></div>
+      ${edit ? '' : `<div class="field"><label>To'langan / avans (so'm)</label><input id="sb_paidamt" type="number" inputmode="numeric" placeholder="0" value="" /></div>`}
     </div>
-    ${payMetaFields()}
+    ${edit ? `<p class="muted" style="margin:-4px 0 8px">💡 To'lovni bu yerda emas, bron ochilganda "+ To'lov qo'shish" orqali kiritasiz (shaffof daftar).</p>` : payMetaFields()}
     <div class="field"><label>Izoh</label><textarea id="sb_note" placeholder="masalan: 2 kishi, rekvizit kerak">${esc(e.note || '')}</textarea></div>
     <div class="modal-actions"><button class="btn-save" id="sb_save">${edit ? '💾 Saqlash' : '🎥 Bron qilish'}</button></div>`,
   () => {
@@ -947,9 +947,9 @@ function openStudioBookingModal(presetDate, edit) {
         shoot_type: $('#sb_type').value, operator: $('#sb_op').value,
         bdate, start_time: $('#sb_start').value, end_time: $('#sb_end').value,
         amount: parseInt($('#sb_amount').value || '0', 10),
-        paid_amount: parseInt($('#sb_paidamt').value || '0', 10),
-        note: $('#sb_note').value, ...readPayMeta(),
+        note: $('#sb_note').value,
       };
+      if (!edit) { body.paid_amount = parseInt($('#sb_paidamt').value || '0', 10); Object.assign(body, readPayMeta()); }
       if (edit) await api(`/api/studio/${edit.id}`, { method: 'PUT', body: JSON.stringify(body) });
       else await api('/api/studio', { method: 'POST', body: JSON.stringify(body) });
       closeModal(); toast(edit ? '💾 Saqlandi' : '🎥 Bron saqlandi'); render();
@@ -989,9 +989,19 @@ function openStudioDetailModal(b) {
       <div class="mrow"><span style="color:var(--orange)">Qolgan</span><b style="color:var(--orange)">${money(rem)}</b></div>
       <div class="mrow"><span>👮 Bron qildi</span><b>${esc(b.created_by || '—')}</b></div>
     </div>
-    ${b.note ? `<div class="pc-problem soft" style="margin-bottom:12px">📝 ${esc(b.note)}</div>` : ''}
+    ${(b.ledger && b.ledger.length) ? `<div class="sec-label" style="margin:4px 0 6px">💳 To'lovlar (shaffof daftar)</div>
+      <div class="ldg-list">${b.ledger.map((p) => `<div class="ldg-row">
+        <span>${money(p.amount)} · <b>${esc(p.received_by || '')}</b> · ${p.method === 'plastik' ? '💳 Plastik' : '💵 Naqt'} <span class="muted">· ${fmtDate(p.pdate)}</span></span>
+        ${canEdit ? `<button class="mini-btn red ldg-del" data-lid="${p.id}">🗑</button>` : ''}</div>`).join('')}</div>` : ''}
+    ${b.note ? `<div class="pc-problem soft" style="margin:12px 0">📝 ${esc(b.note)}</div>` : ''}
     ${actions ? `<div class="modal-actions">${actions}</div>` : ''}`,
   () => {
+    $$('.ldg-del').forEach((x) => x.addEventListener('click', async () => {
+      if (!confirm('Bu to\'lov yozuvini o\'chirasizmi? (bronning to\'langani qayta hisoblanadi)')) return;
+      const r = await api(`/api/income/${x.dataset.lid}`, { method: 'DELETE' });
+      if (r && r.error) { toast('⚠️ ' + r.error); return; }
+      closeModal(); toast('🗑 To\'lov o\'chirildi'); render();
+    }));
     const ed = $('#sb_editbtn');
     if (ed) ed.addEventListener('click', () => openStudioBookingModal(null, b));
     const pay = $('#sb_paybtn');

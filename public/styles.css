@@ -350,6 +350,10 @@ body {
 .debt-list { display: flex; flex-direction: column; gap: 8px; }
 .debt-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   padding: 10px 12px; background: rgba(0,0,0,.12); border-radius: 10px; }
+/* Shaffof to'lov daftari (bron detali) */
+.ldg-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.ldg-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px;
+  padding: 8px 10px; background: rgba(48,209,88,.07); border: 1px solid rgba(48,209,88,.18); border-radius: 9px; }
 
 /* Reyting + trend */
 .lb-grid { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 16px; margin-top: 16px; align-items: start; }

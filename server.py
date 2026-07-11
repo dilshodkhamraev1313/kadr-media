@@ -1977,17 +1977,48 @@ def api_studio(user):
     rows = conn.execute(
         "SELECT * FROM studio_bookings ORDER BY bdate DESC, start_time"
     ).fetchall()
+    # Har bronning to'lov yozuvlari (daftardan — kim/naqt-plastik/sana)
+    pays = {}
+    for p in conn.execute(
+            "SELECT id, source_id, amount, received_by, method, pdate, note FROM income_ledger "
+            "WHERE source_type='studio' ORDER BY id").fetchall():
+        pays.setdefault(p["source_id"], []).append(dict(p))
     conn.close()
+    bookings = []
+    for r in rows:
+        d = dict(r)
+        d["ledger"] = pays.get(d["id"], [])
+        bookings.append(d)
     return {
         "rooms": STUDIO_ROOMS,
         "operators": list(STUDIO_OPERATORS),
         "shootTypes": SHOOT_TYPES,
         "operatorPay": OPERATOR_PAY,
+        "methods": list(INCOME_METHODS),
+        "receivers": list(INCOME_RECEIVERS),
         "canFinance": can_edit_studio(user),
         "canEdit": can_edit_studio(user),
         "me": user["name"],
-        "bookings": [dict(r) for r in rows],
+        "bookings": bookings,
     }
+
+
+def api_delete_income(user, lid):
+    """Daftardagi bitta to'lov yozuvini o'chirish — manba bronning paid'i qayta hisoblanadi."""
+    if not can_edit_studio(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT source_type, source_id FROM income_ledger WHERE id=?", (lid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    conn.execute("DELETE FROM income_ledger WHERE id=?", (lid,))
+    if row["source_type"] == "studio" and row["source_id"]:
+        _recalc_studio_paid(conn, row["source_id"])
+    log_audit(conn, user["name"], "to'lov yozuvi o'chirdi", f"ledger #{lid}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 def api_create_studio_booking(user, b):
@@ -2007,16 +2038,16 @@ def api_create_studio_booking(user, b):
         paid_amount = int(b.get("paid_amount") or 0)
     except (ValueError, TypeError):
         paid_amount = 0
-    fully_paid = 1 if (amount > 0 and paid_amount >= amount) else 0
     bdate = b.get("bdate") or uz_today().isoformat()
     conn = get_db()
+    # paid/paid_amount daftardan hisoblanadi — dastlab 0, keyin _recalc
     sql = """INSERT INTO studio_bookings
              (room, client_name, phone, bdate, start_time, end_time, hours, amount,
               paid, paid_amount, operator, shoot_type, operator_pay, status, note, created_by)
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
     params = (
         room, b.get("client_name") or "Mijoz", b.get("phone") or "", bdate,
-        start, end, hours, amount, fully_paid, paid_amount,
+        start, end, hours, amount, 0, 0,
         operator, shoot_type, operator_pay, "active",
         b.get("note") or "", user["name"],
     )
@@ -2027,6 +2058,8 @@ def api_create_studio_booking(user, b):
     if paid_amount > 0:
         _add_income(conn, "studio", bid, b.get("client_name") or "Studio", paid_amount, b, user,
                     note="Studio avans" if paid_amount < amount else "Studio to'liq")
+    paid_amount = _recalc_studio_paid(conn, bid)
+    fully_paid = 1 if (amount > 0 and paid_amount >= amount) else 0
     log_audit(conn, user["name"], "studio bron qildi",
               f"#{bid} {b.get('client_name')} · {STUDIO_ROOMS[room]['label']} · {SHOOT_TYPES[shoot_type]}"
               + (f" · operator {operator} (+{operator_pay})" if operator else ""))
@@ -2059,6 +2092,23 @@ def _add_income(conn, source_type, source_id, label, amount, b, user, note=""):
         "VALUES (?,?,?,?,?,?,?,?,?)",
         (source_type, source_id, label, int(amount), received_by, method,
          b.get("pdate") or uz_today().isoformat(), note, user["name"]))
+
+
+def _ledger_paid(conn, source_type, source_id):
+    """Manba (studio bron) uchun daftardan jami to'langan — YAGONA HAQIQAT."""
+    return conn.execute(
+        "SELECT COALESCE(SUM(amount),0) AS s FROM income_ledger WHERE source_type=? AND source_id=?",
+        (source_type, source_id)).fetchone()["s"] or 0
+
+
+def _recalc_studio_paid(conn, bid):
+    """Bronning paid_amount/paid ustunini daftardagi to'lovlardan qayta hisoblaydi (kesh)."""
+    paid = _ledger_paid(conn, "studio", bid)
+    row = conn.execute("SELECT amount FROM studio_bookings WHERE id=?", (bid,)).fetchone()
+    total = (row["amount"] or 0) if row else 0
+    conn.execute("UPDATE studio_bookings SET paid_amount=?, paid=? WHERE id=?",
+                 (paid, 1 if (total > 0 and paid >= total) else 0, bid))
+    return paid
 
 
 def api_income_ledger(user):
@@ -2103,8 +2153,10 @@ def api_studio_pay(user, bid, b):
     total = ex.get("amount") or 0
     fully = 1 if (total > 0 and new_paid >= total) else 0
     was_full = ex.get("paid") or 0
-    conn.execute("UPDATE studio_bookings SET paid_amount=?, paid=? WHERE id=?", (new_paid, fully, bid))
+    # To'lov faqat daftarga yoziladi; paid_amount daftardan qayta hisoblanadi (yagona haqiqat)
     _add_income(conn, "studio", bid, ex.get("client_name") or "Studio", add, b, user, note="Studio to'lov")
+    new_paid = _recalc_studio_paid(conn, bid)
+    fully = 1 if (total > 0 and new_paid >= total) else 0
     log_audit(conn, user["name"], "studio to'lov qo'shdi", f"#{bid} +{add} so'm (jami {new_paid}/{total})")
     conn.commit()
     row = dict(conn.execute("SELECT * FROM studio_bookings WHERE id=?", (bid,)).fetchone())
@@ -2127,6 +2179,9 @@ def api_cancel_studio_booking(user, bid):
         return None
     ex = dict(ex)
     conn.execute("UPDATE studio_bookings SET status='bekor_qilindi' WHERE id=?", (bid,))
+    # Bekor bo'lganda kelib tushgan pul ham hisobdan chiqadi (daftardan olib tashlanadi)
+    conn.execute("DELETE FROM income_ledger WHERE source_type='studio' AND source_id=?", (bid,))
+    _recalc_studio_paid(conn, bid)
     log_audit(conn, user["name"], "studio bron bekor qildi", f"#{bid} {ex['client_name']}")
     conn.commit()
     row = dict(conn.execute("SELECT * FROM studio_bookings WHERE id=?", (bid,)).fetchone())
@@ -2138,6 +2193,8 @@ def api_cancel_studio_booking(user, bid):
 def api_delete_studio_booking(user, bid):
     conn = get_db()
     conn.execute("DELETE FROM studio_bookings WHERE id=?", (bid,))
+    # Bron o'chsa — uning to'lov yozuvlari ham daftardan ketadi (kirim to'g'rilanadi)
+    conn.execute("DELETE FROM income_ledger WHERE source_type='studio' AND source_id=?", (bid,))
     log_audit(conn, user["name"], "studio bron o'chirdi", f"#{bid}")
     conn.commit()
     conn.close()
@@ -2171,16 +2228,16 @@ def api_update_studio_booking(user, bid, b):
         except (ValueError, TypeError):
             return default
     amount = iv("amount", ex.get("amount") or 0)
-    paid_amount = iv("paid_amount", ex.get("paid_amount") or 0)
-    fully_paid = 1 if (amount > 0 and paid_amount >= amount) else 0
     bdate = b.get("bdate") or ex.get("bdate")
+    # paid/paid_amount TAHRIR QILINMAYDI — u daftardan hisoblanadi (to'lov qo'shish/o'chirish orqali)
     conn.execute(
         """UPDATE studio_bookings SET room=?, client_name=?, phone=?, bdate=?, start_time=?, end_time=?,
-           hours=?, amount=?, paid=?, paid_amount=?, operator=?, shoot_type=?, operator_pay=?, note=? WHERE id=?""",
+           hours=?, amount=?, operator=?, shoot_type=?, operator_pay=?, note=? WHERE id=?""",
         (room, b.get("client_name") or ex.get("client_name"),
          (b.get("phone") if "phone" in b else ex.get("phone")) or "", bdate, start, end,
-         hours, amount, fully_paid, paid_amount, operator, shoot_type, operator_pay,
+         hours, amount, operator, shoot_type, operator_pay,
          (b.get("note") if "note" in b else ex.get("note")) or "", bid))
+    _recalc_studio_paid(conn, bid)  # summa o'zgargan bo'lsa — paid flag qayta hisoblanadi
     log_audit(conn, user["name"], "studio bron tahrirladi",
               f"#{bid} {b.get('client_name') or ex.get('client_name')} · {bdate}")
     conn.commit()
@@ -4197,6 +4254,9 @@ class Handler(BaseHTTPRequestHandler):
         if len(seg) == 3 and seg[1] == "tasks":
             tid = self._int(seg[2])
             return self._json(api_delete_assigned_task(user, tid)) if tid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 3 and seg[1] == "income":
+            lid = self._int(seg[2])
+            return self._json(api_delete_income(user, lid)) if lid else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 4 and seg[1] == "studio" and seg[2] == "expenses":
             if not can_edit_studio(user):
                 return self._forbid()
