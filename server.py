@@ -603,6 +603,7 @@ def init_db():
     # projects: mijoz o'zi joylaydigan loyihalar (joylash bosqichi yo'q)
     add_column_if_missing(conn, "projects", "self_post", "INTEGER DEFAULT 0")
     _seed_checklist(conn)
+    _backfill_studio_ledger(conn)
     conn.commit()
 
     # Seed (faqat bo'sh bo'lsa)
@@ -2092,6 +2093,28 @@ def _add_income(conn, source_type, source_id, label, amount, b, user, note=""):
         "VALUES (?,?,?,?,?,?,?,?,?)",
         (source_type, source_id, label, int(amount), received_by, method,
          b.get("pdate") or uz_today().isoformat(), note, user["name"]))
+
+
+def _backfill_studio_ledger(conn):
+    """MIGRATSIYA (bir marta): daftar joriy etilishidan oldingi bronlar paid_amount>0
+    lekin daftarda yozuvsiz — har biriga bitta yozuv qo'shadi (aks holda _recalc ularni nolga tushiradi)."""
+    try:
+        rows = conn.execute(
+            "SELECT id, client_name, paid_amount, bdate, created_by FROM studio_bookings "
+            "WHERE COALESCE(paid_amount,0) > 0").fetchall()
+    except Exception:
+        return
+    for r in rows:
+        has = conn.execute(
+            "SELECT 1 FROM income_ledger WHERE source_type='studio' AND source_id=? LIMIT 1", (r["id"],)).fetchone()
+        if has:
+            continue
+        recv = r["created_by"] if r["created_by"] in INCOME_RECEIVERS else INCOME_RECEIVERS[0]
+        conn.execute(
+            "INSERT INTO income_ledger (source_type, source_id, source_label, amount, received_by, method, pdate, note, created_by) "
+            "VALUES ('studio',?,?,?,?,?,?,?,?)",
+            (r["id"], r["client_name"] or "Studio", r["paid_amount"], recv, "naqt",
+             r["bdate"] or uz_today().isoformat(), "eski to'lov (migratsiya)", "Tizim"))
 
 
 def _ledger_paid(conn, source_type, source_id):
