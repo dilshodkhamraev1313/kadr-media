@@ -597,6 +597,9 @@ def init_db():
     # shoots (Kadr Media syomkalari): syomka vaqti (nechidan nechigacha)
     add_column_if_missing(conn, "shoots", "start_time", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "shoots", "end_time", "TEXT DEFAULT ''")
+    # xarajatlar: qayerdan pul chiqdi — usul (naqt/plastik) + kim to'ladi (Dilshod/Gulmira)
+    add_column_if_missing(conn, "studio_expenses", "method", "TEXT DEFAULT 'naqt'")
+    add_column_if_missing(conn, "studio_expenses", "paid_by", "TEXT DEFAULT ''")
     # checklist_done: belgi (done) + qo'lda izoh (note — masalan nechta ssenariy)
     add_column_if_missing(conn, "checklist_done", "done", "INTEGER DEFAULT 1")
     add_column_if_missing(conn, "checklist_done", "note", "TEXT DEFAULT ''")
@@ -2090,6 +2093,17 @@ def api_create_studio_booking(user, b):
     return dict(row)
 
 
+def _norm_pay_source(b, user):
+    """Xarajat uchun: qayerdan pul chiqdi — usul (naqt/plastik) + kim to'ladi (Dilshod/Gulmira)."""
+    method = (b.get("method") or "naqt").strip().lower()
+    if method not in INCOME_METHODS:
+        method = "naqt"
+    paid_by = (b.get("paid_by") or "").strip()
+    if paid_by not in INCOME_RECEIVERS:
+        paid_by = user["name"] if user["name"] in INCOME_RECEIVERS else INCOME_RECEIVERS[0]
+    return method, paid_by
+
+
 def _add_income(conn, source_type, source_id, label, amount, b, user, note=""):
     """Kelib tushgan pulni shaffoflik daftariga yozadi (kim qabul qildi + naqt/plastik)."""
     if not amount or amount <= 0:
@@ -2347,7 +2361,8 @@ def api_studio_finance(user):
         m = M((e.get("edate") or "")[:7])
         m["expenses"] += e.get("amount") or 0
         m["expensesList"].append({"name": e.get("name"), "amount": e.get("amount") or 0,
-                                  "edate": e.get("edate"), "note": e.get("note") or ""})
+                                  "edate": e.get("edate"), "note": e.get("note") or "",
+                                  "method": e.get("method") or "naqt", "paid_by": e.get("paid_by") or ""})
     for m in months.values():
         m["bookings"].sort(key=lambda x: (x.get("bdate") or ""))
     for m in months.values():
@@ -2394,14 +2409,15 @@ def api_create_studio_expense(user, b):
         amount = 0
     name = (b.get("name") or "Boshqa").strip() or "Boshqa"
     edate = b.get("edate") or uz_today().isoformat()
+    method, paid_by = _norm_pay_source(b, user)
     conn = get_db()
-    sql = "INSERT INTO studio_expenses (name, amount, edate, note, created_by) VALUES (?,?,?,?,?)"
-    params = (name, amount, edate, b.get("note") or "", user["name"])
+    sql = "INSERT INTO studio_expenses (name, amount, edate, note, created_by, method, paid_by) VALUES (?,?,?,?,?,?,?)"
+    params = (name, amount, edate, b.get("note") or "", user["name"], method, paid_by)
     if IS_PG:
         eid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:
         eid = conn.execute(sql, params).lastrowid
-    log_audit(conn, user["name"], "studio xarajat kiritdi", f"#{eid} {name} · {amount} so'm")
+    log_audit(conn, user["name"], "studio xarajat kiritdi", f"#{eid} {name} · {amount} so'm · {paid_by} {method}")
     conn.commit()
     row = dict(conn.execute("SELECT * FROM studio_expenses WHERE id=?", (eid,)).fetchone())
     conn.close()
@@ -2529,10 +2545,11 @@ def api_budget_spend(user, b):
     if amount <= 0:
         return {"error": "Summani kiriting"}
     edate = b.get("edate") or uz_today().isoformat()
+    method, paid_by = _norm_pay_source(b, user)
     conn = get_db()
-    conn.execute("INSERT INTO studio_expenses (name, amount, edate, note, created_by) VALUES (?,?,?,?,?)",
-                 (category, amount, edate, b.get("note") or "", user["name"]))
-    log_audit(conn, user["name"], "budjet xarajat", f"{category}: {amount} so'm")
+    conn.execute("INSERT INTO studio_expenses (name, amount, edate, note, created_by, method, paid_by) VALUES (?,?,?,?,?,?,?)",
+                 (category, amount, edate, b.get("note") or "", user["name"], method, paid_by))
+    log_audit(conn, user["name"], "budjet xarajat", f"{category}: {amount} so'm · {paid_by} {method}")
     conn.commit()
     conn.close()
     return {"ok": True}

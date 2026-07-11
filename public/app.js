@@ -897,6 +897,17 @@ function bindPaySplit() {
   ['pm_naqt', 'pm_plastik'].forEach((id) => { const el = $('#' + id); if (el) el.addEventListener('input', upd); });
   upd();
 }
+// Xarajat uchun: qayerdan pul chiqdi — kim to'ladi (Dilshod/Gulmira) + naqt/plastik
+function expenseMetaFields(method, paidBy) {
+  return `<div class="field-row">
+    <div class="field"><label>💰 Kim to'ladi</label><select id="ex_paidby">${INCOME_RECEIVERS.map((r) => `<option${r === paidBy ? ' selected' : ''}>${esc(r)}</option>`).join('')}</select></div>
+    <div class="field"><label>To'lov usuli</label><select id="ex_method">${INCOME_METHODS.map(([k, l]) => `<option value="${k}"${k === (method || 'naqt') ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+  </div>`;
+}
+function readExpenseMeta() {
+  return { paid_by: $('#ex_paidby') ? $('#ex_paidby').value : '', method: $('#ex_method') ? $('#ex_method').value : 'naqt' };
+}
+function methodLabel(m) { return m === 'plastik' ? '💳 Plastik' : '💵 Naqt'; }
 
 function openStudioBookingModal(presetDate, edit) {
   const data = DATA.studio || {};
@@ -1053,7 +1064,7 @@ async function openStudioFinanceModal() {
       <div class="fm-item"><span>${esc(x.client) || '—'} · ${esc(SHOOT_TYPE_LABEL[x.shoot_type] || '')}${x.operator ? ' · 👤 ' + esc(x.operator) : ''} <span class="muted">(${fmtDate(x.bdate)})</span></span>
         <span>${money(x.amount)} ${x.debt > 0 ? `· <span style="color:var(--orange)">qarz ${money(x.debt)}</span>` : `· <span style="color:var(--green)">to'landi</span>`}</span></div>`).join('');
     const ex = (mo.expensesList || []).map((x) => `
-      <div class="fm-item"><span>🧾 ${esc(x.name)}${x.note ? ` — <span style="color:var(--text-2,#ccc)">${esc(x.note)}</span>` : ''} <span class="muted">(${fmtDate(x.edate)})</span></span><span style="color:var(--pink)">−${money(x.amount)}</span></div>`).join('');
+      <div class="fm-item"><span>🧾 ${esc(x.name)}${x.note ? ` — <span style="color:var(--text-2,#ccc)">${esc(x.note)}</span>` : ''} <span class="muted">(${fmtDate(x.edate)}${x.paid_by ? ' · ' + esc(x.paid_by) + ' · ' + methodLabel(x.method) : ''})</span></span><span style="color:var(--pink)">−${money(x.amount)}</span></div>`).join('');
     return `
     <div class="fin-month">
       <button class="fm-head fm-toggle" data-idx="${idx}">
@@ -1098,7 +1109,7 @@ async function openStudioExpensesModal() {
   const nameSuggest = names.map((n) => `<option value="${esc(n)}"></option>`).join('');
   const list = (f.expenses || []).map((e) => `
     <div class="day-row" style="cursor:default">
-      <span class="dr-main"><b>${esc(e.name)}</b>${e.note ? `<span class="muted"> · ${esc(e.note)}</span>` : ''}<div class="muted" style="font-size:12px">📅 ${fmtDate(e.edate)} · ${esc(e.created_by || '')}</div></span>
+      <span class="dr-main"><b>${esc(e.name)}</b>${e.note ? `<span class="muted"> · ${esc(e.note)}</span>` : ''}<div class="muted" style="font-size:12px">📅 ${fmtDate(e.edate)}${e.paid_by ? ' · 💰 ' + esc(e.paid_by) + ' · ' + methodLabel(e.method) : ''}</div></span>
       <b style="color:var(--pink)">−${money(e.amount)}</b>
       <button class="mini-btn red" data-expdel="${e.id}">🗑</button>
     </div>`).join('') || '<div class="muted" style="padding:8px 0">Hali xarajat yo\'q</div>';
@@ -1114,6 +1125,7 @@ async function openStudioExpensesModal() {
         <div class="field"><label>Summa (so'm)</label><input id="ex_amt" type="number" inputmode="numeric" placeholder="masalan: 200000" /></div>
         <div class="field"><label>Sana</label><input id="ex_date" type="date" /></div>
       </div>
+      ${expenseMetaFields()}
       <div class="field"><label>Izoh (ixtiyoriy)</label><input id="ex_note" /></div>
       <button class="btn-save" id="ex_save">+ Xarajat qo'shish</button>
     </div>
@@ -1124,7 +1136,7 @@ async function openStudioExpensesModal() {
       if (!name) { toast('Xarajat nomini kiriting'); return; }
       const amount = parseInt($('#ex_amt').value || '0', 10);
       if (amount <= 0) { toast('Summani kiriting'); return; }
-      await api('/api/studio/expenses', { method: 'POST', body: JSON.stringify({ name, amount, edate: $('#ex_date').value || null, note: $('#ex_note').value }) });
+      await api('/api/studio/expenses', { method: 'POST', body: JSON.stringify({ name, amount, edate: $('#ex_date').value || null, note: $('#ex_note').value, ...readExpenseMeta() }) });
       toast('🧾 Xarajat qo\'shildi'); openStudioExpensesModal();
     });
     $('#modalBody').querySelectorAll('[data-expdel]').forEach((b) => b.addEventListener('click', async () => {
@@ -1804,15 +1816,18 @@ async function openBudgetSetModal(c) {
 
 function openBudgetSpendModal(category) {
   openModal(`💸 Xarajat — ${esc(category)}`, `
-    <div class="field"><label>Summa (so'm)</label><input id="sp_amt" type="number" inputmode="numeric" placeholder="masalan: 180000" /></div>
-    <div class="field"><label>Sana</label><input id="sp_date" type="date" /></div>
+    <div class="field-row">
+      <div class="field"><label>Summa (so'm)</label><input id="sp_amt" type="number" inputmode="numeric" placeholder="masalan: 180000" /></div>
+      <div class="field"><label>Sana</label><input id="sp_date" type="date" /></div>
+    </div>
+    ${expenseMetaFields()}
     <div class="field"><label>Izoh (ixtiyoriy)</label><input id="sp_note" placeholder="masalan: 6 kishiga tushlik" /></div>
     <button class="btn-save" id="sp_ok">+ Yozish</button>`,
   () => {
     $('#sp_ok').addEventListener('click', async () => {
       const amount = parseInt($('#sp_amt').value || '0', 10);
       if (amount <= 0) { toast('Summani kiriting'); return; }
-      const res = await api('/api/budget/spend', { method: 'POST', body: JSON.stringify({ category, amount, edate: $('#sp_date').value || null, note: $('#sp_note').value }) });
+      const res = await api('/api/budget/spend', { method: 'POST', body: JSON.stringify({ category, amount, edate: $('#sp_date').value || null, note: $('#sp_note').value, ...readExpenseMeta() }) });
       if (res.error) { toast(res.error); return; }
       closeModal(); toast('💸 Xarajat yozildi'); render();
     });
