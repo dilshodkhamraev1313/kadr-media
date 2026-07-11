@@ -1914,7 +1914,9 @@ def api_mark_client_payment(user, b):
     conn = get_db()
     ex = conn.execute("SELECT id FROM client_payments WHERE project=? AND ym=?", (project, ym)).fetchone()
     if ex:
-        conn.execute("DELETE FROM client_payments WHERE project=? AND ym=?", (project, ym))
+        # toggle OFF — to'lov yozuvi (client_payments) VA daftar (income_ledger) birga o'chadi (drift yo'q)
+        conn.execute("DELETE FROM income_ledger WHERE source_type='client' AND source_id=?", (ex["id"],))
+        conn.execute("DELETE FROM client_payments WHERE id=?", (ex["id"],))
         conn.commit()
         conn.close()
         return {"ok": True, "paid": False}
@@ -1922,10 +1924,14 @@ def api_mark_client_payment(user, b):
     amount = b.get("amount")
     if amount is None:
         amount = (prow["monthly_fee"] if prow else 0) or 0
-    conn.execute(
-        "INSERT INTO client_payments (project, ym, amount, pdate, note, created_by) VALUES (?,?,?,?,?,?)",
-        (project, ym, int(amount), uz_today().isoformat(), (b.get("note") or ""), user["name"]))
-    _add_income(conn, "client", None, project, int(amount), b, user, note="Mijoz oylik to'lovi")
+    sql = "INSERT INTO client_payments (project, ym, amount, pdate, note, created_by) VALUES (?,?,?,?,?,?)"
+    params = (project, ym, int(amount), uz_today().isoformat(), (b.get("note") or ""), user["name"])
+    if IS_PG:
+        cpid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        cpid = conn.execute(sql, params).lastrowid
+    # daftar yozuvi client_payment idga bog'lanadi (toggle-off da aniq o'chirish uchun)
+    _add_income(conn, "client", cpid, project, int(amount), b, user, note="Mijoz oylik to'lovi")
     conn.commit()
     conn.close()
     return {"ok": True, "paid": True, "amount": int(amount)}
