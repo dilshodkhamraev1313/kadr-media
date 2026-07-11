@@ -878,14 +878,24 @@ function openStudioDayModal(iso) {
 // To'lov shaffofligi — kim qabul qildi + usul (naqt/plastik)
 const INCOME_RECEIVERS = ['Dilshod Khamraev', 'Gulmira'];
 const INCOME_METHODS = [['naqt', 'Naqt'], ['plastik', 'Plastik']];
-function payMetaFields(recv, method) {
-  return `<div class="field-row">
-    <div class="field"><label>💰 Kim qabul qildi</label><select id="pm_recv">${INCOME_RECEIVERS.map((r) => `<option${r === recv ? ' selected' : ''}>${esc(r)}</option>`).join('')}</select></div>
-    <div class="field"><label>To'lov usuli</label><select id="pm_method">${INCOME_METHODS.map(([k, l]) => `<option value="${k}"${k === method ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
-  </div>`;
+// To'lov: kim qabul qildi + naqt/plastik BO'LIB kiritish (yarmi naqt, yarmi plastik ham bo'ladi)
+function paySplitFields(dfltNaqt) {
+  return `<div class="field"><label>💰 Kim qabul qildi</label><select id="pm_recv">${INCOME_RECEIVERS.map((r) => `<option>${esc(r)}</option>`).join('')}</select></div>
+    <div class="field-row">
+      <div class="field"><label>💵 Naqt (so'm)</label><input id="pm_naqt" type="number" inputmode="numeric" placeholder="0" value="${dfltNaqt != null ? dfltNaqt : ''}" /></div>
+      <div class="field"><label>💳 Plastik (so'm)</label><input id="pm_plastik" type="number" inputmode="numeric" placeholder="0" value="" /></div>
+    </div>
+    <div id="pm_total" class="calc-line"></div>`;
 }
-function readPayMeta() {
-  return { received_by: $('#pm_recv') ? $('#pm_recv').value : '', method: $('#pm_method') ? $('#pm_method').value : '' };
+function readPaySplit() {
+  const naqt = parseInt(($('#pm_naqt') || {}).value || '0', 10) || 0;
+  const plastik = parseInt(($('#pm_plastik') || {}).value || '0', 10) || 0;
+  return { received_by: $('#pm_recv') ? $('#pm_recv').value : '', naqt, plastik, amount: naqt + plastik };
+}
+function bindPaySplit() {
+  const upd = () => { const s = readPaySplit(); const t = $('#pm_total'); if (t) t.innerHTML = `Jami to'lov: <b>${money(s.amount)}</b>`; };
+  ['pm_naqt', 'pm_plastik'].forEach((id) => { const el = $('#' + id); if (el) el.addEventListener('input', upd); });
+  upd();
 }
 
 function openStudioBookingModal(presetDate, edit) {
@@ -916,11 +926,9 @@ function openStudioBookingModal(presetDate, edit) {
       <div class="field"><label>Tugash</label><input id="sb_end" type="time" value="${esc((e.end_time || '12:00').slice(0, 5))}" /></div>
     </div>
     <div id="sb_hours" class="calc-line"></div>
-    <div class="field-row">
-      <div class="field"><label>Umumiy to'lov (so'm)</label><input id="sb_amount" type="number" inputmode="numeric" placeholder="masalan: 900000" value="${e.amount || ''}" /></div>
-      ${edit ? '' : `<div class="field"><label>To'langan / avans (so'm)</label><input id="sb_paidamt" type="number" inputmode="numeric" placeholder="0" value="" /></div>`}
-    </div>
-    ${edit ? `<p class="muted" style="margin:-4px 0 8px">💡 To'lovni bu yerda emas, bron ochilganda "+ To'lov qo'shish" orqali kiritasiz (shaffof daftar).</p>` : payMetaFields()}
+    <div class="field"><label>Umumiy to'lov (so'm)</label><input id="sb_amount" type="number" inputmode="numeric" placeholder="masalan: 900000" value="${e.amount || ''}" /></div>
+    ${edit ? `<p class="muted" style="margin:-4px 0 8px">💡 To'lovni bu yerda emas, bron ochilganda "+ To'lov qo'shish" orqali kiritasiz (shaffof daftar).</p>`
+      : `<div class="sec-label" style="margin:8px 0 4px">💳 Avans / to'langan (naqt + plastik bo'lib ham)</div>${paySplitFields(0)}`}
     <div class="field"><label>Izoh</label><textarea id="sb_note" placeholder="masalan: 2 kishi, rekvizit kerak">${esc(e.note || '')}</textarea></div>
     <div class="modal-actions"><button class="btn-save" id="sb_save">${edit ? '💾 Saqlash' : '🎥 Bron qilish'}</button></div>`,
   () => {
@@ -937,6 +945,7 @@ function openStudioBookingModal(presetDate, edit) {
     ['sb_start', 'sb_end'].forEach((id) => $('#' + id).addEventListener('input', showHours));
     ['sb_op', 'sb_type'].forEach((id) => $('#' + id).addEventListener('change', showOpPay));
     showHours(); showOpPay();
+    if (!edit) bindPaySplit();
     $('#sb_save').addEventListener('click', async () => {
       const name = $('#sb_name').value.trim();
       if (!name) { toast('Mijoz ismini kiriting'); return; }
@@ -949,7 +958,7 @@ function openStudioBookingModal(presetDate, edit) {
         amount: parseInt($('#sb_amount').value || '0', 10),
         note: $('#sb_note').value,
       };
-      if (!edit) { body.paid_amount = parseInt($('#sb_paidamt').value || '0', 10); Object.assign(body, readPayMeta()); }
+      if (!edit) Object.assign(body, readPaySplit());
       if (edit) await api(`/api/studio/${edit.id}`, { method: 'PUT', body: JSON.stringify(body) });
       else await api('/api/studio', { method: 'POST', body: JSON.stringify(body) });
       closeModal(); toast(edit ? '💾 Saqlandi' : '🎥 Bron saqlandi'); render();
@@ -1023,14 +1032,14 @@ function openStudioDetailModal(b) {
 
 function openStudioPayModal(b, rem) {
   openModal('To\'lov qo\'shish', `
-    <p class="muted" style="margin-bottom:10px">Qolgan summa: <b>${money(rem)}</b></p>
-    <div class="field"><label>Qo'shiladigan to'lov (so'm)</label><input id="pay_amt" type="number" inputmode="numeric" value="${rem}" /></div>
-    ${payMetaFields()}
+    <p class="muted" style="margin-bottom:10px">Qolgan summa: <b>${money(rem)}</b> — naqt va plastikka bo'lib ham kiritishingiz mumkin.</p>
+    ${paySplitFields(rem)}
     <button class="btn-save" id="pay_ok">✅ To'lovni qo'shish</button>`, () => {
+    bindPaySplit();
     $('#pay_ok').addEventListener('click', async () => {
-      const a = parseInt($('#pay_amt').value || '0', 10);
-      if (a <= 0) { toast('Summani kiriting'); return; }
-      await api(`/api/studio/${b.id}/pay`, { method: 'POST', body: JSON.stringify({ amount: a, ...readPayMeta() }) });
+      const s = readPaySplit();
+      if (s.amount <= 0) { toast('Summani kiriting'); return; }
+      await api(`/api/studio/${b.id}/pay`, { method: 'POST', body: JSON.stringify(s) });
       closeModal(); toast('💰 To\'lov qo\'shildi'); render();
     });
   });
@@ -2158,13 +2167,14 @@ async function viewCashflow() {
 
 function openClientPayModal(project, fee) {
   openModal(`💵 ${esc(project)} — to'lov qabul qilindi`, `
-    <p class="muted" style="margin-bottom:10px">Oylik summa: <b>${money(fee)}</b></p>
-    ${payMetaFields()}
-    <div class="field"><label>Summa (so'm)</label><input id="cp_amt" type="number" inputmode="numeric" value="${fee || ''}" /></div>
+    <p class="muted" style="margin-bottom:10px">Oylik summa: <b>${money(fee)}</b> — naqt va plastikka bo'lib ham kiritishingiz mumkin.</p>
+    ${paySplitFields(fee)}
     <div class="modal-actions"><button class="btn-save" id="cp_ok">✅ To'landi deb belgilash</button></div>`, () => {
+    bindPaySplit();
     $('#cp_ok').addEventListener('click', async () => {
-      const amt = parseInt($('#cp_amt').value || '0', 10);
-      const res = await api('/api/cashflow/pay', { method: 'POST', body: JSON.stringify({ project, amount: amt || fee, ...readPayMeta() }) });
+      const s = readPaySplit();
+      if (s.amount <= 0) { toast('Summani kiriting'); return; }
+      const res = await api('/api/cashflow/pay', { method: 'POST', body: JSON.stringify({ project, ...s }) });
       if (res && res.ok) { closeModal(); toast('✓ To\'landi deb belgilandi'); render(); }
       else { toast('⚠️ ' + (res && res.error || 'Xatolik')); }
     });

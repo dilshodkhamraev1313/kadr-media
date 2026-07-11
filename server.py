@@ -1921,20 +1921,27 @@ def api_mark_client_payment(user, b):
         conn.close()
         return {"ok": True, "paid": False}
     prow = conn.execute("SELECT monthly_fee FROM projects WHERE name=?", (project,)).fetchone()
-    amount = b.get("amount")
-    if amount is None:
-        amount = (prow["monthly_fee"] if prow else 0) or 0
+    # to'lov summasi: naqt+plastik (split) yoki amount yoki loyiha oylik to'lovi
+    def _iamt(k):
+        try:
+            return max(int(b.get(k) or 0), 0)
+        except (ValueError, TypeError):
+            return 0
+    total = _iamt("naqt") + _iamt("plastik")
+    if total == 0:
+        total = _iamt("amount") or ((prow["monthly_fee"] if prow else 0) or 0)
     sql = "INSERT INTO client_payments (project, ym, amount, pdate, note, created_by) VALUES (?,?,?,?,?,?)"
-    params = (project, ym, int(amount), uz_today().isoformat(), (b.get("note") or ""), user["name"])
+    params = (project, ym, int(total), uz_today().isoformat(), (b.get("note") or ""), user["name"])
     if IS_PG:
         cpid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:
         cpid = conn.execute(sql, params).lastrowid
-    # daftar yozuvi client_payment idga bog'lanadi (toggle-off da aniq o'chirish uchun)
-    _add_income(conn, "client", cpid, project, int(amount), b, user, note="Mijoz oylik to'lovi")
+    # daftarga naqt/plastik bo'lib yoziladi, client_payment idga bog'lanadi
+    _add_income_split(conn, "client", cpid, project, b, user,
+                      note="Mijoz oylik to'lovi", default_amount=total)
     conn.commit()
     conn.close()
-    return {"ok": True, "paid": True, "amount": int(amount)}
+    return {"ok": True, "paid": True, "amount": int(total)}
 
 
 def api_tiers():
@@ -2062,9 +2069,8 @@ def api_create_studio_booking(user, b):
         bid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:
         bid = conn.execute(sql, params).lastrowid
-    if paid_amount > 0:
-        _add_income(conn, "studio", bid, b.get("client_name") or "Studio", paid_amount, b, user,
-                    note="Studio avans" if paid_amount < amount else "Studio to'liq")
+    _add_income_split(conn, "studio", bid, b.get("client_name") or "Studio", b, user,
+                      note="Studio avans", default_amount=paid_amount)
     paid_amount = _recalc_studio_paid(conn, bid)
     fully_paid = 1 if (amount > 0 and paid_amount >= amount) else 0
     log_audit(conn, user["name"], "studio bron qildi",
@@ -2099,6 +2105,39 @@ def _add_income(conn, source_type, source_id, label, amount, b, user, note=""):
         "VALUES (?,?,?,?,?,?,?,?,?)",
         (source_type, source_id, label, int(amount), received_by, method,
          b.get("pdate") or uz_today().isoformat(), note, user["name"]))
+
+
+def _add_income_split(conn, source_type, source_id, label, b, user, note="", default_amount=0):
+    """To'lovni naqt/plastik bo'lib daftarga yozadi — har qismga ALOHIDA yozuv.
+    b'da naqt/plastik summalari bo'lsa — shu; aks holda default_amount (usul: b['method'] yoki naqt).
+    Jami to'langan summani qaytaradi."""
+    def _iamt(k):
+        try:
+            return max(int(b.get(k) or 0), 0)
+        except (ValueError, TypeError):
+            return 0
+    naqt = _iamt("naqt")
+    plastik = _iamt("plastik")
+    if naqt == 0 and plastik == 0:      # orqaga moslik: bitta summa + usul
+        amt = max(int(default_amount or 0), 0)
+        m = (b.get("method") or "naqt").strip().lower()
+        if m == "plastik":
+            plastik = amt
+        else:
+            naqt = amt
+    received_by = (b.get("received_by") or "").strip()
+    if received_by not in INCOME_RECEIVERS:
+        received_by = user["name"] if user["name"] in INCOME_RECEIVERS else INCOME_RECEIVERS[0]
+    pdate = b.get("pdate") or uz_today().isoformat()
+    total = 0
+    for method, amt in (("naqt", naqt), ("plastik", plastik)):
+        if amt > 0:
+            conn.execute(
+                "INSERT INTO income_ledger (source_type, source_id, source_label, amount, received_by, method, pdate, note, created_by) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (source_type, source_id, label, amt, received_by, method, pdate, note, user["name"]))
+            total += amt
+    return total
 
 
 def _backfill_studio_ledger(conn):
@@ -2167,23 +2206,18 @@ def api_income_ledger(user):
 
 
 def api_studio_pay(user, bid, b):
-    """Bronga to'lov qo'shish (avansdan keyin qolganini). To'liq to'lansa — guruhga xabar."""
-    try:
-        add = int(b.get("amount") or 0)
-    except (ValueError, TypeError):
-        add = 0
+    """Bronga to'lov qo'shish (naqt/plastik bo'lib ham). To'liq to'lansa — guruhga xabar."""
     conn = get_db()
     ex = conn.execute("SELECT * FROM studio_bookings WHERE id=?", (bid,)).fetchone()
     if not ex:
         conn.close()
         return None
     ex = dict(ex)
-    new_paid = (ex.get("paid_amount") or 0) + add
     total = ex.get("amount") or 0
-    fully = 1 if (total > 0 and new_paid >= total) else 0
     was_full = ex.get("paid") or 0
-    # To'lov faqat daftarga yoziladi; paid_amount daftardan qayta hisoblanadi (yagona haqiqat)
-    _add_income(conn, "studio", bid, ex.get("client_name") or "Studio", add, b, user, note="Studio to'lov")
+    # To'lov faqat daftarga yoziladi (naqt/plastik bo'lib); paid_amount daftardan hisoblanadi
+    add = _add_income_split(conn, "studio", bid, ex.get("client_name") or "Studio", b, user,
+                            note="Studio to'lov", default_amount=b.get("amount") or 0)
     new_paid = _recalc_studio_paid(conn, bid)
     fully = 1 if (total > 0 and new_paid >= total) else 0
     log_audit(conn, user["name"], "studio to'lov qo'shdi", f"#{bid} +{add} so'm (jami {new_paid}/{total})")
