@@ -354,6 +354,11 @@ body {
 .ldg-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 .ldg-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px;
   padding: 8px 10px; background: rgba(48,209,88,.07); border: 1px solid rgba(48,209,88,.18); border-radius: 9px; }
+/* Loyiha bo'yicha montaj xarajati — kim montaj qilgani */
+.proj-cost { padding: 6px 0; border-bottom: 1px solid var(--border, rgba(255,255,255,.06)); }
+.proj-cost:last-child { border-bottom: none; }
+.pc-editor { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; color: var(--muted);
+  padding: 2px 0 2px 14px; }
 
 /* Reyting + trend */
 .lb-grid { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 16px; margin-top: 16px; align-items: start; }

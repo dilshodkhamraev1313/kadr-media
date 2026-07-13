@@ -171,8 +171,8 @@ SALARY = {
     "Xonzoda": {"title": "Ssenarist + koordinator", "som": {"Fiksa": 2000000, "Intizom": 500000},
                 "usd": {"Koordinatorlik": 100}, "lead": True, "scenarist": True,
                 "close_link": "Koordinatorlik"},
-    "Umida": {"title": "SMM + ssenarist yordamchi", "som": {"Intizom": 500000},
-              "usd": {"Stories": 100, "SMM": 100}, "scenarist": True,
+    "Umida": {"title": "SMM + ssenarist + montajchi", "som": {"Intizom": 500000},
+              "usd": {"Stories": 100, "SMM": 100}, "scenarist": True, "montaj": True,
               "close_link": ["Stories", "SMM"]},
     "Sardor": {"title": "Montajchi", "som": {"Fiksa": 500000, "Intizom": 500000}, "montaj": True},
     "Umid": {"title": "Montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
@@ -1803,10 +1803,16 @@ def api_finance():
     accepted = [dict(r) for r in conn.execute("SELECT * FROM videos WHERE status IN ('qabul_qilindi','joylandi')").fetchall()]
     accepted_m = [v for v in accepted if (v["approved_at"] or "").startswith(month)]
     month_cost = sum(v["amount"] or 0 for v in accepted_m)
-    # Loyiha bo'yicha montaj xarajati (SHU OY)
+    # Loyiha bo'yicha montaj xarajati (SHU OY) — qaysi loyihani kimlar montaj qilgani bilan
     by_project = {}
     for v in accepted_m:
-        by_project[v["project"] or "—"] = by_project.get(v["project"] or "—", 0) + (v["amount"] or 0)
+        p = v["project"] or "—"
+        d = by_project.setdefault(p, {"cost": 0, "editors": {}})
+        d["cost"] += v["amount"] or 0
+        ed = v["editor"] or "—"
+        e = d["editors"].setdefault(ed, {"count": 0, "amount": 0})
+        e["count"] += 1
+        e["amount"] += v["amount"] or 0
     # Kadr Media P&L: loyiha daromadi − jamoa maoshi
     rate = get_usd_rate()
     fee_rows = [dict(r) for r in conn.execute("SELECT name, monthly_fee FROM projects WHERE monthly_fee>0 ORDER BY monthly_fee DESC").fetchall()]
@@ -1827,7 +1833,11 @@ def api_finance():
         "topEditor": (top["name"] if top and top["accepted"] else None),
         "topEditorVideos": (top["accepted"] if top else 0),
         "editors": editors,
-        "byProject": [{"project": k, "cost": v} for k, v in sorted(by_project.items(), key=lambda x: -x[1])],
+        "byProject": [{"project": k, "cost": d["cost"],
+                       "editors": sorted(
+                           [{"name": en, "count": ev["count"], "amount": ev["amount"]}
+                            for en, ev in d["editors"].items()], key=lambda x: -x["amount"])}
+                      for k, d in sorted(by_project.items(), key=lambda x: -x[1]["cost"])],
         "mediaIncome": media_income,
         "payrollTotal": payroll_total,
         "mediaNet": media_income - payroll_total,

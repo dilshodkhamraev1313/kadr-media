@@ -2083,7 +2083,10 @@ async function viewCabinet() {
 async function viewFinance() {
   const f = await api('/api/finance');
   DATA.finance = f;
-  const proj = f.byProject.map((p) => `<div class="mrow"><span>${esc(p.project)}</span><b>${money(p.cost)}</b></div>`).join('') || '<div class="muted">Ma\'lumot yo\'q</div>';
+  const proj = f.byProject.map((p) => `<div class="proj-cost">
+      <div class="mrow"><span><b>${esc(p.project)}</b></span><b>${money(p.cost)}</b></div>
+      ${(p.editors || []).map((e) => `<div class="pc-editor"><span>👤 ${esc(e.name)} <span class="muted">· ${e.count} video</span></span><span>${money(e.amount)}</span></div>`).join('')}
+    </div>`).join('') || '<div class="muted">Ma\'lumot yo\'q</div>';
   const eds = f.editors.map((e) => `<div class="ceo-item"><div class="ci-left">${avatarEl(e.name, e.color, e.avatar, 'mini-av')}
     <div><div class="ci-name">${esc(e.name)}</div><div class="ci-sub">${e.accepted} video · qolgan ${money(e.remaining)}</div></div></div>
     <span class="pill green">${money(e.earned)}</span></div>`).join('');
