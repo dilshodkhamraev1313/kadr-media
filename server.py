@@ -1626,6 +1626,42 @@ def api_recompute_editor(user, editor):
     return {"ok": True, "editor": editor, "changed": changed}
 
 
+def api_backfill_videos(user, b):
+    """CEO — hisoblanmay qolib ketgan montajlarni kiritadi: to'g'ridan-to'g'ri
+    'qabul_qilindi' holatда, joriy lavozim bo'yicha pul bilan (Telegramsiz, kechikishsiz)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    editor = (b.get("editor") or "").strip()
+    items = b.get("videos") or []
+    if not editor or not items:
+        return {"error": "editor va videos kerak"}, 400
+    conn = get_db()
+    now_s = now_local()
+    prev_points = conn.execute(
+        "SELECT COALESCE(SUM(CASE WHEN vtype='podcast' THEN %d ELSE 1 END),0) AS n "
+        "FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi')" % PODCAST_RANK_WEIGHT,
+        (editor,)).fetchone()["n"] or 0
+    created = []
+    for it in items:
+        title = (it.get("title") or "Nomsiz").strip()
+        project = (it.get("project") or "").strip()
+        vt = it.get("vtype") if it.get("vtype") in VIDEO_TYPES else "reels"
+        amount, rk = editor_pay(eff_count(editor, prev_points), vt)
+        sql = ("INSERT INTO videos (project, title, editor, vtype, status, amount, tier, approved_by, approved_at, is_late, vdate, assigned_by) "
+               "VALUES (?,?,?,?,'qabul_qilindi',?,?,?,?,0,?,?)")
+        params = (project, title, editor, vt, amount, rk, user["name"], now_s, uz_today().isoformat(), user["name"])
+        if IS_PG:
+            vid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+        else:
+            vid = conn.execute(sql, params).lastrowid
+        created.append({"id": vid, "title": title, "project": project, "amount": amount})
+        prev_points += PODCAST_RANK_WEIGHT if vt == "podcast" else 1
+    log_audit(conn, user["name"], "montaj backfill (hisoblanmagan)", f"{editor}: {len(created)} video")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "editor": editor, "created": created, "total": sum(c["amount"] for c in created)}
+
+
 def _full_pay(v):
     """Videoning kechikishsiz (to'liq) haqi — saqlangan lavozim (tier) va turi bo'yicha."""
     vt = v.get("vtype") if v.get("vtype") in ("reels", "podcast", "youtube") else "reels"
@@ -4172,6 +4208,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_archive_month(user))
         if path == "/api/editors/recompute":
             return self._json(api_recompute_editor(user, (b.get("editor") or "").strip()))
+        if path == "/api/videos/backfill":
+            return self._json(api_backfill_videos(user, b))
         if path == "/api/projects":
             if r not in APPROVER_ROLES:
                 return self._forbid()
