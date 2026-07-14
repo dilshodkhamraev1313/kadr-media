@@ -1626,6 +1626,29 @@ def api_recompute_editor(user, editor):
     return {"ok": True, "editor": editor, "changed": changed}
 
 
+def api_set_video_project(user, b):
+    """CEO/koordinator — videolarga loyiha (yoki mijoz nomi) biriktiradi."""
+    if user["role"] not in ADMIN_ROLES:
+        return {"error": "Ruxsat yo'q"}, 403
+    ids = b.get("ids") or []
+    project = (b.get("project") or "").strip()
+    if not ids:
+        return {"error": "ids kerak"}, 400
+    conn = get_db()
+    n = 0
+    for vid in ids:
+        try:
+            vid = int(vid)
+        except (ValueError, TypeError):
+            continue
+        conn.execute("UPDATE videos SET project=? WHERE id=?", (project, vid))
+        n += 1
+    log_audit(conn, user["name"], "video loyihasi biriktirildi", f"{n} video → {project or '—'}")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "updated": n, "project": project}
+
+
 def api_backfill_videos(user, b):
     """CEO — hisoblanmay qolib ketgan montajlarni kiritadi: to'g'ridan-to'g'ri
     'qabul_qilindi' holatда, joriy lavozim bo'yicha pul bilan (Telegramsiz, kechikishsiz)."""
@@ -4210,6 +4233,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_recompute_editor(user, (b.get("editor") or "").strip()))
         if path == "/api/videos/backfill":
             return self._json(api_backfill_videos(user, b))
+        if path == "/api/videos/set-project":
+            return self._json(api_set_video_project(user, b))
         if path == "/api/projects":
             if r not in APPROVER_ROLES:
                 return self._forbid()
