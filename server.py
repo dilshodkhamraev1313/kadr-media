@@ -3090,7 +3090,9 @@ def _month_snapshot(conn, ym, actor):
         "mediaIncome": media_income,
         "studio": {"total": st_total, "operatorPay": st_op, "expenses": st_exp,
                    "net": st_net, "paid": st_paid, "debt": max(st_total - st_paid, 0)},
-        "companyNet": media_income + st_net - payroll_total,
+        # Kompaniya sof foyda = jami kirim − payroll − studio xarajat.
+        # Operator puli payroll ICHIDA (_op_earn) — shuning uchun studio net'dan qayta ayirilmaydi (2 marta emas).
+        "companyNet": media_income + st_total - payroll_total - st_exp,
         "shoots": {"totalHours": ss["totalHours"], "studioHours": ss["studioHours"],
                    "mediaHours": ss["mediaHours"], "count": ss["count"], "byOperator": ss["byOperator"]},
         "generatedAt": now_local(), "by": actor,
