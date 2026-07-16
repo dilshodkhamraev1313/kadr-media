@@ -602,6 +602,9 @@ def init_db():
     # xarajatlar: qayerdan pul chiqdi — usul (naqt/plastik) + kim to'ladi (Dilshod/Gulmira)
     add_column_if_missing(conn, "studio_expenses", "method", "TEXT DEFAULT 'naqt'")
     add_column_if_missing(conn, "studio_expenses", "paid_by", "TEXT DEFAULT ''")
+    # jamoa maosh to'lovlari: qaysi hisobdan (Dilshod/Gulmira) + usul (naqt/plastik)
+    add_column_if_missing(conn, "payments", "paid_from", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "payments", "method", "TEXT DEFAULT 'naqt'")
     # checklist_done: belgi (done) + qo'lda izoh (note — masalan nechta ssenariy)
     add_column_if_missing(conn, "checklist_done", "done", "INTEGER DEFAULT 1")
     add_column_if_missing(conn, "checklist_done", "note", "TEXT DEFAULT ''")
@@ -1825,20 +1828,39 @@ def api_create_payment(user, b):
     conn = get_db()
     editor = b.get("editor") or ""
     amount = int(b.get("amount") or 0)
-    sql = "INSERT INTO payments (editor, amount, paid_by, note, pdate) VALUES (?,?,?,?,?)"
-    params = (editor, amount, user["name"], b.get("note") or "", b.get("pdate") or uz_today().isoformat())
+    method, paid_from = _norm_pay_source(b, user)   # usul + qaysi hisobdan (Dilshod/Gulmira)
+    sql = "INSERT INTO payments (editor, amount, paid_by, note, pdate, paid_from, method) VALUES (?,?,?,?,?,?,?)"
+    params = (editor, amount, user["name"], b.get("note") or "",
+              b.get("pdate") or uz_today().isoformat(), paid_from, method)
     if IS_PG:
         pid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:
         pid = conn.execute(sql, params).lastrowid
-    log_audit(conn, user["name"], "to'lov qildi", f"{editor} +{amount} so'm — {b.get('note') or ''}")
+    log_audit(conn, user["name"], "maosh to'ladi", f"{editor} +{amount} so'm · {paid_from} {method}")
     conn.commit()
     conn.close()
+    mlbl = "💳 Plastik" if method == "plastik" else "💵 Naqt"
     send_telegram(
-        f"💸 <b>To'lov amalga oshirildi</b>\n👤 {editor}\n💰 {amount:,} so'm\n👮 To'lagan: {user['name']}".replace(",", " ")
+        f"💸 <b>Maosh to'landi</b>\n👤 {editor}\n💰 {amount:,} so'm\n🏦 Hisob: {paid_from} · {mlbl}\n👮 Kiritdi: {user['name']}".replace(",", " ")
         + (f"\n📝 {b.get('note')}" if b.get("note") else "")
     )
     return {"ok": True, "id": pid}
+
+
+def api_delete_payment(user, pid):
+    """CEO — xato kiritilgan maosh to'lovini o'chiradi."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT editor, amount FROM payments WHERE id=?", (pid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    conn.execute("DELETE FROM payments WHERE id=?", (pid,))
+    log_audit(conn, user["name"], "maosh to'lovini o'chirdi", f"#{pid} {row['editor']} −{row['amount']}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 # ============================================================
@@ -2407,6 +2429,9 @@ def api_studio_finance(user):
     conn = get_db()
     rows = [dict(r) for r in conn.execute("SELECT * FROM studio_bookings").fetchall()]
     exps = [dict(r) for r in conn.execute("SELECT * FROM studio_expenses").fetchall()]
+    # Gulmira (studio hisobidan) to'lagan jamoa maoshlari — studio pulidan chiqim
+    team_pays = [dict(r) for r in conn.execute(
+        "SELECT editor, amount, pdate, method FROM payments WHERE paid_from='Gulmira'").fetchall()]
     conn.close()
     active = [r for r in rows if (r.get("status") or "active") != "bekor_qilindi"]
     months = {}
@@ -2414,8 +2439,8 @@ def api_studio_finance(user):
     def M(ym):
         return months.setdefault(ym or "—", {
             "month": ym or "—", "total": 0, "operatorPay": 0, "expenses": 0, "net": 0,
-            "paid": 0, "debt": 0, "count": 0, "white": 0, "black": 0,
-            "bookings": [], "expensesList": [],
+            "paid": 0, "debt": 0, "count": 0, "white": 0, "black": 0, "teamSalary": 0,
+            "bookings": [], "expensesList": [], "teamSalaryList": [],
         })
 
     for r in active:
@@ -2441,15 +2466,23 @@ def api_studio_finance(user):
         m["expensesList"].append({"name": e.get("name"), "amount": e.get("amount") or 0,
                                   "edate": e.get("edate"), "note": e.get("note") or "",
                                   "method": e.get("method") or "naqt", "paid_by": e.get("paid_by") or ""})
+    for p in team_pays:
+        m = M((p.get("pdate") or "")[:7])
+        m["teamSalary"] += p.get("amount") or 0
+        m["teamSalaryList"].append({"name": p.get("editor"), "amount": p.get("amount") or 0,
+                                    "method": p.get("method") or "naqt"})
     for m in months.values():
         m["bookings"].sort(key=lambda x: (x.get("bdate") or ""))
     for m in months.values():
         m["net"] = m["total"] - m["operatorPay"] - m["expenses"]
+        # Studio real naqd qoldiq = tushgan pul − xarajat − Gulmira to'lagan maosh
+        m["cash"] = m["paid"] - m["expenses"] - m["teamSalary"]
 
     total_all = sum(r["amount"] or 0 for r in active)
     op_all = sum(r.get("operator_pay") or 0 for r in active)
     paid_all = sum(r.get("paid_amount") or 0 for r in active)
     exp_all = sum(e.get("amount") or 0 for e in exps)
+    team_all = sum(p.get("amount") or 0 for p in team_pays)
     return {
         "rooms": STUDIO_ROOMS,
         "months": sorted(months.values(), key=lambda x: x["month"], reverse=True),
@@ -2459,6 +2492,8 @@ def api_studio_finance(user):
         "netAll": total_all - op_all - exp_all,
         "paidAll": paid_all,
         "debtAll": max(total_all - paid_all, 0),
+        "teamSalaryAll": team_all,
+        "cashAll": paid_all - exp_all - team_all,
         "count": len(active),
     }
 
@@ -4419,6 +4454,9 @@ class Handler(BaseHTTPRequestHandler):
         if len(seg) == 3 and seg[1] == "income":
             lid = self._int(seg[2])
             return self._json(api_delete_income(user, lid)) if lid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 3 and seg[1] == "payments":
+            pid = self._int(seg[2])
+            return self._json(api_delete_payment(user, pid)) if pid else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 4 and seg[1] == "studio" and seg[2] == "expenses":
             if not can_edit_studio(user):
                 return self._forbid()

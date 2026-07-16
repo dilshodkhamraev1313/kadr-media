@@ -1076,6 +1076,8 @@ async function openStudioFinanceModal() {
         <span>${money(x.amount)} ${x.debt > 0 ? `· <span style="color:var(--orange)">qarz ${money(x.debt)}</span>` : `· <span style="color:var(--green)">to'landi</span>`}</span></div>`).join('');
     const ex = (mo.expensesList || []).map((x) => `
       <div class="fm-item"><span>🧾 ${esc(x.name)}${x.note ? ` — <span style="color:var(--text-2,#ccc)">${esc(x.note)}</span>` : ''} <span class="muted">(${fmtDate(x.edate)}${x.paid_by ? ' · ' + esc(x.paid_by) + ' · ' + methodLabel(x.method) : ''})</span></span><span style="color:var(--pink)">−${money(x.amount)}</span></div>`).join('');
+    const ts = (mo.teamSalaryList || []).map((x) => `
+      <div class="fm-item"><span>💸 ${esc(x.name)} <span class="muted">· ${methodLabel(x.method)}</span></span><span style="color:var(--pink)">−${money(x.amount)}</span></div>`).join('');
     return `
     <div class="fin-month">
       <button class="fm-head fm-toggle" data-idx="${idx}">
@@ -1089,10 +1091,13 @@ async function openStudioFinanceModal() {
         <div class="mrow"><span style="color:var(--pink)">👤 Operator puli</span><b style="color:var(--pink)">−${money(mo.operatorPay)}</b></div>
         <div class="mrow"><span style="color:var(--pink)">🧾 Xarajatlar</span><b style="color:var(--pink)">−${money(mo.expenses)}</b></div>
         <div class="mrow"><span>📈 Sof foyda</span><b>${money(mo.net)}</b></div>
-        <div class="mrow"><span style="color:var(--green)">✅ To'langan</span><b style="color:var(--green)">${money(mo.paid)}</b></div>
+        <div class="mrow"><span style="color:var(--green)">✅ To'langan (tushgan)</span><b style="color:var(--green)">${money(mo.paid)}</b></div>
         <div class="mrow"><span style="color:var(--orange)">⏳ Qarz</span><b style="color:var(--orange)">${money(mo.debt)}</b></div>
+        ${mo.teamSalary ? `<div class="mrow"><span style="color:var(--pink)">💸 Kadr Media jamoa maoshi (studio hisobidan)</span><b style="color:var(--pink)">−${money(mo.teamSalary)}</b></div>` : ''}
+        <div class="mrow" style="border-top:1px solid var(--border);padding-top:6px"><span>🏦 Studio naqd qoldiq</span><b style="color:${mo.cash >= 0 ? 'var(--green)' : 'var(--red)'}">${money(mo.cash)}</b></div>
         ${bk ? `<div class="fm-sub">📋 Bronlar (${mo.count})</div>${bk}` : ''}
         ${ex ? `<div class="fm-sub">🧾 Xarajatlar</div>${ex}` : ''}
+        ${ts ? `<div class="fm-sub">💸 Jamoa maoshi (Gulmira studio pulidan)</div>${ts}` : ''}
       </div>
     </div>`;
   }).join('') || '<div class="muted">Hali bron yo\'q</div>';
@@ -1374,19 +1379,37 @@ function salaryCard(p) {
     </div>`;
 }
 
-function openTeamPayModal(person, rem) {
+async function openTeamPayModal(person, rem) {
+  const all = await api('/api/payments').catch(() => []);
+  const mine = (all || []).filter((p) => p.editor === person);
+  const canDel = ME.role === 'ceo';
+  const hist = mine.map((p) => `<div class="ldg-row">
+      <span>${money(p.amount)}${p.paid_from ? ' · 🏦 ' + esc(p.paid_from) : ''} · ${p.method === 'plastik' ? '💳' : '💵'} <span class="muted">· ${fmtDate(p.pdate)}${p.note ? ' · ' + esc(p.note) : ''}</span></span>
+      ${canDel ? `<button class="mini-btn red pay-del" data-id="${p.id}">🗑</button>` : ''}</div>`).join('')
+    || '<div class="muted" style="padding:6px 0">To\'lov tarixi yo\'q</div>';
   openModal(`💸 ${esc(person)} — to'lov kiritish`, `
     <p class="muted" style="margin-bottom:10px">Qolgan (bu oy): <b>${money(rem)}</b></p>
     <div class="field"><label>Berilgan summa (so'm)</label><input id="tp_amt" type="number" inputmode="numeric" value="${rem > 0 ? rem : ''}" /></div>
+    ${expenseMetaFields()}
     <div class="field"><label>Izoh (ixtiyoriy)</label><input id="tp_note" placeholder="masalan: avans / to'liq" /></div>
-    <div class="modal-actions"><button class="btn-save" id="tp_ok">✅ To'lovni saqlash</button></div>`, () => {
+    <p class="muted" style="font-size:12px;margin:-2px 0 4px">💡 Gulmira hisobidan to'lansa — Kadr Studio hisobiga "jamoa maoshi" bo'lib yoziladi.</p>
+    <div class="modal-actions"><button class="btn-save" id="tp_ok">✅ To'lovni saqlash</button></div>
+    <div class="divider"></div>
+    <div class="sec-label" style="margin-bottom:8px">💳 To'lovlar tarixi</div>
+    <div class="ldg-list">${hist}</div>`, () => {
     $('#tp_ok').addEventListener('click', async () => {
       const a = parseInt($('#tp_amt').value || '0', 10);
       if (a <= 0) { toast('Summani kiriting'); return; }
-      const r = await api('/api/payments', { method: 'POST', body: JSON.stringify({ editor: person, amount: a, note: $('#tp_note').value }) });
+      const r = await api('/api/payments', { method: 'POST', body: JSON.stringify({ editor: person, amount: a, note: $('#tp_note').value, ...readExpenseMeta() }) });
       if (r && r.error) { toast('⚠️ ' + r.error); return; }
       closeModal(); toast('💸 To\'lov kiritildi'); render();
     });
+    $$('.pay-del').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Bu to\'lovni o\'chirasizmi? (xato kiritilgan bo\'lsa)')) return;
+      const r = await api('/api/payments/' + b.dataset.id, { method: 'DELETE' });
+      if (r && r.error) { toast('⚠️ ' + r.error); return; }
+      toast('🗑 To\'lov o\'chirildi'); openTeamPayModal(person, rem);
+    }));
   });
 }
 
@@ -2590,6 +2613,7 @@ async function openPaymentModal(presetEditor) {
   openModal('To\'lov qilish', `
     <div class="field"><label>Montajchi</label><select id="pmf_ed"><option value="">—</option>${editors.map((e) => `<option ${presetEditor === e.name ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></div>
     <div class="field"><label>Summa (so'm)</label><input id="pmf_amt" type="number" placeholder="300000" /></div>
+    ${expenseMetaFields()}
     <div class="field"><label>Izoh</label><input id="pmf_note" placeholder="Nova va Aziza loyihalari uchun" /></div>
     <div class="field"><label>Sana</label><input id="pmf_date" type="date" /></div>
     <div class="modal-actions"><button class="btn-save" id="pmf_save">💸 To'lash</button></div>`,
@@ -2597,7 +2621,7 @@ async function openPaymentModal(presetEditor) {
     $('#pmf_save').addEventListener('click', async () => {
       const editor = $('#pmf_ed').value; const amount = parseInt($('#pmf_amt').value || '0', 10);
       if (!editor || !amount) { toast('Montajchi va summa kiriting'); return; }
-      await api('/api/payments', { method: 'POST', body: JSON.stringify({ editor, amount, note: $('#pmf_note').value, pdate: $('#pmf_date').value || null }) });
+      await api('/api/payments', { method: 'POST', body: JSON.stringify({ editor, amount, note: $('#pmf_note').value, pdate: $('#pmf_date').value || null, ...readExpenseMeta() }) });
       closeModal(); toast('💸 To\'lov saqlandi'); render();
     });
   });
