@@ -856,7 +856,9 @@ function openStudioDayModal(iso) {
     const room = rooms[b.room] || {};
     const cancelled = b.status === 'bekor_qilindi';
     const st = SHOOT_TYPE_LABEL[b.shoot_type] || '';
-    const badge = cancelled ? ['red', 'bekor'] : (b.paid ? ['green', "to'landi"] : ['orange', 'qarz']);
+    const badge = cancelled ? ['red', 'bekor']
+      : (b.shoot_type === 'kadr_media' ? ['blue', 'Kadr Media']
+      : (b.paid ? ['green', "to'landi"] : ['orange', 'qarz']));
     return `<button class="day-row${cancelled ? ' cancelled' : ''}" data-bk="${b.id}">
       <span class="dr-time">${esc((b.start_time || '').slice(0, 5))}–${esc((b.end_time || '').slice(0, 5))}</span>
       <span class="dr-dot" style="background:${cancelled ? '#6b6b72' : (room.color || '#888')}"></span>
@@ -937,9 +939,12 @@ function openStudioBookingModal(presetDate, edit) {
       <div class="field"><label>Tugash</label><input id="sb_end" type="time" value="${esc((e.end_time || '12:00').slice(0, 5))}" /></div>
     </div>
     <div id="sb_hours" class="calc-line"></div>
-    <div class="field"><label>Umumiy to'lov (so'm)</label><input id="sb_amount" type="number" inputmode="numeric" placeholder="masalan: 900000" value="${e.amount || ''}" /></div>
-    ${edit ? `<p class="muted" style="margin:-4px 0 8px">💡 To'lovni bu yerda emas, bron ochilganda "+ To'lov qo'shish" orqali kiritasiz (shaffof daftar).</p>`
-      : `<div class="sec-label" style="margin:8px 0 4px">💳 Avans / to'langan (naqt + plastik bo'lib ham)</div>${paySplitFields(0)}`}
+    <div id="sb_kmnote" class="calc-line" style="display:none;color:var(--amber)">🎬 Kadr Media (ichki) — studio tushumiga pul hisoblanmaydi, faqat xona/vaqt band bo'ladi${edit ? '' : ' (operator puli beriladi)'}.</div>
+    <div id="sb_paysec">
+      <div class="field"><label>Umumiy to'lov (so'm)</label><input id="sb_amount" type="number" inputmode="numeric" placeholder="masalan: 900000" value="${e.amount || ''}" /></div>
+      ${edit ? `<p class="muted" style="margin:-4px 0 8px">💡 To'lovni bu yerda emas, bron ochilganda "+ To'lov qo'shish" orqali kiritasiz (shaffof daftar).</p>`
+        : `<div class="sec-label" style="margin:8px 0 4px">💳 Avans / to'langan (naqt + plastik bo'lib ham)</div>${paySplitFields(0)}`}
+    </div>
     <div class="field"><label>Izoh</label><textarea id="sb_note" placeholder="masalan: 2 kishi, rekvizit kerak">${esc(e.note || '')}</textarea></div>
     <div class="modal-actions"><button class="btn-save" id="sb_save">${edit ? '💾 Saqlash' : '🎥 Bron qilish'}</button></div>`,
   () => {
@@ -953,9 +958,15 @@ function openStudioBookingModal(presetDate, edit) {
         ? `👤 ${esc(op)} operatorga hisoblanadi: <b>${money(opPay[t] || 0)}</b>`
         : `<span class="muted">Operator tanlanmasa — operator puli hisoblanmaydi</span>`;
     };
+    const showKM = () => {
+      const km = $('#sb_type').value === 'kadr_media';
+      $('#sb_kmnote').style.display = km ? '' : 'none';
+      $('#sb_paysec').style.display = km ? 'none' : '';
+    };
     ['sb_start', 'sb_end'].forEach((id) => $('#' + id).addEventListener('input', showHours));
     ['sb_op', 'sb_type'].forEach((id) => $('#' + id).addEventListener('change', showOpPay));
-    showHours(); showOpPay();
+    $('#sb_type').addEventListener('change', showKM);
+    showHours(); showOpPay(); showKM();
     if (!edit) bindPaySplit();
     $('#sb_save').addEventListener('click', async () => {
       const name = $('#sb_name').value.trim();

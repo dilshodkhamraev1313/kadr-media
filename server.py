@@ -74,8 +74,10 @@ STUDIO_EDIT_USERS = ("Dilshod Khamraev", "Gulmira")
 
 # Syomka turlari va OPERATORGA to'lanadigan pul (mijoz to'lovidan ALOHIDA).
 # Bu Kadr Studio bronlarida ham, Kadr Media loyiha syomkalarida ham ishlatiladi.
-SHOOT_TYPES = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video", "vebinar": "Vebinar"}
-OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 200000}
+SHOOT_TYPES = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video", "vebinar": "Vebinar", "kadr_media": "Kadr Media (ichki)"}
+OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 200000, "kadr_media": 50000}
+# Kadr Media (ichki syomka) — studio TUSHUMIga pul hisoblanmaydi (faqat xona/vaqt band + operator puli)
+STUDIO_NO_INCOME_TYPES = ("kadr_media",)
 STUDIO_OPERATORS = ("Said", "Umid")
 
 # Kelib tushgan pullar shaffofligi — kim qabul qildi + qanday usul.
@@ -2124,6 +2126,11 @@ def api_create_studio_booking(user, b):
         paid_amount = int(b.get("paid_amount") or 0)
     except (ValueError, TypeError):
         paid_amount = 0
+    # Kadr Media (ichki) — studio tushumiga pul hisoblanmaydi (faqat xona/vaqt + operator puli)
+    if shoot_type in STUDIO_NO_INCOME_TYPES:
+        amount = 0
+        paid_amount = 0
+        b = {k: v for k, v in b.items() if k not in ("naqt", "plastik", "amount", "method")}
     bdate = b.get("bdate") or uz_today().isoformat()
     conn = get_db()
     # paid/paid_amount daftardan hisoblanadi — dastlab 0, keyin _recalc
@@ -2374,6 +2381,8 @@ def api_update_studio_booking(user, bid, b):
         except (ValueError, TypeError):
             return default
     amount = iv("amount", ex.get("amount") or 0)
+    if shoot_type in STUDIO_NO_INCOME_TYPES:
+        amount = 0  # Kadr Media (ichki) — studio tushumiga hisoblanmaydi
     bdate = b.get("bdate") or ex.get("bdate")
     # paid/paid_amount TAHRIR QILINMAYDI — u daftardan hisoblanadi (to'lov qo'shish/o'chirish orqali)
     conn.execute(
