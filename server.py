@@ -3084,12 +3084,15 @@ def _month_snapshot(conn, ym, actor):
     st_paid = sum(r.get("paid_amount") or 0 for r in active)
     st_exp = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM studio_expenses WHERE edate LIKE ?", (like,)).fetchone()["s"] or 0
     st_net = st_total - st_op - st_exp
+    ss = _shoot_stats(conn, ym)
     return {
         "ym": ym, "rate": rate, "salaries": salaries, "payrollTotal": payroll_total,
         "mediaIncome": media_income,
         "studio": {"total": st_total, "operatorPay": st_op, "expenses": st_exp,
                    "net": st_net, "paid": st_paid, "debt": max(st_total - st_paid, 0)},
         "companyNet": media_income + st_net - payroll_total,
+        "shoots": {"totalHours": ss["totalHours"], "studioHours": ss["studioHours"],
+                   "mediaHours": ss["mediaHours"], "count": ss["count"], "byOperator": ss["byOperator"]},
         "generatedAt": now_local(), "by": actor,
     }
 
@@ -3216,6 +3219,67 @@ def api_charity_add(user, b):
 # ------------------------------------------------------------
 #  OYLIK STATISTIKA (har oy noldan; o'tgan oylar faqat ko'rish)
 # ------------------------------------------------------------
+def _shoot_stats(conn, ym):
+    """Berilgan oydagi barcha syomkalar (Kadr Studio bronlari + Kadr Media syomkalari):
+    jami soat, kim, qaysi vaqtда, qaysi xonada."""
+    like = ym + "%"
+    sb = [dict(r) for r in conn.execute(
+        "SELECT * FROM studio_bookings WHERE bdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')",
+        (like,)).fetchall()]
+    sh = [dict(r) for r in conn.execute(
+        "SELECT * FROM shoots WHERE sdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')",
+        (like,)).fetchall()]
+    items, by_op = [], {}
+    studio_h = media_h = 0.0
+    for b in sb:
+        h = b.get("hours") or _calc_hours(b.get("start_time"), b.get("end_time"))
+        op = b.get("operator") or "—"
+        studio_h += h
+        e = by_op.setdefault(op, {"hours": 0.0, "count": 0}); e["hours"] += h; e["count"] += 1
+        items.append({"source": "studio", "date": b.get("bdate"), "start": (b.get("start_time") or "")[:5],
+                      "end": (b.get("end_time") or "")[:5], "hours": round(h, 1), "operator": op,
+                      "room": b.get("room") or "", "who": b.get("client_name") or "",
+                      "shoot_type": b.get("shoot_type")})
+    for s in sh:
+        h = _calc_hours(s.get("start_time"), s.get("end_time")) if s.get("start_time") else 0
+        op = s.get("operator") or "—"
+        media_h += h
+        e = by_op.setdefault(op, {"hours": 0.0, "count": 0}); e["hours"] += h; e["count"] += 1
+        items.append({"source": "media", "date": s.get("sdate"), "start": (s.get("start_time") or "")[:5],
+                      "end": (s.get("end_time") or "")[:5], "hours": round(h, 1), "operator": op,
+                      "room": "", "who": s.get("project") or "", "shoot_type": s.get("shoot_type")})
+    items.sort(key=lambda x: ((x["date"] or ""), (x["start"] or "")))
+    return {
+        "month": ym,
+        "totalHours": round(studio_h + media_h, 1),
+        "studioHours": round(studio_h, 1),
+        "mediaHours": round(media_h, 1),
+        "count": len(items),
+        "byOperator": sorted([{"name": k, "hours": round(v["hours"], 1), "count": v["count"]}
+                              for k, v in by_op.items()], key=lambda x: -x["hours"]),
+        "items": items,
+    }
+
+
+def api_shoot_stats(user, ym):
+    """Syomka statistikasi (soat/vaqt/kim/xona) — CEO/koordinator/rahbar. Har oy uchun."""
+    if user["role"] not in APPROVER_ROLES:
+        return {"error": "Ruxsat yo'q"}, 403
+    cur = uz_now().strftime("%Y-%m")
+    if not ym or len(ym) != 7:
+        ym = cur
+    if ym > cur:
+        ym = cur
+    conn = get_db()
+    res = _shoot_stats(conn, ym)
+    conn.close()
+    res["current"] = cur
+    res["isPast"] = ym < cur
+    res["rooms"] = STUDIO_ROOMS
+    res["shootTypes"] = SHOOT_TYPES
+    return res
+
+
 def api_month_stats(user, ym):
     """Berilgan oy (YYYY-MM) uchun statistika. O'tgan oylar faqat ko'rish uchun."""
     cur = uz_now().strftime("%Y-%m")
@@ -4224,6 +4288,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
             return self._json(api_month_stats(user, ym))
+        if path == "/api/shoot-stats":
+            ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
+            return self._json(api_shoot_stats(user, ym))
         if path == "/api/leaderboard":
             if role not in APPROVER_ROLES:
                 return self._forbid()

@@ -359,6 +359,16 @@ body {
 .proj-cost:last-child { border-bottom: none; }
 .pc-editor { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; color: var(--muted);
   padding: 2px 0 2px 14px; }
+/* Syomka soatlari */
+.ss-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.ss-nav b { font-size: 15px; }
+.ss-list { display: flex; flex-direction: column; gap: 6px; }
+.ss-item { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center;
+  padding: 9px 12px; background: var(--bg-soft, rgba(255,255,255,.03)); border-radius: 10px; font-size: 13px; }
+.ss-when { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ss-mid { color: var(--text-2, #ccc); }
+.ss-h { white-space: nowrap; color: var(--blue); font-weight: 700; }
+@media (max-width: 600px){ .ss-item { grid-template-columns: 1fr auto; } .ss-when { grid-column: 1 / -1; } }
 
 /* Reyting + trend */
 .lb-grid { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 16px; margin-top: 16px; align-items: start; }

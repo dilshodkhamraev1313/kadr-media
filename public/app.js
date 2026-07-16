@@ -32,7 +32,7 @@ const STUDIO_ROOMS_DEFAULT = {
   white: { label: '1-xona · White', color: '#0A84FF' },
   black: { label: '2-xona · Black', color: '#1C1C1E' },
 };
-const SHOOT_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video', vebinar: 'Vebinar' };
+const SHOOT_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video', vebinar: 'Vebinar', kadr_media: 'Kadr Media' };
 // Studio broni kirita oladiganlar (faqat Dilshod va Gulmira)
 const studioCanEdit = () => !!ME && ['Dilshod Khamraev', 'Gulmira'].includes(ME.name);
 
@@ -249,6 +249,7 @@ const NAV_ITEMS = [
   { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Said', 'Gulmira', 'Xonzoda', 'Umida'] },
   { view: 'stats',     icon: '📈', label: 'Oylik statistika', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'reyting',   icon: '🏆', label: 'Reyting',        roles: ['ceo', 'coordinator', 'lead'] },
+  { view: 'shootstat', icon: '⏱', label: 'Syomka soatlari', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'charity',   icon: '🤲', label: 'Xayriya fondi',  roles: ['ceo', 'lead'], names: ['Dilshod Khamraev', 'Gulmira'] },
 ];
 const UZ_MONTH_FULL = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
@@ -309,6 +310,7 @@ const TITLES = {
   daily:     ['Kun yopish', 'Kunlik sarhisob va KPI intizomi'],
   stats:     ['Oylik statistika', 'Har oy noldan; o\'tgan oylar faqat ko\'rish'],
   reyting:   ['Reyting', 'Jamoa reytingi va oylik trend'],
+  shootstat: ['Syomka soatlari', 'Kadr Studio + Kadr Media — jami soat, kim, qaysi vaqt'],
   budget:    ['Budjet', 'Oylik xarajatlar budjeti va mas\'ullar'],
   bugun:     ['Bugun', 'Bugungi vazifalaringiz va muddatlar'],
   charity:   ['Xayriya fondi', 'Sof foydaning 5% — Alloh yo\'lida'],
@@ -349,6 +351,7 @@ async function render() {
     else if (VIEW === 'daily') await viewDaily();
     else if (VIEW === 'stats') await viewStats();
     else if (VIEW === 'reyting') await viewLeaderboard();
+    else if (VIEW === 'shootstat') await viewShootStats();
     else if (VIEW === 'budget') await viewBudget();
     else if (VIEW === 'charity') await viewCharity();
     else if (VIEW === 'studio') await viewStudio();
@@ -2404,6 +2407,44 @@ async function viewLeaderboard() {
         ${lbRows(d.operators || [], (x) => `<b>${x.month}</b> ta`)}
       </div></div>
     </div>`;
+}
+
+// ============================================================
+//  SYOMKA SOATLARI (studio + media — soat/vaqt/kim/xona)
+// ============================================================
+let SHOOTSTAT_YM = null;
+async function viewShootStats() {
+  if (!SHOOTSTAT_YM) { const t = new Date(); SHOOTSTAT_YM = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`; }
+  const d = await api('/api/shoot-stats?ym=' + SHOOTSTAT_YM);
+  SHOOTSTAT_YM = d.month;
+  const rooms = d.rooms || {};
+  const [y, m] = d.month.split('-').map(Number);
+  const canNext = d.month < d.current;
+  const byOp = (d.byOperator || []).map((o) => `<div class="mrow"><span>👤 <b>${esc(o.name)}</b> <span class="muted">· ${o.count} syomka</span></span><b>${o.hours} soat</b></div>`).join('') || '<div class="muted">Ma\'lumot yo\'q</div>';
+  const items = (d.items || []).map((x) => `<div class="ss-item">
+      <span class="ss-when">${fmtDate(x.date)} · ${esc(x.start)}–${esc(x.end)}</span>
+      <span class="ss-mid">${x.source === 'studio' ? '🎥 ' + (rooms[x.room] ? esc(rooms[x.room].label) : 'Studio') : '📹 Kadr Media'} · ${esc(SHOOT_TYPE_LABEL[x.shoot_type] || x.shoot_type || '')}${x.who ? ' · ' + esc(x.who) : ''}${x.operator && x.operator !== '—' ? ' · 👤 ' + esc(x.operator) : ''}</span>
+      <b class="ss-h">${x.hours} soat</b></div>`).join('') || '<div class="muted" style="padding:10px">Bu oyда syomka yo\'q</div>';
+  $('#content').innerHTML = `
+    <div class="ss-nav">
+      <button class="btn-ghost" data-ssm="prev">‹ Oldingi</button>
+      <b>${UZ_MONTH_FULL[m - 1]} ${y}${d.isPast ? ' · arxiv' : ''}</b>
+      <button class="btn-ghost" data-ssm="next"${canNext ? '' : ' disabled'}>Keyingi ›</button>
+    </div>
+    <div class="stats-grid">
+      ${statTile('⏱', d.totalHours + ' soat', 'Jami syomka soati', 'blue')}
+      ${statTile('🎥', d.studioHours + ' soat', 'Kadr Studio', 'purple')}
+      ${statTile('📹', d.mediaHours + ' soat', 'Kadr Media', 'green')}
+      ${statTile('📊', d.count, 'Jami syomkalar', 'orange')}
+    </div>
+    <div class="panel"><h3>👥 Operator bo'yicha (soat)</h3><div class="money-rows">${byOp}</div></div>
+    <div class="panel"><h3>📋 Barcha syomkalar (${d.count})</h3><div class="ss-list">${items}</div></div>`;
+  $$('[data-ssm]').forEach((b) => b.addEventListener('click', () => {
+    if (b.disabled) return;
+    let [yy, mm] = SHOOTSTAT_YM.split('-').map(Number);
+    if (b.dataset.ssm === 'prev') { mm--; if (mm < 1) { mm = 12; yy--; } } else { mm++; if (mm > 12) { mm = 1; yy++; } }
+    SHOOTSTAT_YM = `${yy}-${String(mm).padStart(2, '0')}`; render();
+  }));
 }
 
 // ============================================================
