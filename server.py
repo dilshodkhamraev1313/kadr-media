@@ -2031,6 +2031,155 @@ def api_cashflow(user):
     }
 
 
+def som(n):
+    """Pul summasini o'qishли ko'rinishда: 14 450 000 so'm."""
+    return "{:,}".format(int(round(n or 0))).replace(",", " ") + " so'm"
+
+
+def api_advisor(user):
+    """MOLIYACHI — CEO uchun avtomatik moliyaviy tahlilchi.
+    Har kuni yangilanadigan holat (minus/xavf/musbat) + ogohlantirishlar +
+    o'tgan oy bilan trend + oy oxiri prognoz. api_cashflow raqamlaridan foydalanadi."""
+    cf = api_cashflow(user)
+    ym = cf["month"]
+    company_net = cf["companyNet"]
+    studio = cf["studioPL"]
+    media = cf["mediaPL"]
+    cash_now = cf["cashNow"]
+    need_salary = cf["needForSalary"]
+    to_collect = cf["toCollect"]
+    payroll_remaining = cf["payrollRemaining"]
+    payroll_total = cf["payrollTotal"]
+    studio_exp = cf["studioExpenses"]
+
+    # --- Oy bo'yicha kunlar (prognoz uchun) ---
+    from calendar import monthrange
+    today = uz_now()
+    dim = monthrange(today.year, today.month)[1]
+    day = today.day
+    frac = day / dim if dim else 1.0
+
+    # --- O'tgan oy arxivi bilan trend ---
+    py, pm = (today.year, today.month - 1) if today.month > 1 else (today.year - 1, 12)
+    prev_ym = "%04d-%02d" % (py, pm)
+    conn = get_db()
+    prow = conn.execute("SELECT data FROM monthly_archive WHERE ym=?", (prev_ym,)).fetchone()
+    conn.close()
+    last = None
+    if prow:
+        try:
+            last = json.loads(prow["data"])
+        except (ValueError, TypeError):
+            last = None
+
+    alerts = []  # {level: critical|warn|good|info, icon, title, text}
+
+    # 1) Kompaniya sof foyda — minus/musbat
+    if company_net < 0:
+        alerts.append({"level": "critical", "icon": "🔴",
+            "title": "Kompaniya MINUSда",
+            "text": "Bu oy sof natija manfiy: " + som(company_net) +
+                    ". Zudlik bilan xarajatni kamaytiring yoki tushumni oshiring."})
+    else:
+        alerts.append({"level": "good", "icon": "🟢",
+            "title": "Kompaniya foydада",
+            "text": "Bu oy sof foyda: +" + som(company_net) + " (Studio " +
+                    som(studio["net"]) + " + Media " + som(media["net"]) + ")."})
+
+    # 2) Naqd — maoshга yetadimi
+    if need_salary > 0:
+        alerts.append({"level": "warn", "icon": "💸",
+            "title": "Maoshга naqd yetmaydi",
+            "text": "Qolgan maosh " + som(payroll_remaining) + ", hozir qo'lда " +
+                    som(cash_now) + ". Yana kamida " + som(need_salary) +
+                    " yig'ish kerak (qarzda " + som(to_collect) + ")."})
+    else:
+        alerts.append({"level": "good", "icon": "💵",
+            "title": "Maoshга naqd yetarli",
+            "text": "Qo'lда " + som(cash_now) + " — qolgan maosh " +
+                    som(payroll_remaining) + " uchun yetarli."})
+
+    # 3) Studio marjasi (yupqa foyda / zarar)
+    st_inc = studio["income"] or 0
+    st_net = studio["net"]
+    margin = (st_net / st_inc) if st_inc else 0
+    if st_net < 0:
+        alerts.append({"level": "critical", "icon": "🎥",
+            "title": "Kadr Studio ZARARда",
+            "text": "Studio xarajati (" + som(studio["expenses"] + studio["operator"]) +
+                    ") tushumдан (" + som(st_inc) + ") oshди. Sof: " + som(st_net) + "."})
+    elif margin < 0.15:
+        alerts.append({"level": "warn", "icon": "🎥",
+            "title": "Studio foydası juda yupqa",
+            "text": "Marja atigi " + str(round(margin * 100)) + "% (sof " + som(st_net) +
+                    "). Xarajat/ijara yuqori — break-even " + som(studio["breakeven"]) + "."})
+
+    # 4) Yig'ilmagan qarz katta
+    if to_collect > 0 and to_collect >= payroll_remaining and payroll_remaining > 0:
+        alerts.append({"level": "warn", "icon": "📥",
+            "title": "Katta qarz yig'ilmagan",
+            "text": som(to_collect) + " hali yig'ilmagan (mijoz + studio). " +
+                    "Inkassatsiya qilinса naqd muammosi yopiladi."})
+
+    # 5) Xarajat trendi — o'tgan oy bilan
+    trend = None
+    if last:
+        last_payroll = last.get("payrollTotal", 0) or 0
+        last_st_exp = (last.get("studio") or {}).get("expenses", 0) or 0
+        # Maosh fondi (to'liq oylik) — to'g'ridan-to'g'ri taqqoslanadi
+        if payroll_total > last_payroll * 1.03:
+            alerts.append({"level": "warn", "icon": "📈",
+                "title": "Maosh fondi oshди",
+                "text": "Bu oy " + som(payroll_total) + " (o'tган oy " + som(last_payroll) +
+                        ", +" + som(payroll_total - last_payroll) + ")."})
+        # Studio xarajati hali oshib boradi — oy oxirigача prognoz
+        proj_st_exp = round(studio_exp / frac) if frac > 0 else studio_exp
+        if studio_exp > last_st_exp:
+            alerts.append({"level": "warn", "icon": "📈",
+                "title": "Studio xarajati o'tган oydан oshди",
+                "text": "Bu oy allaqачон " + som(studio_exp) + " (o'tган oy jami " +
+                        som(last_st_exp) + "). Xarajatни nazorat qiling."})
+        elif proj_st_exp > last_st_exp * 1.1:
+            alerts.append({"level": "info", "icon": "📊",
+                "title": "Studio xarajati oshib ketishi mumkin",
+                "text": "Hozircha " + som(studio_exp) + ", shu suръатда oy oxiri ~" +
+                        som(proj_st_exp) + " (o'tган oy " + som(last_st_exp) + ")."})
+        trend = {"prevYm": prev_ym, "prevNet": last.get("companyNet", 0),
+                 "prevPayroll": last_payroll, "prevStudioExp": last_st_exp}
+
+    # --- Oy oxiri prognoz (barcha kutilган tushum yig'ilса, xarajat shu holда) ---
+    forecast_net = cf["netExpected"]
+
+    # --- Umumiy holat ---
+    if company_net < 0:
+        status, status_label = "minus", "MINUSда"
+    elif need_salary > 0 or st_net < 0:
+        status, status_label = "xavf", "Ehtiyot bo'ling"
+    else:
+        status, status_label = "musbat", "Barqaror"
+
+    # Ogohlantirishlarни jiddiylik bo'yicha tartiblash
+    order = {"critical": 0, "warn": 1, "info": 2, "good": 3}
+    alerts.sort(key=lambda a: order.get(a["level"], 9))
+
+    return {
+        "month": ym,
+        "status": status,
+        "statusLabel": status_label,
+        "day": day, "daysInMonth": dim,
+        "companyNet": company_net,
+        "forecastNet": forecast_net,
+        "payrollTotal": payroll_total,
+        "cashNow": cash_now,
+        "needForSalary": need_salary,
+        "toCollect": to_collect,
+        "studioPL": studio, "mediaPL": media,
+        "alerts": alerts,
+        "trend": trend,
+        "hasPrev": last is not None,
+    }
+
+
 def api_mark_client_payment(user, b):
     """CEO loyiha uchun shu oy mijoz to'lovini belgilaydi/olib tashlaydi (toggle)."""
     project = (b.get("project") or "").strip()
@@ -3884,8 +4033,8 @@ def api_cron_deadline_check():
         if not deadline:
             continue
         left = (deadline - now).total_seconds() / 3600.0
-        if left > 3:
-            continue  # hali erta
+        if left > 2:
+            continue  # hali erta — 2 soat qolganda ogohlantiramiz
         conn.execute("UPDATE videos SET deadline_reminded=1 WHERE id=?", (v["id"],))
         editor = v.get("editor") or "—"
         title = v.get("title") or "—"
@@ -4278,6 +4427,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role != "ceo" else self._json(api_finance())
         if path == "/api/cashflow":
             return self._forbid() if role != "ceo" else self._json(api_cashflow(user))
+        if path == "/api/advisor":
+            return self._forbid() if role != "ceo" else self._json(api_advisor(user))
         if path == "/api/late-videos":
             return self._forbid() if role != "ceo" else self._json(api_late_videos(user))
         if path == "/api/archives":

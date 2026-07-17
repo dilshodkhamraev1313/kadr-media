@@ -140,10 +140,22 @@ function setupAvatarUpload() {
   });
 }
 
+const _inflight = {};
 async function api(url, opts = {}) {
-  const r = await fetch(url, { headers: { 'Content-Type': 'application/json', 'X-Token': TOKEN || '' }, ...opts });
-  if (r.status === 401) { doLogout(); throw new Error('401'); }
-  return r.json();
+  const method = (opts.method || 'GET').toUpperCase();
+  // Double-submit himoyasi: bir xil o'zgartiruvchi so'rov navbatda bo'lsa, uni takrorlamaymiz
+  let key = null;
+  if (method !== 'GET') {
+    key = method + ' ' + url + ' ' + (opts.body || '');
+    if (_inflight[key]) return _inflight[key];
+  }
+  const p = (async () => {
+    const r = await fetch(url, { headers: { 'Content-Type': 'application/json', 'X-Token': TOKEN || '' }, ...opts });
+    if (r.status === 401) { doLogout(); throw new Error('401'); }
+    return r.json();
+  })();
+  if (key) { _inflight[key] = p; p.finally(() => { delete _inflight[key]; }); }
+  return p;
 }
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden');
@@ -229,6 +241,7 @@ const NAV_ITEMS = [
   { view: 'joylash',   icon: '📷', label: 'Joylash',      roles: ['smm'] },
   // Jamoa
   { view: 'dashboard', icon: '▦', label: 'Boshqaruv',     roles: ['ceo', 'coordinator', 'lead'] },
+  { view: 'advisor',   icon: '💼', label: 'Moliyachi',     roles: ['ceo'] },
   { view: 'projects',  icon: '▣', label: 'Loyihalar',     roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'scripts',   icon: '✎', label: 'Ssenariylar',   roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'videos',    icon: '►', label: 'Montaj',        roles: ['ceo', 'coordinator', 'lead'] },
@@ -317,6 +330,7 @@ const TITLES = {
   studio:    ['Kadr Studio', 'Syomka xonalari bandligi va bronlar'],
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
   editors:   ['Montajchilar', 'Kabinetlar va hisob-kitob'],
+  advisor:   ['Moliyachi', 'Kunlik moliyaviy holat, ogohlantirishlar va prognoz'],
   finance:   ['Moliya', 'Montaj xarajatlari va to\'lovlar'],
   cashflow:  ['Pul oqimi', 'Mijoz to\'lovlari va umumiy kirim-chiqim'],
   late:      ['Kechikkanlar', 'Deadline o\'tib puli kamaygan videolar — pulni tiklash'],
@@ -356,6 +370,7 @@ async function render() {
     else if (VIEW === 'charity') await viewCharity();
     else if (VIEW === 'studio') await viewStudio();
     else if (VIEW === 'editors') await viewEditors();
+    else if (VIEW === 'advisor') await viewAdvisor();
     else if (VIEW === 'finance') await viewFinance();
     else if (VIEW === 'cashflow') await viewCashflow();
     else if (VIEW === 'late') await viewLate();
@@ -2157,6 +2172,72 @@ async function viewFinance() {
 // ============================================================
 //  CASHFLOW (Pul oqimi) — mijoz to'lovlari + umumiy kirim/chiqim
 // ============================================================
+async function viewAdvisor() {
+  const a = await api('/api/advisor');
+  DATA.advisor = a;
+  const statusMap = {
+    minus:  { cls: 'st-minus', ic: '🔴', txt: 'Kompaniya hozir minusда — chora ko\'ring' },
+    xavf:   { cls: 'st-warn',  ic: '🟡', txt: 'Ehtiyot bo\'ling — e\'tibor talab qiladigan holatlar bor' },
+    musbat: { cls: 'st-ok',    ic: '🟢', txt: 'Moliyaviy holat barqaror' },
+  };
+  const st = statusMap[a.status] || statusMap.musbat;
+  const alerts = (a.alerts || []).map((x) => `
+    <div class="adv-alert ${x.level}">
+      <div class="adv-ic">${x.icon}</div>
+      <div class="adv-body"><div class="adv-t">${esc(x.title)}</div><div class="adv-x">${esc(x.text)}</div></div>
+    </div>`).join('') || emptyState('Ogohlantirish yo\'q');
+
+  const trendHtml = a.trend ? `
+    <div class="panel" style="margin:14px 0">
+      <h3>📉 O'tган oy bilan taqqoslash (${esc(a.trend.prevYm)})</h3>
+      <div class="money-rows">
+        <div class="mrow"><span>Kompaniya sof foyda</span><b>${money(a.trend.prevNet)} → <span style="color:${a.companyNet >= a.trend.prevNet ? 'var(--green)' : 'var(--red)'}">${money(a.companyNet)}</span></b></div>
+        <div class="mrow"><span>Maosh fondi</span><b>${money(a.trend.prevPayroll)} → <span style="color:${(a.payrollTotal || 0) > a.trend.prevPayroll ? 'var(--orange)' : 'var(--text)'}">${money(a.payrollTotal || 0)}</span></b></div>
+      </div>
+    </div>` : `<div class="cash-alert" style="margin:14px 0">ℹ️ Taqqoslash uchun o'tган oy arxivi yo'q. <b>Oylik arxiv</b>да oyni muzlatsangiz, keyingi oy trend ko'rinadi.</div>`;
+
+  // Pul bo'limlariga yagona kirish (chalkashlikni kamaytirish uchun)
+  const hub = [
+    ['cashflow', '💵', 'Pul oqimi', 'Naqd holat, P&L, break-even'],
+    ['salary', '💰', 'Maosh', 'Fiksa, rahbarlik, to\'lovlar'],
+    ['finance', '₿', 'Moliya', 'Montaj xarajatlari'],
+    ['income', '💳', 'To\'lovlar', 'Kelib tushgan pullar'],
+    ['budget', '🧾', 'Budjet', 'Oylik xarajatlar'],
+    ['late', '⏰', 'Kechikkanlar', 'Puli kamaygan videolar'],
+    ['archive', '🗄', 'Oylik arxiv', 'Oyni muzlatish'],
+  ].map(([v, ic, lab, sub]) => `<button class="adv-hub-btn" data-goview="${v}"><span class="hb-ic">${ic}</span><span class="hb-lab">${lab}</span><span class="hb-sub">${sub}</span></button>`).join('');
+
+  $('#content').innerHTML = `
+    <div class="adv-status ${st.cls}">
+      <div class="adv-st-ic">${st.ic}</div>
+      <div><div class="adv-st-t">${esc(a.statusLabel)}</div><div class="adv-st-x">${esc(st.txt)}</div></div>
+      <div class="adv-st-day">${a.day}/${a.daysInMonth} kun · ${esc(a.month)}</div>
+    </div>
+
+    <div class="stats-grid" style="margin:12px 0">
+      ${statTile((a.companyNet || 0) >= 0 ? '📈' : '📉', money(a.companyNet || 0), 'Kompaniya sof foyda (hozir)', (a.companyNet || 0) >= 0 ? 'green' : 'red')}
+      ${statTile('🔮', money(a.forecastNet || 0), 'Oy oxiri prognoz (hammasi yig\'ilsa)', 'blue')}
+      ${statTile('💵', money(a.cashNow || 0), 'Hozir qo\'lда naqd', (a.cashNow || 0) >= 0 ? 'green' : 'red')}
+      ${statTile('💸', money(a.needForSalary || 0), 'Maoshга yetishi uchun yig\'ilsin', (a.needForSalary || 0) > 0 ? 'orange' : 'green')}
+    </div>
+
+    <div class="panel" style="margin:14px 0">
+      <h3>🔔 Moliyachi ogohlantirishlari</h3>
+      <div class="adv-alerts">${alerts}</div>
+    </div>
+
+    ${trendHtml}
+
+    <div class="panel" style="margin:14px 0">
+      <h3>📂 Pul bo'limlari (batafsil)</h3>
+      <p class="muted" style="margin:4px 0 10px">Barcha moliyaviy bo'limlarга shu yerдан o'ting.</p>
+      <div class="adv-hub">${hub}</div>
+    </div>`;
+
+  document.querySelectorAll('.adv-hub-btn[data-goview]').forEach((b) =>
+    b.addEventListener('click', () => { VIEW = b.dataset.goview; FILTER = 'all'; SEARCH = ''; render(); }));
+}
+
 async function viewCashflow() {
   const f = await api('/api/cashflow');
   DATA.cashflow = f;
