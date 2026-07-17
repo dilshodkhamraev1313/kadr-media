@@ -2184,6 +2184,35 @@ async function viewCashflow() {
       ${statTile('⏳', money(f.mediaOutstanding || 0), 'Mijozlardan kutilayotgan', 'blue')}
     </div>
 
+    <div class="panel cash-panel" style="margin:14px 0">
+      <h3>💵 Naqd holat (cash-flow)</h3>
+      <div class="cash-grid">
+        <div class="cash-cell"><div class="lab">Hozir qo'lда</div><div class="val" style="color:${(f.cashNow || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${money(f.cashNow || 0)}</div><div class="sub">kirim − xarajat − to'langan maosh</div></div>
+        <div class="cash-cell"><div class="lab">📥 Yig'ilishi kerak</div><div class="val" style="color:var(--blue)">${money(f.toCollect || 0)}</div><div class="sub">mijoz qarzi + studio qarzi</div></div>
+        <div class="cash-cell"><div class="lab">📤 To'lanadigan maosh</div><div class="val" style="color:var(--orange)">${money(f.payrollRemaining || 0)}</div><div class="sub">to'langan: ${money(f.payrollPaid || 0)}</div></div>
+      </div>
+      ${(f.needForSalary || 0) > 0
+        ? `<div class="cash-alert warn">⚠️ Maoshni to'liq to'lash uchun kamida <b>${money(f.needForSalary)}</b> qarzdan yig'ilishi kerak (hozirgi naqd yetmaydi).</div>`
+        : `<div class="cash-alert ok">✅ Hozirgi naqd maoshni qoplashga yetadi.</div>`}
+    </div>
+
+    <div class="ceo-grid" style="margin:14px 0">
+      <div class="panel"><h3>🎥 Kadr Studio — P&L</h3><div class="money-rows">
+        <div class="mrow"><span>Tushum (bronlar)</span><b>${money((f.studioPL || {}).income || 0)}</b></div>
+        <div class="mrow"><span style="color:var(--pink)">− Operator puli</span><b style="color:var(--pink)">−${money((f.studioPL || {}).operator || 0)}</b></div>
+        <div class="mrow"><span style="color:var(--pink)">− Xarajatlar (ijara/tushlik...)</span><b style="color:var(--pink)">−${money((f.studioPL || {}).expenses || 0)}</b></div>
+        <div class="mrow big"><span>Studio sof foyda</span><b style="color:${((f.studioPL || {}).net || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${money((f.studioPL || {}).net || 0)}</b></div>
+        <div class="mrow"><span class="muted">⚖️ Break-even (qoplash uchun)</span><b class="muted">${money((f.studioPL || {}).breakeven || 0)}</b></div>
+        <div class="be-note ${((f.studioPL || {}).net || 0) >= 0 ? 'ok' : 'warn'}">${((f.studioPL || {}).net || 0) >= 0 ? `✓ Xarajatlar qoplandi (${money((f.studioPL || {}).income || 0)} ≥ ${money((f.studioPL || {}).breakeven || 0)})` : `⚠️ Qoplash uchun yana ${money(((f.studioPL || {}).breakeven || 0) - ((f.studioPL || {}).income || 0))} tushum kerak`}</div>
+      </div></div>
+      <div class="panel"><h3>📺 Kadr Media — P&L</h3><div class="money-rows">
+        <div class="mrow"><span>Loyiha daromadi (oylik)</span><b>${money((f.mediaPL || {}).income || 0)}</b></div>
+        <div class="mrow"><span style="color:var(--pink)">− Jamoa maoshi</span><b style="color:var(--pink)">−${money((f.mediaPL || {}).cost || 0)}</b></div>
+        <div class="mrow big"><span>Media sof foyda</span><b style="color:${((f.mediaPL || {}).net || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${money((f.mediaPL || {}).net || 0)}</b></div>
+        <div class="mrow" style="border-top:1px solid var(--border);padding-top:8px;margin-top:6px"><span><b>🏢 Kompaniya sof foyda</b></span><b style="color:${(f.companyNet || 0) >= 0 ? 'var(--green)' : 'var(--red)'}">${money(f.companyNet || 0)}</b></div>
+      </div></div>
+    </div>
+
     <div class="panel" style="margin:14px 0">
       <h3>🧾 Mijoz to'lovlari holati</h3>
       <div class="cf-list">${clients}</div>

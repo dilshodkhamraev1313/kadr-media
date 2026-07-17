@@ -1960,20 +1960,23 @@ def api_cashflow(user):
         })
     media_outstanding = max(media_expected - media_received, 0)
 
-    # --- Kadr Studio bronlari (shu oy) ---
+    # --- Kadr Studio bronlari (shu oy) — paid_amount (qisman to'lovlar ham) + operator puli ---
     srows = [dict(r) for r in conn.execute(
-        "SELECT amount, paid FROM studio_bookings WHERE bdate LIKE ? "
+        "SELECT amount, paid_amount, operator_pay FROM studio_bookings WHERE bdate LIKE ? "
         "AND (status IS NULL OR status<>'bekor_qilindi')", (ym + "%",)).fetchall()]
     studio_total = sum(r["amount"] or 0 for r in srows)
-    studio_paid = sum((r["amount"] or 0) for r in srows if r.get("paid"))
+    studio_paid = sum(r.get("paid_amount") or 0 for r in srows)
     studio_unpaid = max(studio_total - studio_paid, 0)
+    studio_op = sum(r.get("operator_pay") or 0 for r in srows)
 
     # --- Chiqim: payroll + studio xarajatlari (shu oy) ---
     payroll_total = 0
+    payroll_paid = 0
     for n in SALARY:
         s = compute_salary(conn, n, rate)
         if s:
             payroll_total += s["total"]
+            payroll_paid += s["paid"]
     studio_exp = conn.execute(
         "SELECT COALESCE(SUM(amount),0) AS s FROM studio_expenses WHERE edate LIKE ?",
         (ym + "%",)).fetchone()["s"] or 0
@@ -1982,6 +1985,21 @@ def api_cashflow(user):
     income_received = media_received + studio_paid
     income_expected = media_expected + studio_total
     expenses_total = payroll_total + studio_exp
+    payroll_remaining = max(payroll_total - payroll_paid, 0)
+
+    # --- Bo'linma P&L (double-count YO'Q: studio operator studioда, media qolganда) ---
+    studio_costs = studio_op + studio_exp
+    studio_net = studio_total - studio_costs
+    media_cost = payroll_total - studio_op          # jamoa maoshi (studio operatorдан tashqari)
+    media_net = media_expected - media_cost
+    company_net = studio_net + media_net            # = income − studio_exp − payroll (2 marta emas)
+
+    # --- Naqd holat (cash-flow) ---
+    cash_out = studio_exp + payroll_paid            # ketgan pul (xarajat + to'langan maosh)
+    cash_now = income_received - cash_out           # hozir qo'lда
+    to_collect = media_outstanding + studio_unpaid  # yig'ilishi kerak
+    need_for_salary = max(payroll_remaining - cash_now, 0)  # maoshга yetishi uchun yig'ilishi shart
+
     return {
         "month": ym,
         "clients": clients,
@@ -1991,13 +2009,25 @@ def api_cashflow(user):
         "studioTotal": studio_total,
         "studioPaid": studio_paid,
         "studioUnpaid": studio_unpaid,
+        "studioOperator": studio_op,
         "payrollTotal": payroll_total,
+        "payrollPaid": payroll_paid,
+        "payrollRemaining": payroll_remaining,
         "studioExpenses": studio_exp,
         "expensesTotal": expenses_total,
         "incomeReceived": income_received,
         "incomeExpected": income_expected,
         "netReceived": income_received - expenses_total,
         "netExpected": income_expected - expenses_total,
+        # Bo'linma P&L
+        "studioPL": {"income": studio_total, "operator": studio_op, "expenses": studio_exp,
+                     "net": studio_net, "breakeven": studio_costs},
+        "mediaPL": {"income": media_expected, "cost": media_cost, "net": media_net},
+        "companyNet": company_net,
+        # Naqd holat
+        "cashNow": cash_now,
+        "toCollect": to_collect,
+        "needForSalary": need_for_salary,
     }
 
 
