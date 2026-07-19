@@ -343,6 +343,11 @@ TEAM = [
     ("Shodiya",          "shodiya", "shod2026", "editor",      "Montajchi",               "#32D74B", None),
     # SMM menejer (faqat joylash)
     ("Aisha",            "aisha",   "aisha2026","smm",         "SMM menejer · Joylash",   "#FF2D55", None),
+    # Jarvis (AI yordamchi, Kadr Jarvis OS loyihasi) — coordinator darajasi: operatsion
+    # ma'lumotlarni (loyiha/vazifa/montaj/oy statistikasi) o'qiy oladi, lekin moliya/
+    # payroll (role=="ceo"ga qat'iy bog'langan) KO'RMAYDI — ovoz-biometrika xavfsizlik
+    # qatlami (Kadr Jarvis OS Phase 9) qo'shilmaguncha ataylab shunday cheklangan.
+    ("Jarvis",           "jarvis",  "BRcIaecCe01qqr1vkcnZ", "coordinator", "AI Yordamchi", "#5AC8FA", None),
     # Mijozlar (faqat o'z loyihasini ko'radi)
     ("Rohatoy Mamolog",                          "rohatoy",  "mijoz2601", "client", "Mijoz", "#0A84FF", "Rohatoy Mamolog"),
     ("Nova School",                              "novaschool","mijoz2602", "client", "Mijoz", "#30D158", "Nova School"),
