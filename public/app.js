@@ -232,6 +232,8 @@ const NAV_ITEMS = [
   { view: 'bugun',     icon: '🎯', label: 'Bugun',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'smm'] },
   // Montajchi uchun
   { view: 'cabinet',   icon: '★', label: 'Mening kabinetim', roles: ['editor'] },
+  // Montaj ham qiladigan rahbar (Shodiya) — o'z montaj kabineti
+  { view: 'cabinet',   icon: '★', label: 'Montaj kabinetim', roles: ['lead'], names: ['Shodiya'] },
   { view: 'myvideos',  icon: '►', label: 'Videolarim',    roles: ['editor'] },
   // Mijoz uchun (birinchi)
   { view: 'client',    icon: '▦', label: 'Loyihalarim',   roles: ['client'] },

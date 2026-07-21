@@ -156,6 +156,7 @@ LEADERSHIP = {
     "Said": ["Namuna mebel", "Nova school", "Nodirbek Primqulov (arab tili)"],
     "Xonzoda": ["Amarkets (Bekzod Treding)", "Fidda kumush taqinchoqlar"],
     "Gulmira": ["Umida-targetolog", "Kadr studio"],
+    "Shodiya": ["Estetik Korreya Mastura"],
 }
 
 # Har xodim maoshi tarkibi:
@@ -179,8 +180,26 @@ SALARY = {
     "Sardor": {"title": "Montajchi", "som": {"Fiksa": 500000, "Intizom": 500000}, "montaj": True},
     "Umid": {"title": "Montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
              "montaj": True, "operator": True},
-    "Shodiya": {"title": "Montajchi", "som": {"Fiksa": 500000, "Intizom": 500000}, "montaj": True},
+    "Shodiya": {"title": "Loyiha rahbari + montajchi", "som": {"Fiksa": 500000, "Intizom": 500000},
+                "lead": True, "montaj": True},
 }
+
+# Rol='lead' bo'lsa ham montaj qiladigan rahbarlar (Shodiya): montajchi ro'yxatiga
+# (video biriktirish, reyting, Bugun, pay) SALARY montaj+lead bayrog'i orqali qo'shiladi.
+MONTAJ_LEADS = tuple(n for n, c in SALARY.items() if c.get("montaj") and c.get("lead"))
+
+
+def is_montajchi_name(name, role=None):
+    """Montajchi (video biriktiriladigan): role='editor' yoki montaj qiluvchi rahbar."""
+    return role == "editor" or name in MONTAJ_LEADS
+
+
+def _montajchi_where():
+    """users jadvalidan montajchilarni tanlash uchun WHERE (role='editor' + montaj-rahbarlar)."""
+    if MONTAJ_LEADS:
+        ph = ",".join(["?"] * len(MONTAJ_LEADS))
+        return "(role='editor' OR name IN (%s))" % ph, list(MONTAJ_LEADS)
+    return "role='editor'", []
 
 # Montajyor lavozimlari (o'yin rank tizimi). Har lavozimga o'tish uchun
 # RANK_STEP ta muvaffaqiyatli qabul qilingan video kerak.
@@ -340,7 +359,7 @@ TEAM = [
     ("Oygul",            "oygul",   "oygu2026", "editor",      "Montajchi",               "#FF6482", None),
     ("Umid",             "umid",    "umid2026", "editor",      "Montajchi",               "#5E5CE6", None),
     ("Umida",            "umida",   "umid2027", "editor",      "Montajchi · Ssenarist",   "#AC8E68", None),
-    ("Shodiya",          "shodiya", "shod2026", "editor",      "Montajchi",               "#32D74B", None),
+    ("Shodiya",          "shodiya", "shod2026", "lead",        "Loyiha rahbari + montajchi", "#32D74B", None),
     # SMM menejer (faqat joylash)
     ("Aisha",            "aisha",   "aisha2026","smm",         "SMM menejer · Joylash",   "#FF2D55", None),
     # Jarvis (AI yordamchi, Kadr Jarvis OS loyihasi) — coordinator darajasi: operatsion
@@ -1369,7 +1388,7 @@ def decorate_video(d, counts, role, username, self_post_names=None):
     d["editor_rank"] = info["rank_key"]
     d["editor_rank_label"] = info["rank_label"]
     d["editor_rank_icon"] = info["rank_icon"]
-    own = (role == "editor" and ed == username)
+    own = (ed == username and is_montajchi_name(username, role))
     if role == "ceo" or own:
         # Hali qabul qilinmagan bo'lsa — lavozim+tur bo'yicha prognoz haq ko'rsatiladi
         if d.get("status") not in DONE_STATUSES:
@@ -1430,7 +1449,7 @@ def api_my_tasks(user):
 
     tasks = {}
     # Montaj qilish kerak (montajchi) — muddat bilan
-    if role == "editor":
+    if is_montajchi_name(name, role):
         tasks["montaj"] = dec(conn.execute(
             "SELECT * FROM videos WHERE editor=? AND status IN ('biriktirildi','qaytarildi') ORDER BY id DESC",
             (name,)).fetchall())
@@ -1791,7 +1810,8 @@ def editor_summary(conn, name):
 
 def api_editors(user):
     conn = get_db()
-    editors = conn.execute("SELECT name, color, title, avatar FROM users WHERE role='editor' ORDER BY name").fetchall()
+    _mw, _mp = _montajchi_where()
+    editors = conn.execute("SELECT name, color, title, avatar FROM users WHERE " + _mw + " ORDER BY name", _mp).fetchall()
     result = []
     for e in editors:
         s = editor_summary(conn, e["name"])
@@ -3496,7 +3516,8 @@ def api_month_stats(user, ym):
                   "count": cnt("SELECT COUNT(*) AS n FROM shoots WHERE operator=? AND (status IS NULL OR status<>'bekor_qilindi') AND sdate LIKE ?", (nm, like))
                             + cnt("SELECT COUNT(*) AS n FROM studio_bookings WHERE operator=? AND (status IS NULL OR status<>'bekor_qilindi') AND bdate LIKE ?", (nm, like))}
                  for nm in STUDIO_OPERATORS]
-    ed_rows = conn.execute("SELECT name FROM users WHERE role='editor' ORDER BY name").fetchall()
+    _mw, _mp = _montajchi_where()
+    ed_rows = conn.execute("SELECT name FROM users WHERE " + _mw + " ORDER BY name", _mp).fetchall()
     editors = [{"name": e["name"],
                 "count": cnt("SELECT COUNT(*) AS n FROM videos WHERE editor=? AND approved_at LIKE ? AND status IN ('qabul_qilindi','joylandi')", (e["name"], like))}
                for e in ed_rows]
@@ -3521,7 +3542,8 @@ def api_leaderboard(user):
 
     allc = _editor_accepted_counts(conn)   # haqiqiy dona (jami)
     pts = _editor_rank_points(conn)        # lavozim ballari (podcast=3)
-    ed_rows = conn.execute("SELECT name FROM users WHERE role='editor' ORDER BY name").fetchall()
+    _mw, _mp = _montajchi_where()
+    ed_rows = conn.execute("SELECT name FROM users WHERE " + _mw + " ORDER BY name", _mp).fetchall()
     montaj = []
     for e in ed_rows:
         nm = e["name"]
