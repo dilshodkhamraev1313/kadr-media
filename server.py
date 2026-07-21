@@ -246,6 +246,20 @@ def _parse_dt(s):
         return None
 
 
+def _norm_due(s):
+    """Qo'lda kiritilgan muddatni 'YYYY-MM-DD HH:MM:SS' ko'rinishiga keltiradi.
+    Faqat sana berilsa — o'sha kun oxiri (23:59). Bo'sh bo'lsa None."""
+    s = (s or "").strip().replace("T", " ")
+    if not s:
+        return None
+    s = s[:19]
+    if len(s) <= 10:
+        return s[:10] + " 23:59:00"
+    if len(s) == 16:  # YYYY-MM-DD HH:MM
+        return s + ":00"
+    return s
+
+
 def _video_deadline_dt(v):
     """Videoning deadline datetime'i: rejalashtirilgan due_at bo'lsa o'sha,
     aks holda assigned_at + tur bo'yicha soat."""
@@ -1494,10 +1508,14 @@ def api_create_video(user, b):
     editor = b.get("editor") or ""
     title = b.get("title") or "Nomsiz video"
     vtype = b.get("vtype") if b.get("vtype") in VIDEO_TYPES else "reels"
-    # Reels — deadline avtomatik taqsimlanadi (kuniga 3 ta, yakshanba o'tkaziladi).
-    # Boshqa turlar (podcast/youtube) — assigned_at + soat bo'yicha (due_at bo'sh).
+    # Muddat: qo'lda kiritilsa — o'sha (override). Aks holda:
+    #  Reels — avtomatik taqsimlanadi (kuniga 3 ta, yakshanba o'tkaziladi).
+    #  Boshqa turlar (podcast/youtube) — assigned_at + soat bo'yicha (due_at bo'sh).
+    manual_due = _norm_due(b.get("due_at"))
     due_at = None
-    if vtype == "reels" and editor:
+    if manual_due:
+        due_at = manual_due
+    elif vtype == "reels" and editor:
         due_at = _next_reel_slot(conn, editor, uz_today()).strftime("%Y-%m-%d %H:%M:%S")
     sql = """INSERT INTO videos (project_id, project, client, script_id, title, editor, vdate, drive_link, note, status, assigned_by, vtype, assigned_at, due_at)
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
@@ -1516,6 +1534,46 @@ def api_create_video(user, b):
     conn.close()
     dline = (" ".join(due_at.split(" ")[:1]) if due_at else "")
     send_telegram(f"🎬 <b>Yangi montaj biriktirildi</b>\n{title}\n🎞 Tur: {VIDEO_TYPES.get(vtype, vtype)}\n👤 Montajchi: {editor}\n📁 {b.get('project') or '—'}"
+                  + (f"\n⏰ Muddat: {dline}" if dline else "")
+                  + f"\n👮 {user['name']}")
+    return dict(row)
+
+
+def api_update_video(user, vid, b):
+    """Biriktirilgan videoni tahrirlash (rahbar): montajchi, tur, muddat, nom, loyiha, izoh.
+    Faqat hali montaj bosqichiga o'tmagan (biriktirildi/qaytarildi) videolar."""
+    if user["role"] not in APPROVER_ROLES:
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM videos WHERE id=?", (vid,)).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    ex = dict(ex)
+    if ex["status"] not in ("biriktirildi", "qaytarildi"):
+        conn.close()
+        return {"error": "Bu video allaqachon montaj bosqichida — tahrirlab bo'lmaydi"}, 400
+    title = (b.get("title") or ex["title"]).strip() or ex["title"]
+    editor = (b.get("editor") if b.get("editor") is not None else ex["editor"]) or ex["editor"]
+    vtype = b.get("vtype") if b.get("vtype") in VIDEO_TYPES else (ex.get("vtype") or "reels")
+    project = b.get("project", ex["project"])
+    client = b.get("client", ex["client"])
+    note = b.get("note", ex["note"])
+    drive = b.get("drive_link", ex["drive_link"])
+    vdate = b.get("vdate") or ex["vdate"]
+    # Muddat: qo'lda kiritilsa — override; bo'sh bo'lsa mavjud due_at saqlanadi.
+    manual_due = _norm_due(b.get("due_at"))
+    due_at = manual_due if manual_due else ex.get("due_at")
+    conn.execute(
+        "UPDATE videos SET title=?, editor=?, vtype=?, project=?, client=?, note=?, drive_link=?, vdate=?, due_at=? WHERE id=?",
+        (title, editor, vtype, project, client, note, drive, vdate, due_at, vid),
+    )
+    log_audit(conn, user["name"], "videoni tahrirladi", f"#{vid} {title} → {editor}")
+    conn.commit()
+    row = conn.execute("SELECT * FROM videos WHERE id=?", (vid,)).fetchone()
+    conn.close()
+    dline = (" ".join(due_at.split(" ")[:1]) if due_at else "")
+    send_telegram(f"✏️ <b>Video tahrirlandi</b>\n{title}\n🎞 {VIDEO_TYPES.get(vtype, vtype)}\n👤 Montajchi: {editor}"
                   + (f"\n⏰ Muddat: {dline}" if dline else "")
                   + f"\n👮 {user['name']}")
     return dict(row)
@@ -4691,6 +4749,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "Topilmadi"}, 404)
             b["_actor"] = user["name"]
             row = api_update_project(pid, b)
+            return self._json(row) if row else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 3 and seg[1] == "videos":
+            vid = self._int(seg[2])
+            if vid is None:
+                return self._json({"error": "Topilmadi"}, 404)
+            row = api_update_video(user, vid, b)
             return self._json(row) if row else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 3 and seg[1] == "scripts":
             sid = self._int(seg[2])
