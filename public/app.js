@@ -2737,6 +2737,7 @@ async function openVideoModal(existing = null) {
   const projOpts = DATA.projects.map((p) => `<option value="${esc(p.name)}" data-client="${esc(p.client)}" ${cur.project === p.name ? 'selected' : ''}>${esc(p.name)} (${esc(p.client)})</option>`).join('');
   const scriptOpts = DATA.scripts.map((s) => `<option value="${s.id}" ${cur.script_id == s.id ? 'selected' : ''}>#${s.id} ${esc(s.title)}</option>`).join('');
   const dlVal = cur.due_at ? String(cur.due_at).replace(' ', 'T').slice(0, 16) : '';
+  const canSetDue = ME.role === 'ceo';  // muddatni qo'lda o'zgartirish faqat CEO
   openModal(editing ? 'Videoni tahrirlash' : 'Videoni montajchiga biriktirish', `
     <div class="field"><label>Video nomi</label><input id="vf_title" value="${esc(cur.title || '')}" placeholder="masalan: Nova reels #12" /></div>
     <div class="field-row">
@@ -2751,9 +2752,9 @@ async function openVideoModal(existing = null) {
       <div class="field"><label>Sana</label><input id="vf_date" type="date" value="${cur.vdate ? String(cur.vdate).slice(0, 10) : ''}" /></div>
       <div class="field"><label>Material/Drive link</label><input id="vf_drive" value="${esc(cur.drive_link || '')}" placeholder="https://drive..." /></div>
     </div>
-    <div class="field"><label>🕒 Muddat (qo'lda) — bo'sh bo'lsa avtomatik</label><input id="vf_due" type="datetime-local" value="${dlVal}" /></div>
+    ${canSetDue ? `<div class="field"><label>🕒 Muddat (qo'lda) — bo'sh bo'lsa avtomatik</label><input id="vf_due" type="datetime-local" value="${dlVal}" /></div>` : ''}
     <div class="field"><label>Izoh / topshiriq</label><textarea id="vf_note" placeholder="Montajchiga ko'rsatma...">${esc(cur.note || '')}</textarea></div>
-    ${editing ? '' : `<p class="muted" style="margin:2px 0 10px">⏰ Muddatni bo'sh qoldirsangiz: Reels avtomatik (kuniga 3 ta, yakshanba dam), boshqa turlar tur bo'yicha soat. Kecha berilgan bo'lsa — muddatni qo'lda qo'ying.</p>`}
+    ${editing ? '' : `<p class="muted" style="margin:2px 0 10px">⏰ Reels muddati avtomatik: montajchiga kuniga 3 tadan taqsimlanadi (yakshanba dam).${canSetDue ? " Kecha berilgan bo'lsa — muddatni qo'lda qo'ying." : ''}</p>`}
     <div class="modal-actions"><button class="btn-save" id="vf_save">${editing ? '💾 Saqlash' : '🎬 Biriktirish'}</button></div>`,
   () => {
     $('#vf_save').addEventListener('click', async () => {
@@ -2762,7 +2763,7 @@ async function openVideoModal(existing = null) {
       const body = { title: $('#vf_title').value.trim() || 'Nomsiz video', project: $('#vf_project').value, client,
         vtype: $('#vf_vtype').value, editor: $('#vf_editor').value, script_id: $('#vf_script').value || null,
         vdate: $('#vf_date').value || null, drive_link: $('#vf_drive').value, note: $('#vf_note').value,
-        due_at: $('#vf_due').value || '' };
+        due_at: (canSetDue && $('#vf_due')) ? ($('#vf_due').value || '') : '' };
       const res = editing
         ? await api(`/api/videos/${cur.id}`, { method: 'PUT', body: JSON.stringify(body) })
         : await api('/api/videos', { method: 'POST', body: JSON.stringify(body) });

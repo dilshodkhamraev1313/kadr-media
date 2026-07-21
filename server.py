@@ -1511,7 +1511,8 @@ def api_create_video(user, b):
     # Muddat: qo'lda kiritilsa — o'sha (override). Aks holda:
     #  Reels — avtomatik taqsimlanadi (kuniga 3 ta, yakshanba o'tkaziladi).
     #  Boshqa turlar (podcast/youtube) — assigned_at + soat bo'yicha (due_at bo'sh).
-    manual_due = _norm_due(b.get("due_at"))
+    # Muddatni qo'lda belgilash — FAQAT CEO. Boshqalar uchun avtomatik (avvalgidek).
+    manual_due = _norm_due(b.get("due_at")) if user["role"] == "ceo" else None
     due_at = None
     if manual_due:
         due_at = manual_due
@@ -1561,8 +1562,8 @@ def api_update_video(user, vid, b):
     note = b.get("note", ex["note"])
     drive = b.get("drive_link", ex["drive_link"])
     vdate = b.get("vdate") or ex["vdate"]
-    # Muddat: qo'lda kiritilsa — override; bo'sh bo'lsa mavjud due_at saqlanadi.
-    manual_due = _norm_due(b.get("due_at"))
+    # Muddat: qo'lda kiritilsa — override (FAQAT CEO); aks holda mavjud due_at saqlanadi.
+    manual_due = _norm_due(b.get("due_at")) if user["role"] == "ceo" else None
     due_at = manual_due if manual_due else ex.get("due_at")
     conn.execute(
         "UPDATE videos SET title=?, editor=?, vtype=?, project=?, client=?, note=?, drive_link=?, vdate=?, due_at=? WHERE id=?",
