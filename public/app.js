@@ -1395,19 +1395,30 @@ function openScenaristModal() {
 // ============================================================
 function salaryCard(p) {
   const rows = p.components.map((c) => {
-    const cls = c.kind === 'auto' ? 'sal-auto' : (c.kind === 'lead' ? 'sal-lead' : '');
-    let html = `<div class="mrow ${cls}"><span>${esc(c.label)}</span><b>${money(c.amount)}</b></div>`;
+    const cls = c.kind === 'auto' ? 'sal-auto' : (c.kind === 'lead' ? 'sal-lead' : (c.kind === 'penalty' ? 'sal-penalty' : ''));
+    const val = c.kind === 'penalty' && c.amount < 0 ? `<span style="color:var(--red)">${money(c.amount)}</span>` : money(c.amount);
+    let html = `<div class="mrow ${cls}"><span>${esc(c.label)}</span><b>${val}</b></div>`;
     if (c.kind === 'lead' && c.detail && c.detail.length) {
       html += c.detail.map((d) => {
         const info = d.byPlan ? `reja ${d.pct}%` : (d.full ? 'to\'liq' : 'yarim');
         return `<div class="mrow sal-sub"><span>↳ ${esc(d.matched || d.project)} · ${info}</span><b class="muted">$${d.usd}</b></div>`;
       }).join('');
     }
+    if (c.kind === 'penalty' && c.detail && c.detail.items && c.detail.items.length) {
+      html += c.detail.items.map((d) => {
+        const tp = d.type === 'qc' ? '🔎 Sifat kech' : '📁 Loyiha kech';
+        return `<div class="mrow sal-sub"><span>↳ ${tp}: ${esc(d.name)} · ${d.days} kun</span><b class="muted">−${money(d.amount)}</b></div>`;
+      }).join('');
+      if (c.detail.cap && c.detail.raw > c.detail.cap) {
+        html += `<div class="mrow sal-sub"><span class="muted">↳ cap qo'llandi (fiksaning 20%i)</span><b class="muted"></b></div>`;
+      }
+    }
     return html;
   }).join('');
   const paid = p.paid || 0;
   const rem = (p.remaining != null) ? p.remaining : p.total;
   const isCeo = ME.role === 'ceo';
+  const pen = p.components.find((c) => c.kind === 'penalty');
   return `
     <div class="team-card">
       <div class="team-head"><div class="team-av" style="background:${colorFor(p.name)}">${initials(p.name)}</div>
@@ -1417,7 +1428,8 @@ function salaryCard(p) {
         <div class="mrow"><span style="color:var(--green)">✅ To'langan</span><b style="color:var(--green)">${money(paid)}</b></div>
         <div class="mrow"><span style="color:var(--orange)">⏳ Qolgan</span><b style="color:var(--orange)">${money(rem)}</b></div>
       </div>
-      ${isCeo ? `<button class="btn-ghost pay-team" data-person="${esc(p.name)}" data-rem="${rem}" style="margin-top:10px;width:100%">💸 To'lov kiritish</button>` : ''}
+      ${isCeo && pen ? `<button class="btn-ghost waive-pen" data-person="${esc(p.name)}" style="margin-top:8px;width:100%">${pen.waived ? '↩️ Jarimani qaytarish' : '🤝 Jarimani kechirish'}</button>` : ''}
+      ${isCeo ? `<button class="btn-ghost pay-team" data-person="${esc(p.name)}" data-rem="${rem}" style="margin-top:8px;width:100%">💸 To'lov kiritish</button>` : ''}
     </div>`;
 }
 
@@ -1490,6 +1502,11 @@ async function viewSalary() {
   });
   $$('.pay-team').forEach((b) => b.addEventListener('click', () =>
     openTeamPayModal(b.dataset.person, parseInt(b.dataset.rem, 10) || 0)));
+  $$('.waive-pen').forEach((b) => b.addEventListener('click', async () => {
+    const r = await api('/api/penalty/waive', { method: 'POST', body: JSON.stringify({ person: b.dataset.person }) });
+    if (r && r.error) { toast('⚠️ ' + r.error); return; }
+    toast(r.waived ? '🤝 Jarima kechirildi' : '↩️ Jarima qaytarildi'); render();
+  }));
 }
 
 // ============================================================

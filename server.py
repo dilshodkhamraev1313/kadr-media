@@ -151,6 +151,13 @@ ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
 INTIZOM_FULL = 500000        # to'liq intizom (25 kun × 20 000)
 
+# Kechikish jarimasi (maoshdan) — Nazorat markazi signallaridan avtomatik.
+# Montaj kechikishi bu yerga KIRMAYDI (u allaqachon 0/yarim pul bilan jazolangan).
+LATE_PROJECT_PER_DAY = 10000  # rahbar loyihasi deadline'dan o'tgan har kun uchun
+LATE_QC_PER_DAY = 10000       # Said sifat nazoratini kechiktirgan har kun (1 kun muhlatdan keyin)
+QC_GRACE_DAYS = 1             # montaj qilingandan keyin sifat nazorati uchun muhlat
+PENALTY_CAP_PCT = 0.20        # jarima fiksaning shu ulushidan oshmasin (maoshni vayron qilmaslik)
+
 # Har xodim rahbarlik qiladigan loyihalar (nomi projects jadvalidagi bilan mos).
 LEADERSHIP = {
     "Said": ["Namuna mebel", "Nova school", "Nodirbek Primqulov (arab tili)"],
@@ -589,6 +596,8 @@ def init_db():
         on_time INTEGER DEFAULT 0, source TEXT DEFAULT 'bot', created_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS smm_done (
         id {pk}, person TEXT, project TEXT, ym TEXT)""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS penalty_waiver (
+        id {pk}, person TEXT, ym TEXT, created_by TEXT, created_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS client_payments (
         id {pk}, project TEXT, ym TEXT, amount INTEGER DEFAULT 0,
         pdate TEXT, note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
@@ -3320,6 +3329,44 @@ def api_smm_toggle(user, b):
     return {"ok": True, "project": project, "done": done}
 
 
+def _lateness_penalty(conn, name, today):
+    """Kechikish jarimasi (shu oy, so'mda): rahbar kechikkan loyihalari (kuniga
+    LATE_PROJECT_PER_DAY) + Said sifat nazorati kechikishi (1 kun muhlatdan keyin
+    kuniga LATE_QC_PER_DAY). Fiksaning PENALTY_CAP_PCT ulushida cheklangan.
+    Montaj kechikishi bu yerda YO'Q (u alohida 0/yarim pul bilan jazolangan).
+    Qaytaradi: (jarima>=0, {raw, cap, items})."""
+    items, raw = [], 0
+    # 1) Kechikkan loyihalar — mas'ul rahbar
+    for p in api_projects():
+        if p.get("responsible") != name or p["fullyDone"] or not p.get("overdue"):
+            continue
+        days = abs(p.get("daysLeft") or 0)
+        if days <= 0:
+            continue
+        amt = days * LATE_PROJECT_PER_DAY
+        raw += amt
+        items.append({"type": "project", "name": p["name"], "days": days, "amount": amt})
+    # 2) Sifat nazorati kechikishi — faqat Said (montaj qilingan, tekshirilmagan videolar)
+    if name == "Said":
+        rows = conn.execute("SELECT title, montaj_at FROM videos WHERE status='montaj_qilindi'").fetchall()
+        for r in rows:
+            m = _parse_dt(r["montaj_at"])
+            if not m:
+                continue
+            days_late = (today - m.date()).days - QC_GRACE_DAYS
+            if days_late <= 0:
+                continue
+            amt = days_late * LATE_QC_PER_DAY
+            raw += amt
+            items.append({"type": "qc", "name": r["title"], "days": days_late, "amount": amt})
+    cfg = SALARY.get(name, {})
+    som = cfg.get("som") or {}
+    fiksa = som.get("Fiksa") or sum(som.values())
+    cap = int(fiksa * PENALTY_CAP_PCT) if fiksa else 0
+    capped = min(raw, cap) if cap else raw
+    return capped, {"raw": raw, "cap": cap, "items": items}
+
+
 def compute_salary(conn, name, rate):
     cfg = SALARY.get(name)
     if not cfg:
@@ -3379,6 +3426,16 @@ def compute_salary(conn, name, rate):
         comps.append({"label": "Montaj puli (shu oy)", "amount": _montaj_earn(conn, name, ym), "kind": "auto"})
     if cfg.get("studio_bonus"):
         comps.append({"label": "Studio mijoz bonusi", "amount": _studio_client_bonus(conn), "kind": "auto"})
+    # Kechikish jarimasi (rahbar loyihalari + Said QC) — CEO kechirishi mumkin
+    pen, pdet = _lateness_penalty(conn, name, today)
+    if pen > 0:
+        waived = conn.execute("SELECT 1 FROM penalty_waiver WHERE person=? AND ym=?", (name, ym)).fetchone()
+        if waived:
+            comps.append({"label": "Kechikish jarimasi — CEO kechirdi", "amount": 0,
+                          "kind": "penalty", "detail": pdet, "waived": True})
+        else:
+            comps.append({"label": f"Kechikish jarimasi ({len(pdet['items'])} ta ish)", "amount": -pen,
+                          "kind": "penalty", "detail": pdet})
     total = sum(c["amount"] for c in comps)
     ym = uz_now().strftime("%Y-%m")
     paid = _paid_to(conn, name, ym)
@@ -3404,6 +3461,29 @@ def api_payroll(user):
     me = compute_salary(conn, user["name"], rate)
     conn.close()
     return {"rate": rate, "isCeo": False, "me": me}
+
+
+def api_waive_penalty(user, b):
+    """CEO — xodimning shu oylik kechikish jarimasini kechiradi/qaytaradi (toggle)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    person = (b.get("person") or "").strip()
+    if not person:
+        return {"error": "Xodim kerak"}, 400
+    ym = uz_now().strftime("%Y-%m")
+    conn = get_db()
+    ex = conn.execute("SELECT id FROM penalty_waiver WHERE person=? AND ym=?", (person, ym)).fetchone()
+    if ex:
+        conn.execute("DELETE FROM penalty_waiver WHERE id=?", (ex["id"],))
+        waived = False
+    else:
+        conn.execute("INSERT INTO penalty_waiver (person, ym, created_by, created_at) VALUES (?,?,?,?)",
+                     (person, ym, user["name"], now_local()))
+        waived = True
+    log_audit(conn, user["name"], "kechikish jarimasi " + ("kechirildi" if waived else "qaytarildi"), person)
+    conn.commit()
+    conn.close()
+    return {"ok": True, "person": person, "waived": waived}
 
 
 # ------------------------------------------------------------
@@ -4729,6 +4809,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_backfill_videos(user, b))
         if path == "/api/videos/set-project":
             return self._json(api_set_video_project(user, b))
+        if path == "/api/penalty/waive":
+            return self._json(api_waive_penalty(user, b))
         if path == "/api/projects":
             if r not in APPROVER_ROLES:
                 return self._forbid()
