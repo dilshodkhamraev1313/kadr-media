@@ -243,6 +243,7 @@ const NAV_ITEMS = [
   { view: 'joylash',   icon: '📷', label: 'Joylash',      roles: ['smm'] },
   // Jamoa
   { view: 'dashboard', icon: '▦', label: 'Boshqaruv',     roles: ['ceo', 'coordinator', 'lead'] },
+  { view: 'control',   icon: '🧭', label: 'Nazorat markazi', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'advisor',   icon: '💼', label: 'Moliyachi',     roles: ['ceo'] },
   { view: 'projects',  icon: '▣', label: 'Loyihalar',     roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'scripts',   icon: '✎', label: 'Ssenariylar',   roles: ['ceo', 'coordinator', 'lead'] },
@@ -332,6 +333,7 @@ const TITLES = {
   studio:    ['Kadr Studio', 'Syomka xonalari bandligi va bronlar'],
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
   editors:   ['Montajchilar', 'Kabinetlar va hisob-kitob'],
+  control:   ['Nazorat markazi', 'Hozir nima qotib qolgan — kechikkan, xavfli va jim ishlar'],
   advisor:   ['Moliyachi', 'Kunlik moliyaviy holat, ogohlantirishlar va prognoz'],
   finance:   ['Moliya', 'Montaj xarajatlari va to\'lovlar'],
   cashflow:  ['Pul oqimi', 'Mijoz to\'lovlari va umumiy kirim-chiqim'],
@@ -372,6 +374,7 @@ async function render() {
     else if (VIEW === 'charity') await viewCharity();
     else if (VIEW === 'studio') await viewStudio();
     else if (VIEW === 'editors') await viewEditors();
+    else if (VIEW === 'control') await viewControlCenter();
     else if (VIEW === 'advisor') await viewAdvisor();
     else if (VIEW === 'finance') await viewFinance();
     else if (VIEW === 'cashflow') await viewCashflow();
@@ -437,8 +440,9 @@ function matchSearch(text) { return !SEARCH || (text || '').toLowerCase().includ
 function taskVideoItem(v) {
   const acts = videoActions(v);
   const who = v.editor ? `👤 ${esc(v.editor)} · ` : '';
-  return `<div class="task-item">
-    <div class="task-main"><div class="task-title">${esc(v.title)}</div>
+  const late = v.overdue || v.is_late;
+  return `<div class="task-item${late ? ' overdue' : ''}">
+    <div class="task-main"><div class="task-title">${late ? '🔴 ' : ''}${esc(v.title)}</div>
       <div class="task-sub">${who}📁 ${esc(v.project) || '—'} · 🎞 ${esc(VIDEO_TYPE_LABEL[v.vtype] || 'Reels')} ${rankChip(v)} ${deadlineChip(v)}</div></div>
     ${acts ? `<div class="task-act">${acts}</div>` : ''}</div>`;
 }
@@ -449,6 +453,14 @@ async function viewToday() {
   ]);
   DATA.myTasks = t;
   const tk = t.tasks || {};
+  // Kuchli Bugun — montaj vazifalari: kechikkan/muddati yaqin eng tepada
+  if (Array.isArray(tk.montaj)) {
+    tk.montaj.sort((a, b) => {
+      const ha = a.hours_left == null ? 9999 : a.hours_left;
+      const hb = b.hours_left == null ? 9999 : b.hours_left;
+      return ha - hb;
+    });
+  }
   // videoActionUI uchun barcha task-videolarni cache'ga
   DATA.videos = [].concat(tk.montaj || [], tk.qc || [], tk.accept || [], tk.post || []);
   let html = `<div class="today-hi">Assalomu alaykum, <b>${esc(t.name)}</b>! ${t.total ? `Bugun <b>${t.total}</b> ta vazifangiz bor 👇` : 'Bugun ochiq vazifa yo\'q — zo\'r ish! 🎉'}</div>`;
@@ -2184,6 +2196,58 @@ async function viewFinance() {
 // ============================================================
 //  CASHFLOW (Pul oqimi) — mijoz to'lovlari + umumiy kirim/chiqim
 // ============================================================
+async function viewControlCenter() {
+  const cc = await api('/api/control-center');
+  const t = cc.totals || {};
+  const goVideos = ' data-goview="videos"';
+  const goProjects = ' data-goview="projects"';
+
+  const hoursTxt = (h) => h < 0 ? `${Math.abs(Math.round(h))} soat kechikdi` : (h < 1 ? `${Math.round(h * 60)} daq qoldi` : `${Math.round(h)} soat qoldi`);
+  const montajRow = (m, cls) => `<div class="cc-row ${cls}"${goVideos}>
+    <div class="cc-main"><div class="cc-t">${esc(m.title)}</div>
+      <div class="cc-sub">👤 ${esc(m.editor)} · 📁 ${esc(m.project)} · 🎞 ${esc(VIDEO_TYPE_LABEL[m.vtype] || 'Reels')}</div></div>
+    <span class="cc-badge ${cls}">${hoursTxt(m.hours)}</span></div>`;
+  const projRow = (p, cls, extra) => `<div class="cc-row ${cls}"${goProjects}>
+    <div class="cc-main"><div class="cc-t">${esc(p.name)}</div>
+      <div class="cc-sub">👤 ${esc(p.responsible)}${p.stage ? ' · ⏳ ' + esc(p.stage) : ''}</div></div>
+    <span class="cc-badge ${cls}">${extra}</span></div>`;
+
+  const sect = (icon, title, rows) => rows.length
+    ? `<div class="panel" style="margin:14px 0"><h3>${icon} ${title} <span class="muted">(${rows.length})</span></h3><div class="cc-list">${rows.join('')}</div></div>` : '';
+
+  const overdueM = (cc.overdueMontaj || []).map((m) => montajRow(m, 'red'));
+  const soonM = (cc.soonMontaj || []).map((m) => montajRow(m, 'orange'));
+  const overdueP = (cc.overdueProjects || []).map((p) => projRow(p, 'red', `${Math.abs(p.daysLeft || 0)} kun kechikdi`));
+  const riskP = (cc.atRiskProjects || []).map((p) => projRow(p, 'orange', p.daysLeft === 0 ? 'Bugun!' : `${p.daysLeft} kun qoldi`));
+  const silentP = (cc.silentProjects || []).map((p) => projRow(p, 'gray', `${p.silentDays} kun jim`));
+  const qcB = (cc.qcBacklog || []).map((q) => `<div class="cc-row gray"${goVideos}><div class="cc-main"><div class="cc-t">${esc(q.title)}</div><div class="cc-sub">👤 ${esc(q.editor || '—')} · 📁 ${esc(q.project || '—')}</div></div><span class="cc-badge gray">Said kutmoqda</span></div>`);
+  const people = (cc.byPerson || []).map((p) => `<div class="cc-row ${p.total > 0 ? 'red' : ''}">
+    <div class="cc-main"><div class="cc-t">${esc(p.name)}</div>
+      <div class="cc-sub">${p.overdueMontaj ? `🎬 ${p.overdueMontaj} montaj` : ''}${p.overdueMontaj && p.overdueProjects ? ' · ' : ''}${p.overdueProjects ? `📁 ${p.overdueProjects} loyiha` : ''}</div></div>
+    <span class="cc-badge red">${p.total} kechikkan</span></div>`);
+
+  const allClear = !overdueM.length && !soonM.length && !overdueP.length && !riskP.length && !silentP.length && !qcB.length;
+
+  $('#content').innerHTML = `
+    <div class="stats-grid" style="margin-bottom:6px">
+      ${statTile('🔴', String(t.overdueMontaj || 0), 'Kechikkan montaj', (t.overdueMontaj ? 'red' : 'green'))}
+      ${statTile('🔴', String(t.overdueProjects || 0), 'Kechikkan loyiha', (t.overdueProjects ? 'red' : 'green'))}
+      ${statTile('🟠', String((t.soonMontaj || 0) + (t.atRisk || 0)), 'Xavf ostida (yaqin)', ((t.soonMontaj || 0) + (t.atRisk || 0) ? 'orange' : 'green'))}
+      ${statTile('😴', String(t.silent || 0), 'Jim qolgan loyiha', (t.silent ? 'orange' : 'green'))}
+    </div>
+    ${allClear ? `<div class="panel" style="margin:14px 0;text-align:center"><div style="font-size:40px">✅</div><h3 style="margin:6px 0">Hammasi joyida!</h3><p class="muted">Hozir kechikkan yoki qotib qolgan ish yo'q. Zo'r boshqaruv! 🎉</p></div>` : ''}
+    ${sect('🔴', 'Kechikkan montaj', overdueM)}
+    ${sect('🟠', 'Muddati yaqin montaj', soonM)}
+    ${sect('🔴', 'Kechikkan loyihalar', overdueP)}
+    ${sect('🟠', 'Xavf ostidagi loyihalar', riskP)}
+    ${sect('😴', 'Jim qolgan loyihalar (3+ kun harakatsiz)', silentP)}
+    ${sect('🔎', 'Sifat nazorati navbati', qcB)}
+    ${cc.byPerson && cc.byPerson.length ? `<div class="panel" style="margin:14px 0"><h3>👤 Kim orqada qolyapti</h3><div class="cc-list">${people.join('')}</div></div>` : ''}`;
+
+  $('#content').querySelectorAll('.cc-row[data-goview]').forEach((r) =>
+    r.addEventListener('click', () => { VIEW = r.dataset.goview; FILTER = 'all'; SEARCH = ''; render(); }));
+}
+
 async function viewAdvisor() {
   const a = await api('/api/advisor');
   DATA.advisor = a;

@@ -1493,6 +1493,88 @@ def api_my_tasks(user):
     return {"tasks": tasks, "total": total, "name": name}
 
 
+def api_control_center(user):
+    """NAZORAT MARKAZI — CEO/rahbar uchun 'hozir nima qotib qolgan' bir ekranda.
+    Menejment by exception: kechikkan montaj, muddati o'tgan/xavfli loyihalar,
+    jim qolgan loyihalar, sifat nazorati navbati — egasi bilan. Rahbar faqat
+    o'z loyihalari bo'yicha, CEO/koordinator hammasi."""
+    conn = get_db()
+    role = user["role"]
+    is_admin = role in ("ceo", "coordinator")
+    projects = visible_projects(user)  # rol bo'yicha ko'rinadigan (rahbar → o'ziniki)
+    proj_names = set(p["name"] for p in projects)
+    now = uz_now().replace(tzinfo=None)
+    today = uz_today()
+
+    # --- Kechikkan / muddati yaqin montaj ---
+    vrows = [dict(r) for r in conn.execute(
+        "SELECT * FROM videos WHERE status IN ('biriktirildi','qaytarildi') ORDER BY id DESC").fetchall()]
+    overdue_montaj, soon_montaj = [], []
+    for v in vrows:
+        if not is_admin and v.get("project") not in proj_names:
+            continue
+        dl = _video_deadline_dt(v)
+        if not dl:
+            continue
+        hrs = round((dl - now).total_seconds() / 3600.0, 1)
+        item = {"id": v["id"], "title": v["title"], "editor": v.get("editor") or "—",
+                "project": v.get("project") or "—", "hours": hrs, "vtype": v.get("vtype") or "reels"}
+        if hrs < 0:
+            overdue_montaj.append(item)
+        elif hrs <= 6:
+            soon_montaj.append(item)
+    overdue_montaj.sort(key=lambda x: x["hours"])
+    soon_montaj.sort(key=lambda x: x["hours"])
+
+    # --- Loyihalar: kechikkan / xavf / jim (harakatsiz) ---
+    act = {r["project_name"]: r["last"] for r in conn.execute(
+        "SELECT project_name, MAX(created_at) AS last FROM activity GROUP BY project_name").fetchall()}
+    overdue_proj, risk_proj, silent_proj = [], [], []
+    for p in projects:
+        if p["fullyDone"]:
+            continue
+        nxt = next((s for s in STAGES if (p.get(s) or "") != "tayyor"), None)
+        base = {"name": p["name"], "responsible": p.get("responsible") or "—",
+                "daysLeft": p.get("daysLeft"), "stage": nxt}
+        if p.get("overdue"):
+            overdue_proj.append(base)
+        elif p.get("atRisk"):
+            risk_proj.append(base)
+        last_d = _parse_dt(act.get(p["name"]))
+        silent_days = (today - last_d.date()).days if last_d else None
+        if silent_days is not None and silent_days >= 3:
+            silent_proj.append({**base, "silentDays": silent_days})
+    overdue_proj.sort(key=lambda x: (x["daysLeft"] if x["daysLeft"] is not None else 0))
+    silent_proj.sort(key=lambda x: -x["silentDays"])
+
+    # --- Sifat nazorati navbati (Said kutmoqda) ---
+    qc_rows = [dict(r) for r in conn.execute(
+        "SELECT id, title, editor, project FROM videos WHERE status='montaj_qilindi' ORDER BY id DESC").fetchall()]
+    if not is_admin:
+        qc_rows = [q for q in qc_rows if q.get("project") in proj_names]
+    conn.close()
+
+    # --- Kim orqada (egasi bo'yicha jamlanma) ---
+    by_person = {}
+    for m in overdue_montaj:
+        by_person.setdefault(m["editor"], {"overdueMontaj": 0, "overdueProjects": 0})["overdueMontaj"] += 1
+    for pr in overdue_proj:
+        by_person.setdefault(pr["responsible"], {"overdueMontaj": 0, "overdueProjects": 0})["overdueProjects"] += 1
+    people = sorted(
+        [{"name": k, "overdueMontaj": v["overdueMontaj"], "overdueProjects": v["overdueProjects"],
+          "total": v["overdueMontaj"] + v["overdueProjects"]} for k, v in by_person.items()],
+        key=lambda x: -x["total"])
+
+    return {
+        "overdueMontaj": overdue_montaj, "soonMontaj": soon_montaj,
+        "overdueProjects": overdue_proj, "atRiskProjects": risk_proj,
+        "silentProjects": silent_proj, "qcBacklog": qc_rows, "byPerson": people,
+        "totals": {"overdueMontaj": len(overdue_montaj), "soonMontaj": len(soon_montaj),
+                   "overdueProjects": len(overdue_proj), "atRisk": len(risk_proj),
+                   "silent": len(silent_proj), "qc": len(qc_rows)},
+    }
+
+
 def api_qc(user):
     """Sifat nazorati uchun — montaj qilingan, tasdiq kutayotgan videolar (hammasi)."""
     conn = get_db()
@@ -4173,7 +4255,26 @@ def api_cron_morning_digest():
         not_closed = [nm for nm in DAILY_CLOSE_USERS
                       if not conn.execute("SELECT id FROM daily_close WHERE person=? AND cdate=?",
                                           (nm, yesterday)).fetchone()]
+
+    # Kechikkan montaj — montajchi (egasi) bo'yicha, ism bilan eslatma
+    now_dt = uz_now().replace(tzinfo=None)
+    ov_rows = [dict(r) for r in conn.execute(
+        "SELECT title, editor, project, vtype, assigned_at, due_at, created_at "
+        "FROM videos WHERE status IN ('biriktirildi','qaytarildi')").fetchall()]
+    overdue_by_ed = {}
+    for v in ov_rows:
+        dl = _video_deadline_dt(v)
+        if dl and now_dt > dl:
+            ed = v.get("editor") or "—"
+            overdue_by_ed[ed] = overdue_by_ed.get(ed, 0) + 1
     conn.close()
+
+    # Kechikkan loyihalar — rahbar (egasi) bo'yicha
+    overdue_by_lead = {}
+    for p in api_projects():
+        if (not p["fullyDone"]) and p.get("overdue"):
+            rsp = p.get("responsible") or "—"
+            overdue_by_lead.setdefault(rsp, []).append(p["name"])
 
     lines = ["☀️ <b>Xayrli tong, Kadr jamoasi!</b>", "📅 " + tstr, ""]
     total_shoot = bookings + shoots
@@ -4185,11 +4286,22 @@ def api_cron_morning_digest():
     if not_closed:
         lines.append("")
         lines.append("⚠️ Kecha kun yopmaganlar: <b>" + ", ".join(not_closed) + "</b>")
+    # 🔴 Kechikkan ishlar — ism bilan (har kim o'zini ko'rsin, CEO eslatmasin)
+    if overdue_by_ed or overdue_by_lead:
+        lines.append("")
+        lines.append("🔴 <b>Kechikkan ishlar:</b>")
+        for ed in sorted(overdue_by_ed, key=lambda k: -overdue_by_ed[k]):
+            lines.append(f"• <b>{ed}</b> — {overdue_by_ed[ed]} ta montaj muddati o'tgan 🎬")
+        for rsp in sorted(overdue_by_lead, key=lambda k: -len(overdue_by_lead[k])):
+            projs = ", ".join(overdue_by_lead[rsp][:4])
+            lines.append(f"• <b>{rsp}</b> — kechikkan loyiha: {projs} 📁")
+        lines.append("<i>Iltimos, bugun yopib qo'ying.</i>")
     lines.append("")
     lines.append("Kuningiz barakali o'tsin! 💪")
     send_telegram("\n".join(lines))
     return {"ok": True, "shoots": total_shoot, "montaj": montaj, "qc": qc,
-            "post": post, "notClosed": not_closed}
+            "post": post, "notClosed": not_closed,
+            "overdueMontaj": overdue_by_ed, "overdueProjects": {k: len(v) for k, v in overdue_by_lead.items()}}
 
 
 # ------------------------------------------------------------
@@ -4515,6 +4627,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role != "ceo" else self._json(api_cashflow(user))
         if path == "/api/advisor":
             return self._forbid() if role != "ceo" else self._json(api_advisor(user))
+        if path == "/api/control-center":
+            return self._forbid() if role not in ("ceo", "coordinator", "lead") else self._json(api_control_center(user))
         if path == "/api/late-videos":
             return self._forbid() if role != "ceo" else self._json(api_late_videos(user))
         if path == "/api/archives":
