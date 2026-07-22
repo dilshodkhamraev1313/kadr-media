@@ -76,6 +76,11 @@ STUDIO_EDIT_USERS = ("Dilshod Khamraev", "Gulmira")
 # Bu Kadr Studio bronlarida ham, Kadr Media loyiha syomkalarida ham ishlatiladi.
 SHOOT_TYPES = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video", "vebinar": "Vebinar", "kadr_media": "Kadr Media (ichki)"}
 OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 200000, "kadr_media": 50000}
+# Operator syomka puli — SHAXSGA bog'liq override (shogird = past stavka).
+# Bu yerda yo'q operator OPERATOR_PAY (to'liq stavka) oladi. Umid hali shogird — yarim.
+OPERATOR_RATES = {
+    "Umid": {"reels": 25000, "podcast": 50000, "youtube": 25000, "vebinar": 100000, "kadr_media": 25000},
+}
 # Kadr Media (ichki syomka) — studio TUSHUMIga pul hisoblanmaydi (faqat xona/vaqt band + operator puli)
 STUDIO_NO_INCOME_TYPES = ("kadr_media",)
 STUDIO_OPERATORS = ("Said", "Umid")
@@ -659,6 +664,7 @@ def init_db():
     add_column_if_missing(conn, "projects", "self_post", "INTEGER DEFAULT 0")
     _seed_checklist(conn)
     _backfill_studio_ledger(conn)
+    _backfill_operator_pay(conn)
     conn.commit()
 
     # Seed (faqat bo'sh bo'lsa)
@@ -2417,10 +2423,28 @@ def can_edit_studio(user):
 
 
 def _op_pay(operator, shoot_type):
-    """Operator belgilangan bo'lsa — syomka turiga qarab operator puli."""
+    """Operator belgilangan bo'lsa — syomka turi va OPERATORGA qarab operator puli.
+    Shaxsiy stavka (OPERATOR_RATES, masalan shogird Umid) bo'lsa o'sha, aks holda to'liq."""
     if not operator:
         return 0
-    return OPERATOR_PAY.get(shoot_type if shoot_type in SHOOT_TYPES else "reels", 0)
+    st = shoot_type if shoot_type in SHOOT_TYPES else "reels"
+    rates = OPERATOR_RATES.get(operator)
+    if rates and st in rates:
+        return rates[st]
+    return OPERATOR_PAY.get(st, 0)
+
+
+def _backfill_operator_pay(conn):
+    """Operator stavkasi (shaxsga bog'liq) o'zgargach — maxsus stavkali operatorlarning
+    mavjud bron/syomkalaridagi operator_pay ni joriy _op_pay bo'yicha qayta hisoblaydi.
+    Idempotent: har boshlanishda kanonik qiymatga keltiradi."""
+    for op in OPERATOR_RATES:
+        for r in conn.execute("SELECT id, shoot_type FROM studio_bookings WHERE operator=?", (op,)).fetchall():
+            conn.execute("UPDATE studio_bookings SET operator_pay=? WHERE id=?",
+                         (_op_pay(op, r["shoot_type"]), r["id"]))
+        for r in conn.execute("SELECT id, shoot_type FROM shoots WHERE operator=?", (op,)).fetchall():
+            conn.execute("UPDATE shoots SET operator_pay=? WHERE id=?",
+                         (_op_pay(op, r["shoot_type"]), r["id"]))
 
 
 def _calc_hours(start, end):
@@ -2458,6 +2482,7 @@ def api_studio(user):
         "operators": list(STUDIO_OPERATORS),
         "shootTypes": SHOOT_TYPES,
         "operatorPay": OPERATOR_PAY,
+        "operatorRates": OPERATOR_RATES,
         "methods": list(INCOME_METHODS),
         "receivers": list(INCOME_RECEIVERS),
         "canFinance": can_edit_studio(user),
@@ -3041,6 +3066,7 @@ def api_shoots(user, show_all=False):
         "operators": list(STUDIO_OPERATORS),
         "shootTypes": SHOOT_TYPES,
         "operatorPay": OPERATOR_PAY,
+        "operatorRates": OPERATOR_RATES,
         "operatorTotals": op_totals,
         "shoots": rows,
     }

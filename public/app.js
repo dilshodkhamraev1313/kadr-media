@@ -959,6 +959,8 @@ function openStudioBookingModal(presetDate, edit) {
   const operators = data.operators || ['Said', 'Umid'];
   const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
   const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000 };
+  const opRates = data.operatorRates || {};
+  const opRate = (op, t) => (opRates[op] && opRates[op][t] != null) ? opRates[op][t] : (opPay[t] || 0);
   const e = edit || {};
   const sel = (v, cur) => (v === cur ? ' selected' : '');
   const roomOpts = Object.entries(rooms).map(([k, r]) => `<option value="${k}"${sel(k, e.room)}>${esc(r.label)}</option>`).join('');
@@ -997,7 +999,7 @@ function openStudioBookingModal(presetDate, edit) {
     const showOpPay = () => {
       const op = $('#sb_op').value; const t = $('#sb_type').value;
       $('#sb_oppay').innerHTML = op
-        ? `👤 ${esc(op)} operatorga hisoblanadi: <b>${money(opPay[t] || 0)}</b>`
+        ? `👤 ${esc(op)} operatorga hisoblanadi: <b>${money(opRate(op, t))}</b>${opRates[op] ? ' <span class="muted">(shogird stavkasi)</span>' : ''}`
         : `<span class="muted">Operator tanlanmasa — operator puli hisoblanmaydi</span>`;
     };
     const showKM = () => {
@@ -1253,6 +1255,8 @@ async function openShootModal() {
   const operators = data.operators || ['Said', 'Umid'];
   const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
   const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000 };
+  const opRates = data.operatorRates || {};
+  const opRate = (op, t) => (opRates[op] && opRates[op][t] != null) ? opRates[op][t] : (opPay[t] || 0);
   const projOpts = (DATA.projects || []).map((p) => `<option value="${esc(p.name)}" data-id="${p.id}">${esc(p.name)}</option>`).join('');
   const typeOpts = Object.entries(shootTypes).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('');
   const opOpts = `<option value="">— operator yo'q —</option>` + operators.map((o) => `<option>${esc(o)}</option>`).join('');
@@ -1274,7 +1278,7 @@ async function openShootModal() {
     const showPay = () => {
       const op = $('#sh_op').value; const t = $('#sh_type').value;
       $('#sh_oppay').innerHTML = op
-        ? `👤 ${esc(op)} operatorga hisoblanadi: <b>${money(opPay[t] || 0)}</b>`
+        ? `👤 ${esc(op)} operatorga hisoblanadi: <b>${money(opRate(op, t))}</b>${opRates[op] ? ' <span class="muted">(shogird stavkasi)</span>' : ''}`
         : `<span class="muted">Operator tanlanmasa — operator puli hisoblanmaydi</span>`;
     };
     ['sh_op', 'sh_type'].forEach((id) => $('#' + id).addEventListener('change', showPay));
