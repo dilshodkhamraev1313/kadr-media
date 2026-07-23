@@ -651,6 +651,7 @@ def init_db():
     # shoots (Kadr Media syomkalari): syomka vaqti (nechidan nechigacha)
     add_column_if_missing(conn, "shoots", "start_time", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "shoots", "end_time", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "shoots", "room", "TEXT DEFAULT ''")  # lokatsiya: white/black/tashqi
     # xarajatlar: qayerdan pul chiqdi — usul (naqt/plastik) + kim to'ladi (Dilshod/Gulmira)
     add_column_if_missing(conn, "studio_expenses", "method", "TEXT DEFAULT 'naqt'")
     add_column_if_missing(conn, "studio_expenses", "paid_by", "TEXT DEFAULT ''")
@@ -2471,12 +2472,28 @@ def api_studio(user):
             "SELECT id, source_id, amount, received_by, method, pdate, note FROM income_ledger "
             "WHERE source_type='studio' ORDER BY id").fetchall():
         pays.setdefault(p["source_id"], []).append(dict(p))
+    # Kadr Media syomkalari — XONA (white/black) ishlatilganlari studio kalendarida ham
+    # ko'rinadi (source='media', ko'k). Tashqi ("boshqa joy") bu yerda ko'rinmaydi.
+    media_rows = conn.execute(
+        "SELECT * FROM shoots WHERE room IN ('white','black') ORDER BY sdate DESC, start_time").fetchall()
     conn.close()
     bookings = []
     for r in rows:
         d = dict(r)
         d["ledger"] = pays.get(d["id"], [])
+        d["source"] = "studio"
         bookings.append(d)
+    for r in media_rows:
+        s = dict(r)
+        bookings.append({
+            "id": s["id"], "source": "media", "bdate": s.get("sdate"), "sdate": s.get("sdate"),
+            "start_time": s.get("start_time") or "", "end_time": s.get("end_time") or "",
+            "room": s.get("room") or "", "operator": s.get("operator") or "",
+            "shoot_type": s.get("shoot_type") or "reels", "client_name": s.get("project") or "",
+            "project": s.get("project") or "", "operator_pay": s.get("operator_pay") or 0,
+            "status": s.get("status") or "active", "note": s.get("note") or "",
+            "amount": 0, "paid": 1, "paid_amount": 0, "ledger": [],
+        })
     return {
         "rooms": STUDIO_ROOMS,
         "operators": list(STUDIO_OPERATORS),
@@ -3060,6 +3077,7 @@ def api_shoots(user, show_all=False):
     # Operator daromadi (bekor qilinganlar hisobga olinmaydi)
     op_totals = {}
     for r in rows:
+        r["source"] = "media"
         if (r.get("status") or "active") != "bekor_qilindi" and r.get("operator"):
             op_totals[r["operator"]] = op_totals.get(r["operator"], 0) + (r.get("operator_pay") or 0)
     return {
@@ -3067,6 +3085,7 @@ def api_shoots(user, show_all=False):
         "shootTypes": SHOOT_TYPES,
         "operatorPay": OPERATOR_PAY,
         "operatorRates": OPERATOR_RATES,
+        "rooms": STUDIO_ROOMS,
         "operatorTotals": op_totals,
         "shoots": rows,
     }
@@ -3080,11 +3099,12 @@ def api_create_shoot(user, b):
     sdate = b.get("sdate") or uz_today().isoformat()
     start_time = (b.get("start_time") or "").strip()
     end_time = (b.get("end_time") or "").strip()
+    room = b.get("room") if b.get("room") in ("white", "black", "tashqi") else "tashqi"  # lokatsiya
     conn = get_db()
-    sql = """INSERT INTO shoots (project_id, project, shoot_type, operator, operator_pay, sdate, start_time, end_time, status, note, created_by)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?)"""
+    sql = """INSERT INTO shoots (project_id, project, shoot_type, operator, operator_pay, sdate, start_time, end_time, room, status, note, created_by)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"""
     params = (b.get("project_id"), b.get("project") or "", shoot_type, operator,
-              operator_pay, sdate, start_time, end_time, "active", b.get("note") or "", user["name"])
+              operator_pay, sdate, start_time, end_time, room, "active", b.get("note") or "", user["name"])
     if IS_PG:
         sid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:

@@ -33,6 +33,28 @@ const STUDIO_ROOMS_DEFAULT = {
   black: { label: '2-xona · Black', color: '#1C1C1E' },
 };
 const SHOOT_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video', vebinar: 'Vebinar', kadr_media: 'Kadr Media' };
+// Bron rangi MANBA bo'yicha: Kadr Studio = tilla, Kadr Media = ko'k (adashmaslik uchun)
+const SOURCE_COLOR = { studio: '#D4AF37', media: '#0A84FF' };
+const LOC_LABEL = { white: '1-xona · White', black: '2-xona · Black', tashqi: 'Boshqa joy (tashqi)', '': 'Boshqa joy' };
+// Oylik kalendar katakchalarini quradi (studio + media umumiy)
+function calMonthCells(events, y, m, pillFn) {
+  const byDate = {};
+  events.forEach((b) => { const d = b.bdate || b.sdate; if (d) (byDate[d] = byDate[d] || []).push(b); });
+  const first = new Date(y, m, 1);
+  const startDow = (first.getDay() + 6) % 7;
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const now = new Date();
+  const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const wd = ['Du', 'Se', 'Cho', 'Pa', 'Ju', 'Sha', 'Ya'];
+  let cells = wd.map((d) => `<div class="cal-wd">${d}</div>`).join('');
+  for (let i = 0; i < startDow; i++) cells += `<div class="cal-cell empty"></div>`;
+  for (let day = 1; day <= daysInMonth; day++) {
+    const iso = `${y}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const list = (byDate[iso] || []).slice().sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+    cells += `<div class="cal-cell${iso === todayISO ? ' today' : ''}" data-day="${iso}"><div class="cal-daynum">${day}</div>${list.map(pillFn).join('')}</div>`;
+  }
+  return cells;
+}
 // Studio broni kirita oladiganlar (faqat Dilshod va Gulmira)
 const studioCanEdit = () => !!ME && ['Dilshod Khamraev', 'Gulmira'].includes(ME.name);
 
@@ -838,28 +860,16 @@ async function viewStudio() {
   if (!STUDIO_MONTH) { const t = new Date(); STUDIO_MONTH = { y: t.getFullYear(), m: t.getMonth() }; }
   const { y, m } = STUDIO_MONTH;
   const UZ_MONTH_FULL = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
-  const byDate = {};
-  data.bookings.forEach((b) => { (byDate[b.bdate] = byDate[b.bdate] || []).push(b); });
-  const first = new Date(y, m, 1);
-  const startDow = (first.getDay() + 6) % 7; // dushanba = 0
-  const daysInMonth = new Date(y, m + 1, 0).getDate();
-  const now = new Date();
-  const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const legend = Object.entries(rooms).map(([, r]) =>
-    `<span class="room-tag"><i style="background:${r.color}"></i>${esc(r.label)}</span>`).join('');
-  const wd = ['Du', 'Se', 'Cho', 'Pa', 'Ju', 'Sha', 'Ya'];
-  let cells = wd.map((d) => `<div class="cal-wd">${d}</div>`).join('');
-  for (let i = 0; i < startDow; i++) cells += `<div class="cal-cell empty"></div>`;
-  for (let day = 1; day <= daysInMonth; day++) {
-    const iso = `${y}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const list = (byDate[iso] || []).slice().sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
-    const pills = list.map((b) => {
-      const cancelled = b.status === 'bekor_qilindi';
-      const rc = cancelled ? '#6b6b72' : ((rooms[b.room] || {}).color || '#888');
-      return `<div class="cal-ev${b.paid ? '' : ' unpaid'}${cancelled ? ' cancelled' : ''}" data-bk="${b.id}" style="background:${rc}" title="${esc(b.client_name || '')}">${esc((b.start_time || '').slice(0, 5))} ${esc(b.client_name || '')}</div>`;
-    }).join('');
-    cells += `<div class="cal-cell${iso === todayISO ? ' today' : ''}" data-day="${iso}"><div class="cal-daynum">${day}</div>${pills}</div>`;
-  }
+  const legend = `<span class="room-tag"><i style="background:${SOURCE_COLOR.studio}"></i>Kadr Studio</span>`
+    + `<span class="room-tag"><i style="background:${SOURCE_COLOR.media}"></i>Kadr Media</span>`;
+  const pillFn = (b) => {
+    const src = b.source || 'studio';
+    const cancelled = b.status === 'bekor_qilindi';
+    const col = cancelled ? '#6b6b72' : SOURCE_COLOR[src];
+    const roomShort = (rooms[b.room] ? rooms[b.room].label.split('·')[0].trim() : '');
+    return `<div class="cal-ev${(src === 'studio' && !b.paid) ? ' unpaid' : ''}${cancelled ? ' cancelled' : ''}" data-bk="${b.id}" data-src="${src}" style="background:${col}" title="${esc(b.client_name || '')}${roomShort ? ' · ' + roomShort : ''}">${esc((b.start_time || '').slice(0, 5))} ${esc(b.client_name || '')}</div>`;
+  };
+  const cells = calMonthCells(data.bookings, y, m, pillFn);
   $('#content').innerHTML = `
     <div class="cal-toolbar">
       <button class="btn-ghost" data-cal="prev">‹</button>
@@ -883,8 +893,10 @@ async function viewStudio() {
   }));
   $('#content').querySelectorAll('.cal-ev').forEach((ev) => ev.addEventListener('click', (e) => {
     e.stopPropagation();
-    const b = data.bookings.find((x) => x.id == ev.dataset.bk);
-    if (b) openStudioDetailModal(b);
+    const src = ev.dataset.src || 'studio';
+    const b = data.bookings.find((x) => x.id == ev.dataset.bk && (x.source || 'studio') === src);
+    if (!b) return;
+    if (src === 'media') openShootDetailModal(b); else openStudioDetailModal(b);
   }));
 }
 
@@ -895,24 +907,27 @@ function openStudioDayModal(iso) {
   const list = (data.bookings || []).filter((b) => b.bdate === iso)
     .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
   const rows = list.map((b) => {
-    const room = rooms[b.room] || {};
+    const src = b.source || 'studio';
     const cancelled = b.status === 'bekor_qilindi';
     const st = SHOOT_TYPE_LABEL[b.shoot_type] || '';
+    const roomShort = rooms[b.room] ? rooms[b.room].label.split('·')[0].trim() : '';
     const badge = cancelled ? ['red', 'bekor']
-      : (b.shoot_type === 'kadr_media' ? ['blue', 'Kadr Media']
+      : (src === 'media' ? ['blue', 'Kadr Media']
       : (b.paid ? ['green', "to'landi"] : ['orange', 'qarz']));
-    return `<button class="day-row${cancelled ? ' cancelled' : ''}" data-bk="${b.id}">
+    return `<button class="day-row${cancelled ? ' cancelled' : ''}" data-bk="${b.id}" data-src="${src}">
       <span class="dr-time">${esc((b.start_time || '').slice(0, 5))}–${esc((b.end_time || '').slice(0, 5))}</span>
-      <span class="dr-dot" style="background:${cancelled ? '#6b6b72' : (room.color || '#888')}"></span>
-      <span class="dr-main"><b>${esc(b.client_name || '')}</b><span class="muted"> · ${esc(st)}${b.operator ? ' · 👤 ' + esc(b.operator) : ''}</span></span>
+      <span class="dr-dot" style="background:${cancelled ? '#6b6b72' : SOURCE_COLOR[src]}"></span>
+      <span class="dr-main"><b>${esc(b.client_name || '')}</b><span class="muted"> · ${esc(st)}${roomShort ? ' · ' + roomShort : ''}${b.operator ? ' · 👤 ' + esc(b.operator) : ''}</span></span>
       <span class="pill ${badge[0]}">${badge[1]}</span>
     </button>`;
   }).join('') || '<div class="muted" style="padding:10px 0">Bu kunda bron yo\'q</div>';
   const addBtn = studioCanEdit() ? `<button class="btn-save" id="day_add" style="margin-top:14px">+ Yangi bron</button>` : '';
   openModal(`📅 ${fmtDate(iso)} — bronlar (${list.length})`, `<div class="day-list">${rows}</div>${addBtn}`, () => {
     $('#modalBody').querySelectorAll('.day-row').forEach((r) => r.addEventListener('click', () => {
-      const b = (data.bookings || []).find((x) => x.id == r.dataset.bk);
-      if (b) openStudioDetailModal(b);
+      const src = r.dataset.src || 'studio';
+      const b = (data.bookings || []).find((x) => x.id == r.dataset.bk && (x.source || 'studio') === src);
+      if (!b) return;
+      if (src === 'media') openShootDetailModal(b); else openStudioDetailModal(b);
     }));
     const add = $('#day_add');
     if (add) add.addEventListener('click', () => openStudioBookingModal(iso));
@@ -1213,21 +1228,49 @@ async function openStudioExpensesModal() {
 async function viewShoots() {
   const data = await api('/api/shoots');
   DATA.shoots = data;
-  let list = (data.shoots || []).filter((s) => matchSearch((s.project || '') + ' ' + (s.operator || '') + ' ' + (SHOOT_TYPE_LABEL[s.shoot_type] || '')));
-  if (['active', 'bekor_qilindi'].includes(FILTER)) list = list.filter((s) => (s.status || 'active') === FILTER);
+  const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
+  if (!STUDIO_MONTH) { const t = new Date(); STUDIO_MONTH = { y: t.getFullYear(), m: t.getMonth() }; }
+  const { y, m } = STUDIO_MONTH;
+  const UZ_MONTH_FULL = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
   const activeCount = (data.shoots || []).filter((s) => (s.status || 'active') !== 'bekor_qilindi').length;
   const opStats = Object.entries(data.operatorTotals || {}).map(([n, v]) => statTile('👤', money(v), n + ' — operator puli', 'purple')).join('');
-  const chips = [['all', 'Hammasi'], ['active', 'Aktiv'], ['bekor_qilindi', 'Bekor qilingan']];
+  const events = (data.shoots || []).map((s) => ({ ...s, bdate: s.sdate, client_name: s.project, source: 'media' }));
+  const legend = `<span class="room-tag"><i style="background:${SOURCE_COLOR.media}"></i>Kadr Media syomka</span>`;
+  const pillFn = (b) => {
+    const cancelled = (b.status || 'active') === 'bekor_qilindi';
+    const col = cancelled ? '#6b6b72' : SOURCE_COLOR.media;
+    const loc = b.room === 'white' ? '1-xona' : (b.room === 'black' ? '2-xona' : 'Tashqi');
+    return `<div class="cal-ev${cancelled ? ' cancelled' : ''}" data-sid="${b.id}" style="background:${col}" title="${esc(b.project || '')} · ${loc}">${esc((b.start_time || '').slice(0, 5))} ${esc(b.project || '')}</div>`;
+  };
+  const cells = calMonthCells(events, y, m, pillFn);
   $('#content').innerHTML = `
     <div class="stats-grid">
       ${statTile('🎬', activeCount, 'Aktiv syomkalar', 'blue')}
       ${opStats}
     </div>
-    <div class="filter-row">${chips.map(([k, l]) => `<button class="chip ${FILTER === k ? 'active' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
-    <div class="cards-grid">${list.map(shootCard).join('') || emptyState('Syomka yo\'q')}</div>`;
-  $('#content').querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => { FILTER = c.dataset.f; render(); }));
-  $('#content').querySelectorAll('.shoot-card').forEach((card) => card.addEventListener('click', () => {
-    const s = (data.shoots || []).find((x) => x.id == card.dataset.sid);
+    <div class="cal-toolbar">
+      <button class="btn-ghost" data-cal="prev">‹</button>
+      <h3 class="cal-title">${UZ_MONTH_FULL[m]} ${y}</h3>
+      <button class="btn-ghost" data-cal="next">›</button>
+      <button class="btn-ghost" data-cal="today">Bugun</button>
+      <div class="cal-legend">${legend}</div>
+    </div>
+    <div class="cal-grid">${cells}</div>
+    <p class="muted" style="margin-top:12px">📌 Kun ustiga bossangiz — o'sha kunga syomka qo'shasiz. Syomka ustiga bossangiz — tafsiloti. Xona (1/2-xona) tanlangan syomka Kadr Studio kalendarida ham 🔵 ko'k bo'lib chiqadi.</p>`;
+  $('#content').querySelectorAll('[data-cal]').forEach((b) => b.addEventListener('click', () => {
+    const a = b.dataset.cal;
+    if (a === 'prev') { STUDIO_MONTH.m--; if (STUDIO_MONTH.m < 0) { STUDIO_MONTH.m = 11; STUDIO_MONTH.y--; } }
+    else if (a === 'next') { STUDIO_MONTH.m++; if (STUDIO_MONTH.m > 11) { STUDIO_MONTH.m = 0; STUDIO_MONTH.y++; } }
+    else if (a === 'today') { const t = new Date(); STUDIO_MONTH = { y: t.getFullYear(), m: t.getMonth() }; }
+    render();
+  }));
+  $('#content').querySelectorAll('.cal-cell[data-day]').forEach((c) => c.addEventListener('click', (e) => {
+    if (e.target.closest('.cal-ev')) return;
+    if (['ceo', 'coordinator', 'lead'].includes(ME.role)) openShootModal(c.dataset.day);
+  }));
+  $('#content').querySelectorAll('.cal-ev').forEach((ev) => ev.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const s = (data.shoots || []).find((x) => x.id == ev.dataset.sid);
     if (s) openShootDetailModal(s);
   }));
 }
@@ -1249,30 +1292,35 @@ function shootCard(s) {
     </div>`;
 }
 
-async function openShootModal() {
+async function openShootModal(presetDate) {
   const data = DATA.shoots || {};
   if (!DATA.projects) DATA.projects = await api('/api/projects');
   const operators = data.operators || ['Said', 'Umid'];
   const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
+  const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
   const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000 };
   const opRates = data.operatorRates || {};
   const opRate = (op, t) => (opRates[op] && opRates[op][t] != null) ? opRates[op][t] : (opPay[t] || 0);
   const projOpts = (DATA.projects || []).map((p) => `<option value="${esc(p.name)}" data-id="${p.id}">${esc(p.name)}</option>`).join('');
-  const typeOpts = Object.entries(shootTypes).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('');
+  // Kadr media ichki (kadr_media) turi ko'rsatilmaydi — bu yer o'zi ichki syomka
+  const typeOpts = Object.entries(shootTypes).filter(([k]) => k !== 'kadr_media').map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('');
+  const locOpts = `<option value="tashqi">Boshqa joy (tashqi)</option>` + Object.entries(rooms).map(([k, r]) => `<option value="${k}">${esc(r.label)}</option>`).join('');
   const opOpts = `<option value="">— operator yo'q —</option>` + operators.map((o) => `<option>${esc(o)}</option>`).join('');
-  openModal('Loyihaga syomka belgilash', `
+  openModal('Kadr Media — syomka belgilash', `
     <div class="field"><label>Loyiha</label><select id="sh_proj">${projOpts}</select></div>
     <div class="field-row">
+      <div class="field"><label>Lokatsiya</label><select id="sh_room">${locOpts}</select></div>
       <div class="field"><label>Syomka turi</label><select id="sh_type">${typeOpts}</select></div>
-      <div class="field"><label>Operator</label><select id="sh_op">${opOpts}</select></div>
     </div>
+    <div class="field"><label>Operator</label><select id="sh_op">${opOpts}</select></div>
     <div id="sh_oppay" class="calc-line"></div>
-    <div class="field"><label>Sana</label><input id="sh_date" type="date" /></div>
+    <div class="field"><label>Sana</label><input id="sh_date" type="date" value="${presetDate || ''}" /></div>
     <div class="field-row">
-      <div class="field"><label>Boshlanish vaqti</label><input id="sh_start" type="time" /></div>
-      <div class="field"><label>Tugash vaqti</label><input id="sh_end" type="time" /></div>
+      <div class="field"><label>Boshlanish</label><input id="sh_start" type="time" value="10:00" /></div>
+      <div class="field"><label>Tugash</label><input id="sh_end" type="time" value="12:00" /></div>
     </div>
-    <div class="field"><label>Izoh</label><textarea id="sh_note" placeholder="masalan: mijoz manzilida, 2 lokatsiya"></textarea></div>
+    <div id="sh_hours" class="calc-line"></div>
+    <div class="field"><label>Izoh</label><textarea id="sh_note" placeholder="masalan: 2 kishi, rekvizit kerak"></textarea></div>
     <div class="modal-actions"><button class="btn-save" id="sh_save">🎬 Belgilash</button></div>`,
   () => {
     const showPay = () => {
@@ -1281,18 +1329,24 @@ async function openShootModal() {
         ? `👤 ${esc(op)} operatorga hisoblanadi: <b>${money(opRate(op, t))}</b>${opRates[op] ? ' <span class="muted">(shogird stavkasi)</span>' : ''}`
         : `<span class="muted">Operator tanlanmasa — operator puli hisoblanmaydi</span>`;
     };
+    const showHours = () => {
+      const h = studioHours($('#sh_start').value, $('#sh_end').value);
+      $('#sh_hours').innerHTML = h > 0 ? `⏱ Soati — <b>${h} soat</b>` : `<span class="muted">Vaqtni to'g'ri kiriting</span>`;
+    };
     ['sh_op', 'sh_type'].forEach((id) => $('#' + id).addEventListener('change', showPay));
-    showPay();
+    ['sh_start', 'sh_end'].forEach((id) => $('#' + id).addEventListener('change', showHours));
+    showPay(); showHours();
     $('#sh_save').addEventListener('click', async () => {
       const sel = $('#sh_proj'); const opt = sel.options[sel.selectedIndex];
       if (!sel.value) { toast('Loyihani tanlang'); return; }
       const body = {
         project: sel.value, project_id: opt ? opt.dataset.id : null,
-        shoot_type: $('#sh_type').value, operator: $('#sh_op').value,
+        shoot_type: $('#sh_type').value, operator: $('#sh_op').value, room: $('#sh_room').value,
         sdate: $('#sh_date').value || null, note: $('#sh_note').value,
         start_time: $('#sh_start').value || '', end_time: $('#sh_end').value || '',
       };
-      await api('/api/shoots', { method: 'POST', body: JSON.stringify(body) });
+      const res = await api('/api/shoots', { method: 'POST', body: JSON.stringify(body) });
+      if (res && res.error) { toast(res.error); return; }
       closeModal(); toast('🎬 Syomka belgilandi'); render();
     });
   });
@@ -1308,6 +1362,7 @@ function openShootDetailModal(s) {
     ${cancelled ? `<div class="pill st-red" style="display:inline-block;margin-bottom:10px">🚫 Bekor qilindi</div>` : ''}
     <div class="money-rows" style="margin-bottom:12px">
       <div class="mrow"><span>📁 Loyiha</span><b>${esc(s.project || '—')}</b></div>
+      <div class="mrow"><span>📍 Lokatsiya</span><b>${esc(LOC_LABEL[s.room] || 'Boshqa joy')}</b></div>
       <div class="mrow"><span>🎥 Syomka turi</span><b>${esc(st)}</b></div>
       ${s.operator ? `<div class="mrow"><span>👤 Operator</span><b>${esc(s.operator)}${cancelled ? '' : ` · ${money(s.operator_pay)}`}</b></div>` : ''}
       <div class="mrow"><span>📅 Sana</span><b>${fmtDate(s.sdate)}</b></div>
