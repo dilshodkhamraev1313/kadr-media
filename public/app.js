@@ -1040,8 +1040,10 @@ function openStudioBookingModal(presetDate, edit) {
         note: $('#sb_note').value,
       };
       if (!edit) Object.assign(body, readPaySplit());
-      if (edit) await api(`/api/studio/${edit.id}`, { method: 'PUT', body: JSON.stringify(body) });
-      else await api('/api/studio', { method: 'POST', body: JSON.stringify(body) });
+      const res = edit
+        ? await api(`/api/studio/${edit.id}`, { method: 'PUT', body: JSON.stringify(body) })
+        : await api('/api/studio', { method: 'POST', body: JSON.stringify(body) });
+      if (res && res.error) { toast(res.error); return; }
       closeModal(); toast(edit ? '💾 Saqlandi' : '🎥 Bron saqlandi'); render();
     });
   });
@@ -1234,13 +1236,17 @@ async function viewShoots() {
   const UZ_MONTH_FULL = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
   const activeCount = (data.shoots || []).filter((s) => (s.status || 'active') !== 'bekor_qilindi').length;
   const opStats = Object.entries(data.operatorTotals || {}).map(([n, v]) => statTile('👤', money(v), n + ' — operator puli', 'purple')).join('');
-  const events = (data.shoots || []).map((s) => ({ ...s, bdate: s.sdate, client_name: s.project, source: 'media' }));
-  const legend = `<span class="room-tag"><i style="background:${SOURCE_COLOR.media}"></i>Kadr Media syomka</span>`;
+  const mediaEvents = (data.shoots || []).map((s) => ({ ...s, bdate: s.sdate, client_name: s.project, source: 'media' }));
+  const events = mediaEvents.concat(data.studioBookings || []);
+  DATA.mediaCal = events;
+  const legend = `<span class="room-tag"><i style="background:${SOURCE_COLOR.media}"></i>Kadr Media</span>`
+    + `<span class="room-tag"><i style="background:${SOURCE_COLOR.studio}"></i>Kadr Studio</span>`;
   const pillFn = (b) => {
+    const src = b.source || 'media';
     const cancelled = (b.status || 'active') === 'bekor_qilindi';
-    const col = cancelled ? '#6b6b72' : SOURCE_COLOR.media;
+    const col = cancelled ? '#6b6b72' : SOURCE_COLOR[src];
     const loc = b.room === 'white' ? '1-xona' : (b.room === 'black' ? '2-xona' : 'Tashqi');
-    return `<div class="cal-ev${cancelled ? ' cancelled' : ''}" data-sid="${b.id}" style="background:${col}" title="${esc(b.project || '')} · ${loc}">${esc((b.start_time || '').slice(0, 5))} ${esc(b.project || '')}</div>`;
+    return `<div class="cal-ev${cancelled ? ' cancelled' : ''}" data-sid="${b.id}" data-src="${src}" style="background:${col}" title="${esc(b.project || b.client_name || '')} · ${loc}">${esc((b.start_time || '').slice(0, 5))} ${esc(b.project || b.client_name || '')}</div>`;
   };
   const cells = calMonthCells(events, y, m, pillFn);
   $('#content').innerHTML = `
@@ -1266,13 +1272,49 @@ async function viewShoots() {
   }));
   $('#content').querySelectorAll('.cal-cell[data-day]').forEach((c) => c.addEventListener('click', (e) => {
     if (e.target.closest('.cal-ev')) return;
-    if (['ceo', 'coordinator', 'lead'].includes(ME.role)) openShootModal(c.dataset.day);
+    openMediaDayModal(c.dataset.day);
   }));
   $('#content').querySelectorAll('.cal-ev').forEach((ev) => ev.addEventListener('click', (e) => {
     e.stopPropagation();
-    const s = (data.shoots || []).find((x) => x.id == ev.dataset.sid);
-    if (s) openShootDetailModal(s);
+    openMediaEvent(ev.dataset.sid, ev.dataset.src);
   }));
+}
+
+// Kadr Media kalendarida event ustiga bosilganda — manbaga qarab tafsilot
+function openMediaEvent(id, src) {
+  const ev = (DATA.mediaCal || []).find((x) => x.id == id && (x.source || 'media') === src);
+  if (!ev) return;
+  if (src === 'studio') { openStudioDetailModal(ev); return; }
+  const s = (DATA.shoots && DATA.shoots.shoots || []).find((x) => x.id == id);
+  openShootDetailModal(s || ev);
+}
+
+// Kadr Media — kun ustiga bosilganda o'sha kundagi syomkalar ro'yxati (studio + media)
+function openMediaDayModal(iso) {
+  const list = (DATA.mediaCal || []).filter((b) => (b.bdate || b.sdate) === iso)
+    .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+  const rows = list.map((b) => {
+    const src = b.source || 'media';
+    const cancelled = (b.status || 'active') === 'bekor_qilindi';
+    const st = SHOOT_TYPE_LABEL[b.shoot_type] || b.shoot_type || '';
+    const loc = b.room === 'white' ? '1-xona' : (b.room === 'black' ? '2-xona' : 'Tashqi');
+    const badge = cancelled ? ['red', 'bekor'] : (src === 'studio' ? ['orange', 'Kadr Studio'] : ['blue', 'Kadr Media']);
+    return `<button class="day-row${cancelled ? ' cancelled' : ''}" data-sid="${b.id}" data-src="${src}">
+      <span class="dr-time">${esc((b.start_time || '').slice(0, 5))}–${esc((b.end_time || '').slice(0, 5))}</span>
+      <span class="dr-dot" style="background:${cancelled ? '#6b6b72' : SOURCE_COLOR[src]}"></span>
+      <span class="dr-main"><b>${esc(b.project || b.client_name || '')}</b><span class="muted"> · ${esc(st)} · ${loc}${b.operator ? ' · 👤 ' + esc(b.operator) : ''}</span></span>
+      <span class="pill ${badge[0]}">${badge[1]}</span>
+    </button>`;
+  }).join('') || '<div class="muted" style="padding:10px 0">Bu kunda syomka yo\'q</div>';
+  const addBtn = ['ceo', 'coordinator', 'lead'].includes(ME.role)
+    ? `<button class="btn-save" id="mday_add" style="margin-top:14px">+ Yangi syomka</button>` : '';
+  openModal(`📅 ${fmtDate(iso)} — syomkalar (${list.length})`, `<div class="day-list">${rows}</div>${addBtn}`, () => {
+    $('#modalBody').querySelectorAll('.day-row').forEach((r) => r.addEventListener('click', () => {
+      closeModal(); openMediaEvent(r.dataset.sid, r.dataset.src);
+    }));
+    const add = $('#mday_add');
+    if (add) add.addEventListener('click', () => { closeModal(); openShootModal(iso); });
+  });
 }
 
 function shootCard(s) {

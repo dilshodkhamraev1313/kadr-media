@@ -2461,6 +2461,54 @@ def _calc_hours(start, end):
         return 0
 
 
+def _mins(t):
+    """'HH:MM' -> daqiqa. Noto'g'ri bo'lsa None."""
+    try:
+        h, m = (int(x) for x in (t or "").split(":")[:2])
+        return h * 60 + m
+    except (ValueError, AttributeError):
+        return None
+
+
+def _overlap(s1, e1, s2, e2):
+    """Ikki vaqt oralig'i (HH:MM) kesishadimi. Har qanday ustma-ustlik = True."""
+    a1, b1, a2, b2 = _mins(s1), _mins(e1), _mins(s2), _mins(e2)
+    if None in (a1, b1, a2, b2):
+        return False
+    return a1 < b2 and a2 < b1
+
+
+def _room_conflict(conn, room, sdate, start, end, exc_studio=None, exc_shoot=None):
+    """Xona (white/black) shu sana+vaqtda band bo'lsa — bandlik ma'lumotini qaytaradi
+    (ham studio_bookings, ham shoots). Tashqi/vaqtsiz bo'lsa — None (cheklov yo'q)."""
+    if room not in ("white", "black") or not start or not end:
+        return None
+    for r in conn.execute(
+            "SELECT id, client_name, start_time, end_time FROM studio_bookings "
+            "WHERE room=? AND bdate=? AND (status IS NULL OR status<>'bekor_qilindi')",
+            (room, sdate)).fetchall():
+        if exc_studio and r["id"] == exc_studio:
+            continue
+        if _overlap(start, end, r["start_time"], r["end_time"]):
+            return {"who": r["client_name"] or "Kadr Studio broni", "start": r["start_time"],
+                    "end": r["end_time"], "src": "Kadr Studio"}
+    for r in conn.execute(
+            "SELECT id, project, start_time, end_time FROM shoots "
+            "WHERE room=? AND sdate=? AND (status IS NULL OR status<>'bekor_qilindi')",
+            (room, sdate)).fetchall():
+        if exc_shoot and r["id"] == exc_shoot:
+            continue
+        if _overlap(start, end, r["start_time"], r["end_time"]):
+            return {"who": r["project"] or "Kadr Media syomkasi", "start": r["start_time"],
+                    "end": r["end_time"], "src": "Kadr Media"}
+    return None
+
+
+def _conflict_msg(c):
+    return (f"⛔ Bu xona shu vaqtda band: {c['src']} · {c['who']} "
+            f"({(c['start'] or '')[:5]}–{(c['end'] or '')[:5]}). Boshqa vaqt yoki xona tanlang.")
+
+
 def api_studio(user):
     conn = get_db()
     rows = conn.execute(
@@ -2551,6 +2599,11 @@ def api_create_studio_booking(user, b):
         b = {k: v for k, v in b.items() if k not in ("naqt", "plastik", "amount", "method")}
     bdate = b.get("bdate") or uz_today().isoformat()
     conn = get_db()
+    # Bir xil xona + vaqt = band (Kadr Studio + Kadr Media birga tekshiriladi)
+    conflict = _room_conflict(conn, room, bdate, start, end)
+    if conflict:
+        conn.close()
+        return {"error": _conflict_msg(conflict)}, 409
     # paid/paid_amount daftardan hisoblanadi — dastlab 0, keyin _recalc
     sql = """INSERT INTO studio_bookings
              (room, client_name, phone, bdate, start_time, end_time, hours, amount,
@@ -2802,6 +2855,11 @@ def api_update_studio_booking(user, bid, b):
     if shoot_type in STUDIO_NO_INCOME_TYPES:
         amount = 0  # Kadr Media (ichki) — studio tushumiga hisoblanmaydi
     bdate = b.get("bdate") or ex.get("bdate")
+    # Xona bandligi (o'zidan tashqari)
+    conflict = _room_conflict(conn, room, bdate, start, end, exc_studio=bid)
+    if conflict:
+        conn.close()
+        return {"error": _conflict_msg(conflict)}, 409
     # paid/paid_amount TAHRIR QILINMAYDI — u daftardan hisoblanadi (to'lov qo'shish/o'chirish orqali)
     conn.execute(
         """UPDATE studio_bookings SET room=?, client_name=?, phone=?, bdate=?, start_time=?, end_time=?,
@@ -3080,6 +3138,22 @@ def api_shoots(user, show_all=False):
         r["source"] = "media"
         if (r.get("status") or "active") != "bekor_qilindi" and r.get("operator"):
             op_totals[r["operator"]] = op_totals.get(r["operator"], 0) + (r.get("operator_pay") or 0)
+    # Kadr Studio bronlari (tilla) — media kalendarida ham ko'rinadi (umumiy xona-jadval).
+    # To'liq qator + daftar (klik qilinganda studio tafsiloti to'liq ochilishi uchun).
+    conn2 = get_db()
+    st_rows = [dict(r) for r in conn2.execute(
+        "SELECT * FROM studio_bookings ORDER BY bdate DESC, start_time").fetchall()]
+    pays2 = {}
+    for p in conn2.execute(
+            "SELECT id, source_id, amount, received_by, method, pdate, note FROM income_ledger "
+            "WHERE source_type='studio' ORDER BY id").fetchall():
+        pays2.setdefault(p["source_id"], []).append(dict(p))
+    conn2.close()
+    studio_bookings = []
+    for s in st_rows:
+        s["source"] = "studio"
+        s["ledger"] = pays2.get(s["id"], [])
+        studio_bookings.append(s)
     return {
         "operators": list(STUDIO_OPERATORS),
         "shootTypes": SHOOT_TYPES,
@@ -3088,6 +3162,7 @@ def api_shoots(user, show_all=False):
         "rooms": STUDIO_ROOMS,
         "operatorTotals": op_totals,
         "shoots": rows,
+        "studioBookings": studio_bookings,
     }
 
 
@@ -3101,6 +3176,11 @@ def api_create_shoot(user, b):
     end_time = (b.get("end_time") or "").strip()
     room = b.get("room") if b.get("room") in ("white", "black", "tashqi") else "tashqi"  # lokatsiya
     conn = get_db()
+    # Xona bandligi (white/black) — Kadr Studio + Kadr Media birga
+    conflict = _room_conflict(conn, room, sdate, start_time, end_time)
+    if conflict:
+        conn.close()
+        return {"error": _conflict_msg(conflict)}, 409
     sql = """INSERT INTO shoots (project_id, project, shoot_type, operator, operator_pay, sdate, start_time, end_time, room, status, note, created_by)
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"""
     params = (b.get("project_id"), b.get("project") or "", shoot_type, operator,
