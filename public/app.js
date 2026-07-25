@@ -35,6 +35,8 @@ const STUDIO_ROOMS_DEFAULT = {
 const SHOOT_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video', vebinar: 'Vebinar', kadr_media: 'Kadr Media' };
 // Bron rangi MANBA bo'yicha: Kadr Studio = tilla, Kadr Media = ko'k (adashmaslik uchun)
 const SOURCE_COLOR = { studio: '#D4AF37', media: '#0A84FF' };
+// Tashqi syomka "har video" tizimi shu sanadan boshlab amal qiladi (eski syomkalarga tegmaydi)
+const PERVIDEO_START = '2026-07-24';
 const LOC_LABEL = { white: '1-xona · White', black: '2-xona · Black', tashqi: 'Boshqa joy (tashqi)', '': 'Boshqa joy' };
 // Oylik kalendar katakchalarini quradi (studio + media umumiy)
 function calMonthCells(events, y, m, pillFn) {
@@ -1246,8 +1248,10 @@ async function viewShoots() {
     const cancelled = (b.status || 'active') === 'bekor_qilindi';
     const col = cancelled ? '#6b6b72' : SOURCE_COLOR[src];
     const loc = b.room === 'white' ? '1-xona' : (b.room === 'black' ? '2-xona' : 'Tashqi');
-    // Yakunlanmagan tashqi media syomka (video soni kiritilmagan) — ogohlantirish
-    const pending = src === 'media' && !cancelled && (b.room === 'tashqi' || !b.room) && !(b.video_count > 0);
+    // Yakunlanmagan tashqi media syomka (video soni kiritilmagan) — ogohlantirish.
+    // Faqat yangi tizim sanasidan (PERVIDEO_START) boshlab; eskilariga tegmaydi.
+    const pending = src === 'media' && !cancelled && (b.room === 'tashqi' || !b.room)
+      && !(b.video_count > 0) && (b.sdate || b.bdate || '').slice(0, 10) >= PERVIDEO_START;
     return `<div class="cal-ev${cancelled ? ' cancelled' : ''}" data-sid="${b.id}" data-src="${src}" style="background:${col}" title="${esc(b.project || b.client_name || '')} · ${loc}${pending ? ' · video soni kiritilmagan' : ''}">${pending ? '⚠️ ' : ''}${esc((b.start_time || '').slice(0, 5))} ${esc(b.project || b.client_name || '')}</div>`;
   };
   const cells = calMonthCells(events, y, m, pillFn);
@@ -1407,7 +1411,8 @@ function openShootDetailModal(s) {
   const canCount = ['ceo', 'coordinator', 'lead'].includes(ME.role);
   const opRatesD = (DATA.shoots && DATA.shoots.operatorRates) || {};
   const extRateD = (op) => (opRatesD[op] ? 10000 : 20000);
-  const extBlock = (isExternal && !cancelled && s.operator) ? `
+  const perVideo = (s.sdate || '').slice(0, 10) >= PERVIDEO_START;  // yangi tizim faqat shu sanadan
+  const extBlock = (isExternal && !cancelled && s.operator && perVideo) ? `
     <div class="field" style="margin-top:4px"><label>🎬 Olingan video soni ${canCount ? '' : '<span class="muted">(rahbar kiritadi)</span>'}</label>
       <input id="sh_vcount" type="number" inputmode="numeric" min="0" value="${s.video_count || 0}" ${canCount ? '' : 'disabled'} /></div>
     <div id="sh_vpay" class="calc-line"></div>
