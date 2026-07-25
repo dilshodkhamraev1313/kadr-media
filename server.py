@@ -737,6 +737,7 @@ def init_db():
     add_column_if_missing(conn, "checklist_done", "note", "TEXT DEFAULT ''")
     # projects: mijoz o'zi joylaydigan loyihalar (joylash bosqichi yo'q)
     add_column_if_missing(conn, "projects", "self_post", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "projects", "lead_usd", "INTEGER DEFAULT 50")  # rahbarlik puli: 30$ yoki 50$
     _seed_checklist(conn)
     _seed_playbooks(conn)
     _backfill_studio_ledger(conn)
@@ -912,18 +913,19 @@ def api_create_project(b):
             return int(b.get(k) or 0)
         except (ValueError, TypeError):
             return 0
+    lead_usd = 30 if int(b.get("lead_usd") or 50) == 30 else 50  # rahbarlik: 30$ yoki 50$
     conn = get_db()
     sql = """INSERT INTO projects
            (name,client,responsible,ssenariy,syomka,montaj,tasdiq,joylash,deadline,muammo,izoh,
-            plan,monthly_fee,done_ssenariy,done_syomka,done_montaj,done_tasdiq,done_joylash,self_post)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
+            plan,monthly_fee,done_ssenariy,done_syomka,done_montaj,done_tasdiq,done_joylash,self_post,lead_usd)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
     params = (
         b.get("name") or "Nomsiz loyiha", b.get("client") or "",
         b.get("responsible") or "", st(b.get("ssenariy")), st(b.get("syomka")),
         st(b.get("montaj")), st(b.get("tasdiq")), st(b.get("joylash")),
         b.get("deadline") or None, b.get("muammo") or "", b.get("izoh") or "",
         iv("plan"), iv("monthly_fee"), iv("done_ssenariy"), iv("done_syomka"), iv("done_montaj"), iv("done_tasdiq"), iv("done_joylash"),
-        1 if b.get("self_post") else 0,
+        1 if b.get("self_post") else 0, lead_usd,
     )
     if IS_PG:
         pid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
@@ -980,6 +982,7 @@ def api_update_project(pid, b):
         "done_montaj": iv("done_montaj"), "done_tasdiq": iv("done_tasdiq"),
         "done_joylash": iv("done_joylash"),
         "self_post": (1 if b.get("self_post") else 0) if "self_post" in b else (existing.get("self_post") or 0),
+        "lead_usd": (30 if int(b.get("lead_usd") or 50) == 30 else 50) if "lead_usd" in b else (existing.get("lead_usd") or 50),
     }
 
     # Faollik jurnali — qaysi bosqich "tayyor" bo'ldi
@@ -1002,13 +1005,13 @@ def api_update_project(pid, b):
         """UPDATE projects SET name=?,client=?,responsible=?,ssenariy=?,syomka=?,montaj=?,
            tasdiq=?,joylash=?,deadline=?,muammo=?,izoh=?,
            plan=?,monthly_fee=?,done_ssenariy=?,done_syomka=?,done_montaj=?,done_tasdiq=?,done_joylash=?,
-           self_post=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+           self_post=?,lead_usd=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
         (
             merged["name"], merged["client"], merged["responsible"], merged["ssenariy"],
             merged["syomka"], merged["montaj"], merged["tasdiq"], merged["joylash"],
             merged["deadline"], merged["muammo"], merged["izoh"],
             merged["plan"], merged["monthly_fee"], merged["done_ssenariy"], merged["done_syomka"],
-            merged["done_montaj"], merged["done_tasdiq"], merged["done_joylash"], merged["self_post"], pid,
+            merged["done_montaj"], merged["done_tasdiq"], merged["done_joylash"], merged["self_post"], merged["lead_usd"], pid,
         ),
     )
     conn.commit()
@@ -2518,11 +2521,12 @@ def _external_video_rate(operator):
 
 
 def _shoot_op_pay(operator, room, shoot_type, video_count):
-    """Syomka operator puli. TASHQI (boshqa joy) — har video uchun (video_count × stavka).
-    Studio (white/black) — turga qarab flat (_op_pay)."""
+    """Syomka operator puli.
+    TASHQI (boshqa joy) + REELS — har video uchun (video_count × stavka).
+    Boshqa hollarda (studio, yoki tashqi podcast/youtube/vebinar) — turga qarab flat (_op_pay)."""
     if not operator:
         return 0
-    if room == "tashqi":
+    if room == "tashqi" and shoot_type == "reels":
         return int(video_count or 0) * _external_video_rate(operator)
     return _op_pay(operator, shoot_type)
 
@@ -3508,34 +3512,31 @@ def _find_project(projects, cfg_name):
 
 
 def _leadership_pay(conn, name, rate):
-    """Rahbarlik puli oylik REJAGA proportsional: $50 × (bajarilgan/reja foizi, cap 100%).
-    Reja kiritilmagan bo'lsa — eski 5-bosqich mantiqi ('tayyor' → $50, aks holda $25).
-    Loyiha dashboard'da topilmasa — to'liq (baholab bo'lmaydi)."""
-    projects = [dict(r) for r in conn.execute("SELECT * FROM projects").fetchall()]
+    """Rahbarlik puli: rahbar MAS'UL (responsible) bo'lgan har loyiha uchun.
+    Har loyihaning o'z stavkasi (lead_usd: 30$ yoki 50$) × reja bajarilishi foizi (cap 100%).
+    Reja kiritilmagan bo'lsa — 5-bosqich mantiqi ('tayyor' → to'liq, aks holda yarim)."""
+    projects = [dict(r) for r in conn.execute(
+        "SELECT * FROM projects WHERE responsible=?", (name,)).fetchall()]
     total, details = 0, []
-    for cfg_name in LEADERSHIP.get(name, []):
-        p = _find_project(projects, cfg_name)
-        if p:
-            self_post = bool(p.get("self_post"))
-            plan = p.get("plan") or 0
-            done_cols = [c for c in DONE_COLS if not (self_post and c == "done_joylash")]
-            if plan > 0 and done_cols:
-                done_total = sum(p.get(c) or 0 for c in done_cols)
-                denom = plan * len(done_cols)
-                pct = min(done_total / denom, 1.0) if denom else 0.0
-                by_plan = True
-            else:
-                stages = [s for s in LEAD_STAGES if not (self_post and s == "joylash")]
-                pct = 1.0 if all((p.get(st) or "") == "tayyor" for st in stages) else 0.5
-                by_plan = False
-            matched = p["name"]
+    for p in projects:
+        self_post = bool(p.get("self_post"))
+        plan = p.get("plan") or 0
+        done_cols = [c for c in DONE_COLS if not (self_post and c == "done_joylash")]
+        if plan > 0 and done_cols:
+            done_total = sum(p.get(c) or 0 for c in done_cols)
+            denom = plan * len(done_cols)
+            pct = min(done_total / denom, 1.0) if denom else 0.0
+            by_plan = True
         else:
-            pct, by_plan = 1.0, False
-            matched = None
-        usd = int(round(LEADERSHIP_USD_FULL * pct))
+            stages = [s for s in LEAD_STAGES if not (self_post and s == "joylash")]
+            pct = 1.0 if all((p.get(st) or "") == "tayyor" for st in stages) else 0.5
+            by_plan = False
+        base_usd = p.get("lead_usd") or LEADERSHIP_USD_FULL
+        usd = int(round(base_usd * pct))
         total += usd * rate
-        details.append({"project": cfg_name, "matched": matched, "usd": usd,
-                        "pct": int(round(pct * 100)), "byPlan": by_plan, "full": pct >= 1.0})
+        details.append({"project": p["name"], "matched": p["name"], "usd": usd,
+                        "pct": int(round(pct * 100)), "byPlan": by_plan, "full": pct >= 1.0,
+                        "rate": base_usd})
     return total, details
 
 

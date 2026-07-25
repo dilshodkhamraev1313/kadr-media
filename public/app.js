@@ -1364,9 +1364,9 @@ async function viewShoots() {
     const cancelled = (b.status || 'active') === 'bekor_qilindi';
     const col = cancelled ? '#6b6b72' : SOURCE_COLOR[src];
     const loc = b.room === 'white' ? '1-xona' : (b.room === 'black' ? '2-xona' : 'Tashqi');
-    // Yakunlanmagan tashqi media syomka (video soni kiritilmagan) — ogohlantirish.
-    // Faqat yangi tizim sanasidan (PERVIDEO_START) boshlab; eskilariga tegmaydi.
-    const pending = src === 'media' && !cancelled && (b.room === 'tashqi' || !b.room)
+    // Yakunlanmagan tashqi REELS syomka (video soni kiritilmagan) — ogohlantirish.
+    // Faqat yangi tizim sanasidan (PERVIDEO_START) boshlab; eskilariga/boshqa turlarga tegmaydi.
+    const pending = src === 'media' && !cancelled && (b.room === 'tashqi' || !b.room) && b.shoot_type === 'reels'
       && !(b.video_count > 0) && (b.sdate || b.bdate || '').slice(0, 10) >= PERVIDEO_START;
     return `<div class="cal-ev${cancelled ? ' cancelled' : ''}" data-sid="${b.id}" data-src="${src}" style="background:${col}" title="${esc(b.project || b.client_name || '')} · ${loc}${pending ? ' · video soni kiritilmagan' : ''}">${pending ? '⚠️ ' : ''}${esc((b.start_time || '').slice(0, 5))} ${esc(b.project || b.client_name || '')}</div>`;
   };
@@ -1491,7 +1491,7 @@ async function openShootModal(presetDate) {
     const showPay = () => {
       const op = $('#sh_op').value; const t = $('#sh_type').value; const room = $('#sh_room').value;
       if (!op) { $('#sh_oppay').innerHTML = `<span class="muted">Operator tanlanmasa — operator puli hisoblanmaydi</span>`; return; }
-      if (room === 'tashqi') {
+      if (room === 'tashqi' && t === 'reels') {
         $('#sh_oppay').innerHTML = `🎥 ${esc(op)}: har video <b>${money(extRate(op))}</b>${opRates[op] ? ' <span class="muted">(shogird)</span>' : ''} <span class="muted">— video soni syomkadan keyin kiritiladi</span>`;
       } else {
         $('#sh_oppay').innerHTML = `👤 ${esc(op)} operatorga hisoblanadi: <b>${money(opRate(op, t))}</b>${opRates[op] ? ' <span class="muted">(shogird stavkasi)</span>' : ''}`;
@@ -1527,7 +1527,7 @@ function openShootDetailModal(s) {
   const canCount = ['ceo', 'coordinator', 'lead'].includes(ME.role);
   const opRatesD = (DATA.shoots && DATA.shoots.operatorRates) || {};
   const extRateD = (op) => (opRatesD[op] ? 10000 : 20000);
-  const perVideo = (s.sdate || '').slice(0, 10) >= PERVIDEO_START;  // yangi tizim faqat shu sanadan
+  const perVideo = (s.sdate || '').slice(0, 10) >= PERVIDEO_START && s.shoot_type === 'reels';  // per-video: faqat reels + shu sanadan
   const extBlock = (isExternal && !cancelled && s.operator && perVideo) ? `
     <div class="field" style="margin-top:4px"><label>🎬 Olingan video soni ${canCount ? '' : '<span class="muted">(rahbar kiritadi)</span>'}</label>
       <input id="sh_vcount" type="number" inputmode="numeric" min="0" value="${s.video_count || 0}" ${canCount ? '' : 'disabled'} /></div>
@@ -2961,7 +2961,12 @@ async function openProjectModal(project) {
       <div class="field"><label>Javobgar</label><select id="pf_resp"><option value="">—</option>${leads.map((u) => `<option ${PDRAFT.responsible === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></div>
     </div>
     <div class="field"><label>Deadline</label><input id="pf_deadline" type="date" value="${PDRAFT.deadline || ''}" /></div>
-    ${ME.role === 'ceo' ? `<div class="field"><label>💵 Oylik to'lov (so'm) — Media daromadi (xayriya hisobi uchun)</label><input id="pf_fee" type="number" min="0" value="${PDRAFT.monthly_fee || 0}" placeholder="masalan: 10800000 (barter bo'lsa 0)" /></div>` : ''}
+    ${ME.role === 'ceo' ? `<div class="field-row">
+      <div class="field"><label>💵 Oylik to'lov (so'm) — Media daromadi</label><input id="pf_fee" type="number" min="0" value="${PDRAFT.monthly_fee || 0}" placeholder="masalan: 10800000 (barter bo'lsa 0)" /></div>
+      <div class="field"><label>▦ Loyiha rahbari to'lovi (oyiga)</label><select id="pf_leadusd">
+        <option value="50" ${(+PDRAFT.lead_usd || 50) === 50 ? 'selected' : ''}>$50</option>
+        <option value="30" ${(+PDRAFT.lead_usd || 50) === 30 ? 'selected' : ''}>$30</option></select></div>
+    </div>` : ''}
     <div class="divider"></div><div class="sec-label">📅 Oylik reja (mijoz bilan kelishilgan)</div>
     <div class="field"><label>Oyiga nechta video — har bosqich uchun shu son</label><input id="pf_plan" type="number" min="0" value="${PDRAFT.plan || 0}" placeholder="masalan: 15" /></div>
     <div class="sec-label" style="margin-top:12px">Bu oy bajarilgani (har bosqich):</div>
@@ -2999,6 +3004,8 @@ async function saveProject() {
     self_post: $('#pf_selfpost') && $('#pf_selfpost').checked };
   const fee = $('#pf_fee');
   if (fee) body.monthly_fee = parseInt(fee.value || '0', 10);
+  const lu = $('#pf_leadusd');
+  if (lu) body.lead_usd = parseInt(lu.value || '50', 10);
   if (EDIT_P) await api(`/api/projects/${EDIT_P.id}`, { method: 'PUT', body: JSON.stringify(body) });
   else await api('/api/projects', { method: 'POST', body: JSON.stringify(body) });
   closeModal(); toast('✓ Saqlandi'); render();
