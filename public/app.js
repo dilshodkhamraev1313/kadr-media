@@ -254,6 +254,7 @@ async function startApp() {
 const NAV_ITEMS = [
   // Hamma uchun birinchi — bugungi vazifalar
   { view: 'bugun',     icon: '🎯', label: 'Bugun',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'smm'] },
+  { view: 'ombor',     icon: '📚', label: 'Qo\'llanma',     roles: ['ceo', 'coordinator', 'lead', 'editor', 'smm'] },
   // Montajchi uchun
   { view: 'cabinet',   icon: '★', label: 'Mening kabinetim', roles: ['editor'] },
   // Montaj ham qiladigan rahbar (Shodiya) — o'z montaj kabineti
@@ -353,6 +354,7 @@ const TITLES = {
   shootstat: ['Syomka soatlari', 'Kadr Studio + Kadr Media — jami soat, kim, qaysi vaqt'],
   budget:    ['Budjet', 'Oylik xarajatlar budjeti va mas\'ullar'],
   bugun:     ['Bugun', 'Bugungi vazifalaringiz va muddatlar'],
+  ombor:     ['Qo\'llanma (Ombor)', 'Rol bo\'yicha ish qo\'llanmasi va kirish yo\'li'],
   charity:   ['Xayriya fondi', 'Sof foydaning 5% — Alloh yo\'lida'],
   studio:    ['Kadr Studio', 'Syomka xonalari bandligi va bronlar'],
   joylash:   ['Joylash (SMM)', 'Tayyor videolarni Instagram\'ga joylash'],
@@ -381,6 +383,7 @@ async function render() {
   buildTopbarActions();
   try {
     if (VIEW === 'bugun') await viewToday();
+    else if (VIEW === 'ombor') await viewPlaybooks();
     else if (VIEW === 'dashboard') await viewDashboard();
     else if (VIEW === 'projects') await viewProjects();
     else if (VIEW === 'scripts' || VIEW === 'cscripts') await viewScripts();
@@ -491,6 +494,10 @@ async function viewToday() {
 
   // Eslatmalar (kelish / kun yopish)
   const rem = [];
+  const ob = t.onboarding || {};
+  if (ob.total > 0 && (ob.done || 0) < ob.total) {
+    rem.push(`<div class="today-rem"><span>🎓 Kirish qo'llanmangizni o'rganing — ${ob.done || 0}/${ob.total} bajarildi</span><button class="mini-btn blue" id="t_ombor">Qo'llanma</button></div>`);
+  }
   if (att.amAttend && att.me && !att.me.todayIn) {
     rem.push(`<div class="today-rem"><span>⏰ Bugun kelganingizni belgilamagansiz</span><button class="mini-btn green" id="t_checkin">✋ Keldim</button></div>`);
   }
@@ -526,9 +533,118 @@ async function viewToday() {
   if (ci) ci.addEventListener('click', async () => { await api('/api/attendance/checkin', { method: 'POST', body: '{}' }); toast('🌅 Belgilandi'); render(); });
   const cl = $('#t_close');
   if (cl) cl.addEventListener('click', () => { VIEW = 'daily'; render(); });
+  const ob2 = $('#t_ombor');
+  if (ob2) ob2.addEventListener('click', () => { VIEW = 'ombor'; render(); });
   $('#content').querySelectorAll('[data-vact]').forEach((b) => b.addEventListener('click', (e) => {
     e.stopPropagation(); videoActionUI(b.dataset.id, b.dataset.vact);
   }));
+}
+
+// ---------- OMBOR (rol qo'llanmalari + onboarding) ----------
+const pbNl2br = (s) => esc(s || '').replace(/\n/g, '<br>');
+const pbSectionsHTML = (p) => (p.sections || []).map((s) =>
+  `<div class="pb-sec"><div class="pb-h">${esc(s.h)}</div><div class="pb-b">${pbNl2br(s.b)}</div></div>`).join('');
+
+async function viewPlaybooks() {
+  const d = await api('/api/playbooks');
+  DATA.playbooks = d;
+  const canEdit = d.canEdit;
+  const mine = d.playbooks.filter((p) => p.mine);
+  const others = d.playbooks.filter((p) => !p.mine);
+
+  const checklistHTML = (p) => {
+    if (!(p.checklist || []).length) return '';
+    const doneN = (p.obDone || []).length;
+    const items = p.checklist.map((c, i) => {
+      const done = (p.obDone || []).includes(i);
+      return `<label class="pb-onb-item${done ? ' done' : ''}"><input type="checkbox" data-obkey="${esc(p.roleKey)}" data-obstep="${i}" ${done ? 'checked' : ''}/> <span>${esc(c)}</span></label>`;
+    }).join('');
+    return `<div class="pb-onb"><div class="pb-onb-top">🎓 Kirish checklisti <b>${doneN}/${p.checklist.length}</b></div>${items}</div>`;
+  };
+  const mineCards = mine.map((p) => `
+    <div class="panel pb-card mine" style="margin-bottom:14px">
+      <div class="pb-card-top"><h3>${esc(p.title)} <span class="pill blue">Sizning rolingiz</span></h3>
+        ${canEdit ? `<button class="btn-ghost pb-edit" data-key="${esc(p.roleKey)}">✏️ Tahrirlash</button>` : ''}</div>
+      ${checklistHTML(p)}
+      <div class="pb-secs">${pbSectionsHTML(p)}</div>
+    </div>`).join('');
+  const otherCards = others.map((p) => `
+    <button class="pb-mini" data-open="${esc(p.roleKey)}">
+      <span class="pb-mini-t">${esc(p.title)}</span>
+      <span class="muted">${(p.sections || []).length} bo'lim ›</span>
+    </button>`).join('');
+
+  $('#content').innerHTML = `
+    <p class="muted" style="margin-bottom:14px">📚 Har rol uchun ish qo'llanmasi va kirish yo'li. Yangi xodim shu yerdan tez o'rganadi.${canEdit ? ' Tahrirlab, o\'z jamoangizga moslang.' : ''}</p>
+    ${mine.length ? `<div class="sec-label" style="margin-bottom:10px">📌 Sizning qo'llanmangiz</div>${mineCards}` : ''}
+    <div class="sec-label" style="margin:18px 0 10px">📖 Barcha rollar</div>
+    <div class="pb-list">${otherCards || emptyState('Qo\'llanma yo\'q')}</div>`;
+
+  $('#content').querySelectorAll('[data-obstep]').forEach((cb) => cb.addEventListener('change', async () => {
+    await api('/api/onboarding', { method: 'POST', body: JSON.stringify({ roleKey: cb.dataset.obkey, step: parseInt(cb.dataset.obstep, 10) }) });
+    render();
+  }));
+  $('#content').querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => {
+    const p = d.playbooks.find((x) => x.roleKey === b.dataset.open);
+    if (p) openPlaybookRead(p, canEdit);
+  }));
+  $('#content').querySelectorAll('.pb-edit').forEach((b) => b.addEventListener('click', () => {
+    const p = d.playbooks.find((x) => x.roleKey === b.dataset.key);
+    if (p) openPlaybookEdit(p);
+  }));
+}
+
+function openPlaybookRead(p, canEdit) {
+  openModal(p.title, `
+    <div class="pb-secs">${pbSectionsHTML(p)}</div>
+    ${(p.checklist || []).length ? `<div class="sec-label" style="margin-top:14px">🎓 Kirish checklisti</div><ul class="pb-chk-read">${p.checklist.map((c) => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}
+    ${canEdit ? `<div class="modal-actions"><button class="btn-save" id="pb_edit2">✏️ Tahrirlash</button></div>` : ''}`,
+  () => {
+    const e = $('#pb_edit2');
+    if (e) e.addEventListener('click', () => { closeModal(); openPlaybookEdit(p); });
+  });
+}
+
+function openPlaybookEdit(p) {
+  const draft = { roleKey: p.roleKey, title: p.title, sections: JSON.parse(JSON.stringify(p.sections || [])), checklist: [...(p.checklist || [])] };
+  const sync = () => {
+    $('#modalBody').querySelectorAll('.pb-sh').forEach((el) => { draft.sections[+el.dataset.i].h = el.value; });
+    $('#modalBody').querySelectorAll('.pb-sb').forEach((el) => { draft.sections[+el.dataset.i].b = el.value; });
+    $('#modalBody').querySelectorAll('.pb-ci').forEach((el) => { draft.checklist[+el.dataset.i] = el.value; });
+    const t = $('#pb_title'); if (t) draft.title = t.value;
+  };
+  const draw = () => {
+    const secRows = draft.sections.map((s, i) => `
+      <div class="pb-edit-sec">
+        <input class="pb-sh" data-i="${i}" value="${esc(s.h)}" placeholder="Bo'lim sarlavhasi" />
+        <textarea class="pb-sb" data-i="${i}" placeholder="Matn...">${esc(s.b)}</textarea>
+        <button class="mini-btn red pb-srm" data-i="${i}">🗑 Bo'limni o'chirish</button>
+      </div>`).join('');
+    const chkRows = draft.checklist.map((c, i) => `
+      <div class="pb-edit-chk"><input class="pb-ci" data-i="${i}" value="${esc(c)}" placeholder="Kirish qadami" /><button class="mini-btn red pb-crm" data-i="${i}">🗑</button></div>`).join('');
+    $('#modalBody').innerHTML = `
+      <div class="field"><label>Sarlavha</label><input id="pb_title" value="${esc(draft.title)}" /></div>
+      <div class="sec-label" style="margin:8px 0 6px">Bo'limlar</div>
+      <div>${secRows}</div>
+      <button class="btn-ghost" id="pb_addsec" style="margin:4px 0 8px">+ Bo'lim qo'shish</button>
+      <div class="sec-label" style="margin:10px 0 6px">🎓 Kirish checklisti</div>
+      <div>${chkRows}</div>
+      <button class="btn-ghost" id="pb_addchk" style="margin:4px 0">+ Qadam qo'shish</button>
+      <div class="modal-actions"><button class="btn-save" id="pb_save">💾 Saqlash</button></div>`;
+    $('#pb_addsec').addEventListener('click', () => { sync(); draft.sections.push({ h: '', b: '' }); draw(); });
+    $('#pb_addchk').addEventListener('click', () => { sync(); draft.checklist.push(''); draw(); });
+    $('#modalBody').querySelectorAll('.pb-srm').forEach((b) => b.addEventListener('click', () => { sync(); draft.sections.splice(+b.dataset.i, 1); draw(); }));
+    $('#modalBody').querySelectorAll('.pb-crm').forEach((b) => b.addEventListener('click', () => { sync(); draft.checklist.splice(+b.dataset.i, 1); draw(); }));
+    $('#pb_save').addEventListener('click', async () => {
+      sync();
+      draft.checklist = draft.checklist.filter((c) => (c || '').trim());
+      draft.sections = draft.sections.filter((s) => (s.h || '').trim() || (s.b || '').trim());
+      const res = await api('/api/playbooks', { method: 'POST', body: JSON.stringify(draft) });
+      if (res && res.error) { toast(res.error); return; }
+      closeModal(); toast('💾 Qo\'llanma saqlandi'); render();
+    });
+  };
+  openModal('✏️ Qo\'llanmani tahrirlash', '<div></div>', draw);
 }
 
 // ---------- DASHBOARD (loyihalar + stats) ----------

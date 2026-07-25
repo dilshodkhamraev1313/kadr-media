@@ -383,6 +383,29 @@ body {
 /* Kuchli Bugun — kechikkan vazifa keskin ko'rinsin */
 .task-item.overdue { border-left: 3px solid var(--red); background: rgba(255,69,58,.06); }
 
+/* Ombor — rol qo'llanmalari */
+.pb-card.mine { border-color: color-mix(in srgb, var(--blue) 30%, var(--border)); }
+.pb-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.pb-card-top h3 { margin: 0; font-size: 17px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pb-onb { background: var(--bg-soft, rgba(255,255,255,.03)); border: 1px solid var(--border); border-radius: 11px; padding: 12px 14px; margin: 10px 0 14px; }
+.pb-onb-top { font-size: 12.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+.pb-onb-item { display: flex; align-items: flex-start; gap: 9px; padding: 5px 0; font-size: 14.5px; cursor: pointer; }
+.pb-onb-item input { margin-top: 3px; width: 16px; height: 16px; accent-color: var(--green); flex: none; }
+.pb-onb-item.done span { color: var(--muted); text-decoration: line-through; }
+.pb-secs { display: flex; flex-direction: column; gap: 12px; }
+.pb-sec .pb-h { font-weight: 700; font-size: 14.5px; margin-bottom: 3px; }
+.pb-sec .pb-b { font-size: 14px; line-height: 1.6; color: var(--text-2, var(--muted)); }
+.pb-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.pb-mini { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; text-align: left; transition: border-color .15s, transform .1s; }
+.pb-mini:hover { border-color: var(--blue); transform: translateY(-2px); }
+.pb-mini-t { font-weight: 650; font-size: 15px; }
+.pb-chk-read { margin: 6px 0 0; padding-left: 20px; font-size: 14px; line-height: 1.7; }
+.pb-edit-sec { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px; }
+.pb-edit-sec .pb-sb { min-height: 80px; resize: vertical; }
+.pb-edit-sec .pb-srm { align-self: flex-start; }
+.pb-edit-chk { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.pb-edit-chk input { flex: 1; }
+
 /* Kechikkanlar (pulni tiklash) */
 .late-list { display: flex; flex-direction: column; gap: 8px; }
 .late-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;

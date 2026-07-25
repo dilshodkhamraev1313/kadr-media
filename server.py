@@ -85,6 +85,69 @@ OPERATOR_RATES = {
 # Video soni syomkadan keyin loyiha rahbari tomonidan kiritiladi.
 EXTERNAL_VIDEO_PAY = 20000          # to'liq operator (Said)
 EXTERNAL_VIDEO_PAY_TRAINEE = 10000  # shogird operator (OPERATOR_RATES da bo'lgan — Umid)
+
+# ============================================================
+#  OMBOR — rol qo'llanmalari (skelet). CEO/rahbar to'ldiradi.
+#  [...] — to'ldiriladigan joy. Yangi xodim login qilsa — o'z roli qo'llanmasi ochiladi.
+# ============================================================
+DEFAULT_PLAYBOOKS = {
+    "montajchi": {
+        "title": "🎬 Montajchi qo'llanmasi",
+        "sections": [
+            {"h": "Vazifang", "b": "Sizga biriktirilgan videolarni sifatli va o'z vaqtida montaj qilish. [Bu yerga qo'shimcha yozing]"},
+            {"h": "Ish jarayoni (qadamlar)", "b": "1) «Bugun» bo'limida sizga biriktirilgan videoni ko'ring.\n2) Material/Drive linkni oching.\n3) Montaj qiling.\n4) «✓ Montaj qildim» tugmasini bosing.\n5) Said sifat nazoratidan o'tkazadi — qaytarsa, izohga qarab tuzating."},
+            {"h": "Sifat standartlari", "b": "• Format/o'lcham: [masalan reels 9:16, ...]\n• Subtitr: [o'zbekcha, shrift, joylashuvi]\n• Intro/outro: [brend elementlari]\n• Ovoz/musiqa: [balans, litsenziya]\n• [Boshqa standartlar]"},
+            {"h": "Muddat qoidasi (muhim!)", "b": "• Reels: o'z vaqtida topshiring — KECHIKSA pul hisoblanmaydi.\n• Podkast/YouTube: kechiksa YARIM pul.\n• Muddat «Bugun»da 🔴 bilan ko'rinadi, 2 soat qolganda bot eslatadi."},
+            {"h": "Dastur / jihoz", "b": "[Premiere Pro / CapCut / ... — qaysi dasturda ishlaymiz, presetlar qayerda]"},
+            {"h": "Etalon (namuna) videolar", "b": "[Bizning standart videolarga havolalar / qayerdan ko'rish]"},
+        ],
+        "checklist": ["Qo'llanmani o'qidim", "3 ta etalon videoni ko'rdim", "Dastur/presetlarni o'rnatdim", "Bitta test montaj qilib berdim"],
+    },
+    "operator": {
+        "title": "📹 Operator (syomka) qo'llanmasi",
+        "sections": [
+            {"h": "Vazifang", "b": "Loyiha syomkalarini sifatli olib berish. [Qo'shimcha]"},
+            {"h": "Ish jarayoni", "b": "1) «Kadr Media» kalendaridan bugungi syomkangizni ko'ring.\n2) Jihozni tayyorlang, vaqtida boring.\n3) Syomka qiling.\n4) TASHQI (boshqa joy) syomka bo'lsa — necha video olganingizni loyiha rahbariga ayting (u tizimga kiritadi).\n5) Materialni [qayerga] yuklang."},
+            {"h": "Syomka standartlari", "b": "• Kadr/kompozitsiya: [...]\n• Yorug'lik: [...]\n• Ovoz: [petlichka, ...]\n• [Boshqa]"},
+            {"h": "Operator puli", "b": "• Studio (1/2-xona): har syomka 50 000.\n• Tashqi (ofis/ko'cha): HAR VIDEO 20 000 (shogird — 10 000).\n• Vaqt behuda ketmasin: mijoz (ssenariy+feys) tayyor bo'lsagina syomkaga chiqing."},
+            {"h": "Jihoz", "b": "[Kamera, ob'ektiv, mikrofon, svet — ro'yxat va qayerda saqlanadi]"},
+            {"h": "Etalon syomkalar", "b": "[Namuna ishlarga havolalar]"},
+        ],
+        "checklist": ["Qo'llanmani o'qidim", "Jihozni ko'rib chiqdim", "Etalon syomkalarni ko'rdim", "Bitta test syomka qildim"],
+    },
+    "smm": {
+        "title": "📷 SMM / Joylash qo'llanmasi",
+        "sections": [
+            {"h": "Vazifang", "b": "Tayyor videolarni Instagram/boshqa platformalarga joylash. [Qo'shimcha]"},
+            {"h": "Ish jarayoni", "b": "1) «Joylash» bo'limidan qabul qilingan videoni oling.\n2) Caption + hashtag yozing.\n3) [Vaqtida] joylang.\n4) «📷 Joyladim» tugmasini bosing + Instagram link qo'ying."},
+            {"h": "Standartlar", "b": "• Joylash vaqti: [eng yaxshi soatlar]\n• Hashtag: [ro'yxat/shablon]\n• Caption uslubi: [ohang, emoji, CTA]\n• [Boshqa]"},
+            {"h": "Etalon postlar", "b": "[Namuna postlarga havolalar]"},
+        ],
+        "checklist": ["Qo'llanmani o'qidim", "Hashtag/caption shablonini oldim", "Etalon postlarni ko'rdim", "Bitta test post joyladim"],
+    },
+    "lead": {
+        "title": "▦ Loyiha rahbari qo'llanmasi",
+        "sections": [
+            {"h": "Vazifang", "b": "O'z loyihalaringizni boshidan oxirigacha boshqarish: mijoz, jamoa, muddat, sifat. [Qo'shimcha]"},
+            {"h": "Loyiha jarayoni", "b": "Ssenariy → Syomka → Montaj → Tasdiq → Joylash. Har bosqichni «Loyihalar»da yuriting; kimga biriktirish sizda."},
+            {"h": "Mijoz tayyorligi (muhim!)", "b": "Operatorni yuborishdan OLDIN: ssenariy 100% tayyor + feys/talant kelishilgan + vaqt belgilangan bo'lsin. Aks holda operator vaqti behuda ketadi."},
+            {"h": "Nazorat", "b": "Har kuni «Nazorat markazi»ni oching: kechikkan/jim qolgan ishlaringizni ko'ring va harakatga keltiring. Loyiha muddati o'tsa — jarima (kuniga 10 000, fiksaning 20%igacha)."},
+            {"h": "Video biriktirish", "b": "«Montaj»da video biriktiring/tahrirlang. Tashqi syomkadan keyin operatorning video sonini kiriting."},
+            {"h": "Mijoz bilan muloqot", "b": "[Ohang, javob vaqti, hisobot berish tartibi]"},
+        ],
+        "checklist": ["Qo'llanmani o'qidim", "Loyihalarim va mas'ul jamoani ko'rdim", "Nazorat markazini tushundim", "Mijoz tayyorligi qoidasini bildim"],
+    },
+    "scenarist": {
+        "title": "✎ Ssenarist qo'llanmasi",
+        "sections": [
+            {"h": "Vazifang", "b": "Loyihalar uchun ssenariy yozish. [Qo'shimcha]"},
+            {"h": "Ish jarayoni", "b": "1) Loyiha/mavzuni oling.\n2) Ssenariy yozing.\n3) Mijoz/rahbar tasdiqlagach — tizimga kiriting.\n4) Syomkaga tayyor holatga keltiring."},
+            {"h": "Ssenariy standartlari", "b": "• Tuzilma: [ilgak — asosiy — CTA]\n• Uzunlik: [reels uchun ... soniya]\n• Til/ohang: [...]\n• [Boshqa]"},
+            {"h": "Shablon va etalonlar", "b": "[Ssenariy shabloni / eng zo'r ssenariylar]"},
+        ],
+        "checklist": ["Qo'llanmani o'qidim", "Ssenariy shablonini oldim", "Etalon ssenariylarni ko'rdim", "Bitta test ssenariy yozdim"],
+    },
+}
 # Kadr Media (ichki syomka) — studio TUSHUMIga pul hisoblanmaydi (faqat xona/vaqt band + operator puli)
 STUDIO_NO_INCOME_TYPES = ("kadr_media",)
 STUDIO_OPERATORS = ("Said", "Umid")
@@ -607,6 +670,12 @@ def init_db():
         id {pk}, person TEXT, project TEXT, ym TEXT)""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS penalty_waiver (
         id {pk}, person TEXT, ym TEXT, created_by TEXT, created_at {ts})""")
+    # OMBOR — rol qo'llanmalari (bilim bazasi) + onboarding
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS playbooks (
+        id {pk}, role_key TEXT, title TEXT, sections TEXT DEFAULT '[]',
+        checklist TEXT DEFAULT '[]', updated_by TEXT, updated_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS onboarding_done (
+        id {pk}, person TEXT, role_key TEXT, step INTEGER, done_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS client_payments (
         id {pk}, project TEXT, ym TEXT, amount INTEGER DEFAULT 0,
         pdate TEXT, note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
@@ -669,6 +738,7 @@ def init_db():
     # projects: mijoz o'zi joylaydigan loyihalar (joylash bosqichi yo'q)
     add_column_if_missing(conn, "projects", "self_post", "INTEGER DEFAULT 0")
     _seed_checklist(conn)
+    _seed_playbooks(conn)
     _backfill_studio_ledger(conn)
     _backfill_operator_pay(conn)
     conn.commit()
@@ -1509,9 +1579,11 @@ def api_my_tasks(user):
             "SELECT * FROM shoots WHERE operator=? AND sdate=? AND (status IS NULL OR status<>'bekor_qilindi')",
             (name, today)).fetchall()]
         tasks["shoots"] = b + s
+    ob_done, ob_total = _onboarding_pending(conn, user)
     conn.close()
     total = sum(len(v) for v in tasks.values())
-    return {"tasks": tasks, "total": total, "name": name}
+    return {"tasks": tasks, "total": total, "name": name,
+            "onboarding": {"done": ob_done, "total": ob_total}}
 
 
 def api_control_center(user):
@@ -4049,6 +4121,134 @@ def _close_streak(conn, name, today):
     return streak
 
 
+def _seed_playbooks(conn):
+    """Rol qo'llanmalarining skeletini yaratadi (faqat o'sha rol yo'q bo'lsa — tahrirlangani saqlanadi)."""
+    for role_key, pb in DEFAULT_PLAYBOOKS.items():
+        ex = conn.execute("SELECT id FROM playbooks WHERE role_key=?", (role_key,)).fetchone()
+        if not ex:
+            conn.execute(
+                "INSERT INTO playbooks (role_key, title, sections, checklist, updated_by, updated_at) VALUES (?,?,?,?,?,?)",
+                (role_key, pb["title"], json.dumps(pb["sections"], ensure_ascii=False),
+                 json.dumps(pb["checklist"], ensure_ascii=False), "Tizim", now_local()))
+
+
+def _user_playbook_keys(user):
+    """Foydalanuvchiga tegishli qo'llanma kalitlari (roli + SALARY bayroqlari bo'yicha)."""
+    role = user.get("role")
+    name = user.get("name")
+    keys = []
+    if role in ("lead", "coordinator", "ceo"):
+        keys.append("lead")
+    if role == "editor":
+        keys.append("montajchi")
+    if role == "smm":
+        keys.append("smm")
+    cfg = SALARY.get(name, {})
+    if cfg.get("montaj") and "montajchi" not in keys:
+        keys.append("montajchi")
+    if cfg.get("operator") and "operator" not in keys:
+        keys.append("operator")
+    if cfg.get("scenarist") and "scenarist" not in keys:
+        keys.append("scenarist")
+    # Nomidan operator (Said/Umid) — operator qo'llanmasi
+    if name in STUDIO_OPERATORS and "operator" not in keys:
+        keys.append("operator")
+    return keys
+
+
+def api_playbooks(user):
+    """OMBOR — barcha rol qo'llanmalari; 'meniki' kalitlari + onboarding holati bilan."""
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM playbooks ORDER BY id").fetchall()]
+    ob = {}
+    for r in conn.execute("SELECT role_key, step FROM onboarding_done WHERE person=?", (user["name"],)).fetchall():
+        ob.setdefault(r["role_key"], []).append(r["step"])
+    conn.close()
+    my_keys = _user_playbook_keys(user)
+    books = []
+    for r in rows:
+        try:
+            sections = json.loads(r.get("sections") or "[]")
+        except (ValueError, TypeError):
+            sections = []
+        try:
+            checklist = json.loads(r.get("checklist") or "[]")
+        except (ValueError, TypeError):
+            checklist = []
+        books.append({
+            "roleKey": r["role_key"], "title": r["title"], "sections": sections,
+            "checklist": checklist, "mine": r["role_key"] in my_keys,
+            "obDone": ob.get(r["role_key"], []),
+            "updatedBy": r.get("updated_by"), "updatedAt": r.get("updated_at"),
+        })
+    return {"playbooks": books, "myKeys": my_keys, "canEdit": user["role"] in ("ceo", "coordinator", "lead")}
+
+
+def api_playbook_save(user, b):
+    """CEO/rahbar rol qo'llanmasini tahrirlaydi (bo'limlar + onboarding checklist)."""
+    if user["role"] not in ("ceo", "coordinator", "lead"):
+        return {"error": "Ruxsat yo'q"}, 403
+    role_key = (b.get("roleKey") or "").strip()
+    if not role_key:
+        return {"error": "Rol kerak"}, 400
+    title = (b.get("title") or "").strip() or role_key
+    sections = json.dumps(b.get("sections") or [], ensure_ascii=False)
+    checklist = json.dumps(b.get("checklist") or [], ensure_ascii=False)
+    conn = get_db()
+    ex = conn.execute("SELECT id FROM playbooks WHERE role_key=?", (role_key,)).fetchone()
+    if ex:
+        conn.execute("UPDATE playbooks SET title=?, sections=?, checklist=?, updated_by=?, updated_at=? WHERE id=?",
+                     (title, sections, checklist, user["name"], now_local(), ex["id"]))
+    else:
+        conn.execute("INSERT INTO playbooks (role_key, title, sections, checklist, updated_by, updated_at) VALUES (?,?,?,?,?,?)",
+                     (role_key, title, sections, checklist, user["name"], now_local()))
+    log_audit(conn, user["name"], "qo'llanma tahrirladi", role_key)
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_onboarding_tick(user, b):
+    """Xodim o'z onboarding qadamini belgilaydi/olib tashlaydi (toggle)."""
+    role_key = (b.get("roleKey") or "").strip()
+    try:
+        step = int(b.get("step"))
+    except (ValueError, TypeError):
+        return {"error": "Qadam kerak"}, 400
+    conn = get_db()
+    ex = conn.execute("SELECT id FROM onboarding_done WHERE person=? AND role_key=? AND step=?",
+                      (user["name"], role_key, step)).fetchone()
+    if ex:
+        conn.execute("DELETE FROM onboarding_done WHERE id=?", (ex["id"],))
+        done = False
+    else:
+        conn.execute("INSERT INTO onboarding_done (person, role_key, step, done_at) VALUES (?,?,?,?)",
+                     (user["name"], role_key, step, now_local()))
+        done = True
+    conn.commit()
+    conn.close()
+    return {"ok": True, "done": done}
+
+
+def _onboarding_pending(conn, user):
+    """Foydalanuvchining tugallanmagan onboarding qadamlari soni (Bugun eslatmasi uchun)."""
+    keys = _user_playbook_keys(user)
+    if not keys:
+        return 0, 0
+    total = 0
+    for k in keys:
+        row = conn.execute("SELECT checklist FROM playbooks WHERE role_key=?", (k,)).fetchone()
+        if row:
+            try:
+                total += len(json.loads(row["checklist"] or "[]"))
+            except (ValueError, TypeError):
+                pass
+    done = conn.execute(
+        "SELECT COUNT(*) AS n FROM onboarding_done WHERE person=? AND role_key IN (%s)" % ",".join("?" * len(keys)),
+        [user["name"]] + keys).fetchone()["n"] or 0
+    return done, total
+
+
 def _seed_checklist(conn):
     """Har kishiga tayyor cheklist (faqat o'sha kishida hech narsa bo'lmasa)."""
     for person, items in DEFAULT_CHECKLIST.items():
@@ -4915,6 +5115,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_budget(user))
         if path == "/api/shoots":
             return self._forbid() if role not in APPROVER_ROLES else self._json(api_shoots(user, show_all))
+        if path == "/api/playbooks":
+            return self._json(api_playbooks(user))
         if path == "/api/scenarist":
             return self._forbid() if not is_scenarist(user) else self._json(api_scenarist(user))
         if path == "/api/payroll":
@@ -4996,6 +5198,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_set_video_project(user, b))
         if path == "/api/penalty/waive":
             return self._json(api_waive_penalty(user, b))
+        if path == "/api/playbooks":
+            return self._json(api_playbook_save(user, b))
+        if path == "/api/onboarding":
+            return self._json(api_onboarding_tick(user, b))
         if path == "/api/projects":
             if r not in APPROVER_ROLES:
                 return self._forbid()
