@@ -3296,7 +3296,7 @@ def api_create_shoot(user, b):
     conn.close()
     time_str = (f" {start_time}–{end_time}" if start_time and end_time else (f" {start_time}" if start_time else ""))
     loc_lbl = {"white": "1-xona", "black": "2-xona"}.get(room, "Boshqa joy (tashqi)")
-    if operator and room == "tashqi":
+    if operator and room == "tashqi" and shoot_type == "reels":
         op_line = f"\n👤 Operator: {operator} (har video {_external_video_rate(operator):,} so'm — video soni keyin kiritiladi)".replace(",", " ")
     elif operator:
         op_line = f"\n👤 Operator: {operator} (+{operator_pay:,} so'm)".replace(",", " ")
