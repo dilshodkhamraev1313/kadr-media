@@ -81,6 +81,10 @@ OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 
 OPERATOR_RATES = {
     "Umid": {"reels": 25000, "podcast": 50000, "youtube": 25000, "vebinar": 100000, "kadr_media": 25000},
 }
+# Studiodan TASHQARI (ofis/ko'cha) syomka — har video uchun operator puli.
+# Video soni syomkadan keyin loyiha rahbari tomonidan kiritiladi.
+EXTERNAL_VIDEO_PAY = 20000          # to'liq operator (Said)
+EXTERNAL_VIDEO_PAY_TRAINEE = 10000  # shogird operator (OPERATOR_RATES da bo'lgan — Umid)
 # Kadr Media (ichki syomka) — studio TUSHUMIga pul hisoblanmaydi (faqat xona/vaqt band + operator puli)
 STUDIO_NO_INCOME_TYPES = ("kadr_media",)
 STUDIO_OPERATORS = ("Said", "Umid")
@@ -652,6 +656,7 @@ def init_db():
     add_column_if_missing(conn, "shoots", "start_time", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "shoots", "end_time", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "shoots", "room", "TEXT DEFAULT ''")  # lokatsiya: white/black/tashqi
+    add_column_if_missing(conn, "shoots", "video_count", "INTEGER DEFAULT 0")  # tashqi syomka: olingan video soni
     # xarajatlar: qayerdan pul chiqdi — usul (naqt/plastik) + kim to'ladi (Dilshod/Gulmira)
     add_column_if_missing(conn, "studio_expenses", "method", "TEXT DEFAULT 'naqt'")
     add_column_if_missing(conn, "studio_expenses", "paid_by", "TEXT DEFAULT ''")
@@ -2435,6 +2440,21 @@ def _op_pay(operator, shoot_type):
     return OPERATOR_PAY.get(st, 0)
 
 
+def _external_video_rate(operator):
+    """Tashqi syomkada bitta video uchun operator puli (shogird — yarim)."""
+    return EXTERNAL_VIDEO_PAY_TRAINEE if operator in OPERATOR_RATES else EXTERNAL_VIDEO_PAY
+
+
+def _shoot_op_pay(operator, room, shoot_type, video_count):
+    """Syomka operator puli. TASHQI (boshqa joy) — har video uchun (video_count × stavka).
+    Studio (white/black) — turga qarab flat (_op_pay)."""
+    if not operator:
+        return 0
+    if room == "tashqi":
+        return int(video_count or 0) * _external_video_rate(operator)
+    return _op_pay(operator, shoot_type)
+
+
 def _backfill_operator_pay(conn):
     """Operator stavkasi (shaxsga bog'liq) o'zgargach — maxsus stavkali operatorlarning
     mavjud bron/syomkalaridagi operator_pay ni joriy _op_pay bo'yicha qayta hisoblaydi.
@@ -2443,7 +2463,8 @@ def _backfill_operator_pay(conn):
         for r in conn.execute("SELECT id, shoot_type FROM studio_bookings WHERE operator=?", (op,)).fetchall():
             conn.execute("UPDATE studio_bookings SET operator_pay=? WHERE id=?",
                          (_op_pay(op, r["shoot_type"]), r["id"]))
-        for r in conn.execute("SELECT id, shoot_type FROM shoots WHERE operator=?", (op,)).fetchall():
+        # Faqat studio (white/black) syomkalar — tashqi (per-video) pulga TEGMAYMIZ
+        for r in conn.execute("SELECT id, shoot_type FROM shoots WHERE operator=? AND room IN ('white','black')", (op,)).fetchall():
             conn.execute("UPDATE shoots SET operator_pay=? WHERE id=?",
                          (_op_pay(op, r["shoot_type"]), r["id"]))
 
@@ -3170,21 +3191,23 @@ def api_create_shoot(user, b):
     """Loyiha rahbari loyihaga syomka belgilaydi — operator va turga qarab operator puli avtomatik."""
     shoot_type = b.get("shoot_type") if b.get("shoot_type") in SHOOT_TYPES else "reels"
     operator = b.get("operator") if b.get("operator") in STUDIO_OPERATORS else ""
-    operator_pay = _op_pay(operator, shoot_type)
     sdate = b.get("sdate") or uz_today().isoformat()
     start_time = (b.get("start_time") or "").strip()
     end_time = (b.get("end_time") or "").strip()
     room = b.get("room") if b.get("room") in ("white", "black", "tashqi") else "tashqi"  # lokatsiya
+    # Tashqi syomka — operator puli video soniga qarab (dastlab 0, rahbar keyin kiritadi)
+    video_count = int(b.get("video_count") or 0)
+    operator_pay = _shoot_op_pay(operator, room, shoot_type, video_count)
     conn = get_db()
     # Xona bandligi (white/black) — Kadr Studio + Kadr Media birga
     conflict = _room_conflict(conn, room, sdate, start_time, end_time)
     if conflict:
         conn.close()
         return {"error": _conflict_msg(conflict)}, 409
-    sql = """INSERT INTO shoots (project_id, project, shoot_type, operator, operator_pay, sdate, start_time, end_time, room, status, note, created_by)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"""
+    sql = """INSERT INTO shoots (project_id, project, shoot_type, operator, operator_pay, sdate, start_time, end_time, room, video_count, status, note, created_by)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"""
     params = (b.get("project_id"), b.get("project") or "", shoot_type, operator,
-              operator_pay, sdate, start_time, end_time, room, "active", b.get("note") or "", user["name"])
+              operator_pay, sdate, start_time, end_time, room, video_count, "active", b.get("note") or "", user["name"])
     if IS_PG:
         sid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:
@@ -3196,11 +3219,47 @@ def api_create_shoot(user, b):
     row = dict(conn.execute("SELECT * FROM shoots WHERE id=?", (sid,)).fetchone())
     conn.close()
     time_str = (f" {start_time}–{end_time}" if start_time and end_time else (f" {start_time}" if start_time else ""))
+    loc_lbl = {"white": "1-xona", "black": "2-xona"}.get(room, "Boshqa joy (tashqi)")
+    if operator and room == "tashqi":
+        op_line = f"\n👤 Operator: {operator} (har video {_external_video_rate(operator):,} so'm — video soni keyin kiritiladi)".replace(",", " ")
+    elif operator:
+        op_line = f"\n👤 Operator: {operator} (+{operator_pay:,} so'm)".replace(",", " ")
+    else:
+        op_line = ""
     send_telegram(
-        f"🎬 <b>Syomka belgilandi</b>\n📁 {b.get('project') or '—'}\n🎥 {SHOOT_TYPES[shoot_type]}"
-        + (f"\n👤 Operator: {operator} (+{operator_pay:,} so'm)".replace(",", " ") if operator else "")
+        f"🎬 <b>Syomka belgilandi</b>\n📁 {b.get('project') or '—'}\n📍 {loc_lbl}\n🎥 {SHOOT_TYPES[shoot_type]}"
+        + op_line
         + f"\n📅 {sdate}{time_str}\n👮 {user['name']}"
     )
+    return row
+
+
+def api_shoot_videos(user, sid, b):
+    """Loyiha rahbari (yoki CEO/koordinator) TASHQI syomka video sonini kiritadi →
+    operator puli = video soni × stavka (Said 20k / Umid 10k)."""
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM shoots WHERE id=?", (sid,)).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    ex = dict(ex)
+    role = user["role"]
+    is_lead_of = role == "lead" and ex.get("project") in lead_project_names(user["name"])
+    if role not in ("ceo", "coordinator") and not is_lead_of:
+        conn.close()
+        return {"error": "Faqat loyiha rahbari yoki CEO video sonini kirita oladi"}, 403
+    try:
+        count = max(0, int(b.get("video_count") or 0))
+    except (ValueError, TypeError):
+        count = 0
+    room = ex.get("room") or "tashqi"
+    pay = _shoot_op_pay(ex.get("operator"), room, ex.get("shoot_type"), count)
+    conn.execute("UPDATE shoots SET video_count=?, operator_pay=? WHERE id=?", (count, pay, sid))
+    log_audit(conn, user["name"], "syomka video soni kiritdi",
+              f"#{sid} {ex.get('project')} · {count} video · {pay} so'm ({ex.get('operator')})")
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM shoots WHERE id=?", (sid,)).fetchone())
+    conn.close()
     return row
 
 
@@ -4997,6 +5056,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             sid = self._int(seg[2])
             res = api_cancel_shoot(user, sid) if sid else None
+            return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "shoots" and seg[3] == "videos":
+            if r not in APPROVER_ROLES:
+                return self._forbid()
+            sid = self._int(seg[2])
+            res = api_shoot_videos(user, sid, b) if sid else None
             return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
         if path == "/api/scenarist":
             if not is_scenarist(user):

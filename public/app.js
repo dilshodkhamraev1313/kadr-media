@@ -1246,7 +1246,9 @@ async function viewShoots() {
     const cancelled = (b.status || 'active') === 'bekor_qilindi';
     const col = cancelled ? '#6b6b72' : SOURCE_COLOR[src];
     const loc = b.room === 'white' ? '1-xona' : (b.room === 'black' ? '2-xona' : 'Tashqi');
-    return `<div class="cal-ev${cancelled ? ' cancelled' : ''}" data-sid="${b.id}" data-src="${src}" style="background:${col}" title="${esc(b.project || b.client_name || '')} · ${loc}">${esc((b.start_time || '').slice(0, 5))} ${esc(b.project || b.client_name || '')}</div>`;
+    // Yakunlanmagan tashqi media syomka (video soni kiritilmagan) — ogohlantirish
+    const pending = src === 'media' && !cancelled && (b.room === 'tashqi' || !b.room) && !(b.video_count > 0);
+    return `<div class="cal-ev${cancelled ? ' cancelled' : ''}" data-sid="${b.id}" data-src="${src}" style="background:${col}" title="${esc(b.project || b.client_name || '')} · ${loc}${pending ? ' · video soni kiritilmagan' : ''}">${pending ? '⚠️ ' : ''}${esc((b.start_time || '').slice(0, 5))} ${esc(b.project || b.client_name || '')}</div>`;
   };
   const cells = calMonthCells(events, y, m, pillFn);
   $('#content').innerHTML = `
@@ -1343,6 +1345,7 @@ async function openShootModal(presetDate) {
   const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000 };
   const opRates = data.operatorRates || {};
   const opRate = (op, t) => (opRates[op] && opRates[op][t] != null) ? opRates[op][t] : (opPay[t] || 0);
+  const extRate = (op) => (opRates[op] ? 10000 : 20000);  // tashqi: har video (shogird yarim)
   const projOpts = (DATA.projects || []).map((p) => `<option value="${esc(p.name)}" data-id="${p.id}">${esc(p.name)}</option>`).join('');
   // Kadr media ichki (kadr_media) turi ko'rsatilmaydi — bu yer o'zi ichki syomka
   const typeOpts = Object.entries(shootTypes).filter(([k]) => k !== 'kadr_media').map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('');
@@ -1366,16 +1369,19 @@ async function openShootModal(presetDate) {
     <div class="modal-actions"><button class="btn-save" id="sh_save">🎬 Belgilash</button></div>`,
   () => {
     const showPay = () => {
-      const op = $('#sh_op').value; const t = $('#sh_type').value;
-      $('#sh_oppay').innerHTML = op
-        ? `👤 ${esc(op)} operatorga hisoblanadi: <b>${money(opRate(op, t))}</b>${opRates[op] ? ' <span class="muted">(shogird stavkasi)</span>' : ''}`
-        : `<span class="muted">Operator tanlanmasa — operator puli hisoblanmaydi</span>`;
+      const op = $('#sh_op').value; const t = $('#sh_type').value; const room = $('#sh_room').value;
+      if (!op) { $('#sh_oppay').innerHTML = `<span class="muted">Operator tanlanmasa — operator puli hisoblanmaydi</span>`; return; }
+      if (room === 'tashqi') {
+        $('#sh_oppay').innerHTML = `🎥 ${esc(op)}: har video <b>${money(extRate(op))}</b>${opRates[op] ? ' <span class="muted">(shogird)</span>' : ''} <span class="muted">— video soni syomkadan keyin kiritiladi</span>`;
+      } else {
+        $('#sh_oppay').innerHTML = `👤 ${esc(op)} operatorga hisoblanadi: <b>${money(opRate(op, t))}</b>${opRates[op] ? ' <span class="muted">(shogird stavkasi)</span>' : ''}`;
+      }
     };
     const showHours = () => {
       const h = studioHours($('#sh_start').value, $('#sh_end').value);
       $('#sh_hours').innerHTML = h > 0 ? `⏱ Soati — <b>${h} soat</b>` : `<span class="muted">Vaqtni to'g'ri kiriting</span>`;
     };
-    ['sh_op', 'sh_type'].forEach((id) => $('#' + id).addEventListener('change', showPay));
+    ['sh_op', 'sh_type', 'sh_room'].forEach((id) => $('#' + id).addEventListener('change', showPay));
     ['sh_start', 'sh_end'].forEach((id) => $('#' + id).addEventListener('change', showHours));
     showPay(); showHours();
     $('#sh_save').addEventListener('click', async () => {
@@ -1397,6 +1403,15 @@ async function openShootModal(presetDate) {
 function openShootDetailModal(s) {
   const cancelled = (s.status || 'active') === 'bekor_qilindi';
   const st = SHOOT_TYPE_LABEL[s.shoot_type] || s.shoot_type;
+  const isExternal = s.room === 'tashqi' || !s.room;
+  const canCount = ['ceo', 'coordinator', 'lead'].includes(ME.role);
+  const opRatesD = (DATA.shoots && DATA.shoots.operatorRates) || {};
+  const extRateD = (op) => (opRatesD[op] ? 10000 : 20000);
+  const extBlock = (isExternal && !cancelled && s.operator) ? `
+    <div class="field" style="margin-top:4px"><label>🎬 Olingan video soni ${canCount ? '' : '<span class="muted">(rahbar kiritadi)</span>'}</label>
+      <input id="sh_vcount" type="number" inputmode="numeric" min="0" value="${s.video_count || 0}" ${canCount ? '' : 'disabled'} /></div>
+    <div id="sh_vpay" class="calc-line"></div>
+    ${canCount ? `<button class="btn-save" id="sh_vsave" style="margin:2px 0 12px">💾 Video sonini saqlash</button>` : ''}` : '';
   const actions = cancelled
     ? `<button class="mini-btn red" id="sh_del">🗑 O'chirish</button>`
     : `<button class="mini-btn gray" id="sh_cancel">🚫 Bekor qilish</button><button class="mini-btn red" id="sh_del">🗑 O'chirish</button>`;
@@ -1412,8 +1427,26 @@ function openShootDetailModal(s) {
       <div class="mrow"><span>👮 Belgiladi</span><b>${esc(s.created_by || '—')}</b></div>
     </div>
     ${s.note ? `<div class="pc-problem soft" style="margin-bottom:12px">📝 ${esc(s.note)}</div>` : ''}
+    ${extBlock}
     <div class="modal-actions">${actions}</div>`,
   () => {
+    const vc = $('#sh_vcount');
+    if (vc) {
+      const vpay = () => {
+        const n = parseInt(vc.value || '0', 10) || 0;
+        $('#sh_vpay').innerHTML = n > 0
+          ? `👤 ${esc(s.operator)}: ${n} × ${money(extRateD(s.operator))} = <b>${money(n * extRateD(s.operator))}</b>`
+          : `<span class="muted">Video soni kiritilsa — operator puli avtomatik hisoblanadi</span>`;
+      };
+      vc.addEventListener('input', vpay); vpay();
+    }
+    const vs = $('#sh_vsave');
+    if (vs) vs.addEventListener('click', async () => {
+      const n = parseInt($('#sh_vcount').value || '0', 10) || 0;
+      const res = await api(`/api/shoots/${s.id}/videos`, { method: 'POST', body: JSON.stringify({ video_count: n }) });
+      if (res && res.error) { toast(res.error); return; }
+      closeModal(); toast(`💾 ${n} video · ${money(res.operator_pay || 0)} saqlandi`); render();
+    });
     const cn = $('#sh_cancel');
     if (cn) cn.addEventListener('click', async () => {
       if (!confirm('Syomkani bekor qilasizmi? Operatorga pul hisoblanmaydi.')) return;
