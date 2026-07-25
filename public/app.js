@@ -32,7 +32,7 @@ const STUDIO_ROOMS_DEFAULT = {
   white: { label: '1-xona · White', color: '#0A84FF' },
   black: { label: '2-xona · Black', color: '#1C1C1E' },
 };
-const SHOOT_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video', vebinar: 'Vebinar', kadr_media: 'Kadr Media' };
+const SHOOT_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video', vebinar: 'Vebinar', tadbir: 'Tadbir', kadr_media: 'Kadr Media' };
 // Bron rangi MANBA bo'yicha: Kadr Studio = tilla, Kadr Media = ko'k (adashmaslik uchun)
 const SOURCE_COLOR = { studio: '#D4AF37', media: '#0A84FF' };
 // Tashqi syomka "har video" tizimi shu sanadan boshlab amal qiladi (eski syomkalarga tegmaydi)
@@ -1091,7 +1091,7 @@ function openStudioBookingModal(presetDate, edit) {
   const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
   const operators = data.operators || ['Said', 'Umid'];
   const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
-  const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000 };
+  const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000, tadbir: 80000 };
   const opRates = data.operatorRates || {};
   const opRate = (op, t) => (opRates[op] && opRates[op][t] != null) ? opRates[op][t] : (opPay[t] || 0);
   const e = edit || {};
@@ -1462,7 +1462,7 @@ async function openShootModal(presetDate) {
   const operators = data.operators || ['Said', 'Umid'];
   const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
   const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
-  const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000 };
+  const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000, tadbir: 80000 };
   const opRates = data.operatorRates || {};
   const opRate = (op, t) => (opRates[op] && opRates[op][t] != null) ? opRates[op][t] : (opPay[t] || 0);
   const extRate = (op) => (opRates[op] ? 10000 : 20000);  // tashqi: har video (shogird yarim)

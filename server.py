@@ -74,12 +74,12 @@ STUDIO_EDIT_USERS = ("Dilshod Khamraev", "Gulmira")
 
 # Syomka turlari va OPERATORGA to'lanadigan pul (mijoz to'lovidan ALOHIDA).
 # Bu Kadr Studio bronlarida ham, Kadr Media loyiha syomkalarida ham ishlatiladi.
-SHOOT_TYPES = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video", "vebinar": "Vebinar", "kadr_media": "Kadr Media (ichki)"}
-OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 200000, "kadr_media": 50000}
+SHOOT_TYPES = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video", "vebinar": "Vebinar", "tadbir": "Tadbir", "kadr_media": "Kadr Media (ichki)"}
+OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 200000, "tadbir": 80000, "kadr_media": 50000}
 # Operator syomka puli — SHAXSGA bog'liq override (shogird = past stavka).
 # Bu yerda yo'q operator OPERATOR_PAY (to'liq stavka) oladi. Umid hali shogird — yarim.
 OPERATOR_RATES = {
-    "Umid": {"reels": 25000, "podcast": 50000, "youtube": 25000, "vebinar": 100000, "kadr_media": 25000},
+    "Umid": {"reels": 25000, "podcast": 50000, "youtube": 25000, "vebinar": 100000, "tadbir": 40000, "kadr_media": 25000},
 }
 # Studiodan TASHQARI (ofis/ko'cha) syomka — har video uchun operator puli.
 # Video soni syomkadan keyin loyiha rahbari tomonidan kiritiladi.
