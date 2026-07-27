@@ -83,6 +83,7 @@ OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 
 # Bu yerda yo'q operator OPERATOR_PAY (to'liq stavka) oladi. Umid hali shogird — yarim.
 OPERATOR_RATES = {
     "Umid": {"reels": 25000, "podcast": 50000, "youtube": 25000, "vebinar": 100000, "tadbir": 40000, "kadr_media": 25000},
+    "Shodiya": {"reels": 25000, "podcast": 50000, "youtube": 25000, "vebinar": 100000, "tadbir": 40000, "kadr_media": 25000},  # zaxira operator (yarim)
 }
 # Studiodan TASHQARI (ofis/ko'cha) syomka — har video uchun operator puli.
 # Video soni syomkadan keyin loyiha rahbari tomonidan kiritiladi.
@@ -153,7 +154,7 @@ DEFAULT_PLAYBOOKS = {
 }
 # Kadr Media (ichki syomka) — studio TUSHUMIga pul hisoblanmaydi (faqat xona/vaqt band + operator puli)
 STUDIO_NO_INCOME_TYPES = ("kadr_media",)
-STUDIO_OPERATORS = ("Said", "Umid")
+STUDIO_OPERATORS = ("Said", "Umid", "Shodiya")
 
 # Kelib tushgan pullar shaffofligi — kim qabul qildi + qanday usul.
 INCOME_RECEIVERS = ("Dilshod Khamraev", "Gulmira")
@@ -262,8 +263,8 @@ SALARY = {
     "Sardor": {"title": "Montajchi", "som": {"Fiksa": 500000, "Intizom": 500000}, "montaj": True},
     "Umid": {"title": "Montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
              "montaj": True, "operator": True},
-    "Shodiya": {"title": "Loyiha rahbari + montajchi", "som": {"Fiksa": 500000, "Intizom": 500000},
-                "lead": True, "montaj": True},
+    "Shodiya": {"title": "Loyiha rahbari + montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
+                "lead": True, "montaj": True, "operator": True},
 }
 
 # Rol='lead' bo'lsa ham montaj qiladigan rahbarlar (Shodiya): montajchi ro'yxatiga
@@ -455,7 +456,7 @@ TEAM = [
     ("Oygul",            "oygul",   "oygu2026", "editor",      "Montajchi",               "#FF6482", None),
     ("Umid",             "umid",    "umid2026", "editor",      "Montajchi",               "#5E5CE6", None),
     ("Umida",            "umida",   "umid2027", "editor",      "Montajchi · Ssenarist",   "#AC8E68", None),
-    ("Shodiya",          "shodiya", "shod2026", "lead",        "Loyiha rahbari + montajchi", "#32D74B", None),
+    ("Shodiya",          "shodiya", "shod2026", "lead",        "Loyiha rahbari + montajchi + operator", "#32D74B", None),
     # SMM menejer (faqat joylash)
     ("Aisha",            "aisha",   "aisha2026","smm",         "SMM menejer · Joylash",   "#FF2D55", None),
     # Jarvis (AI yordamchi, Kadr Jarvis OS loyihasi) — coordinator darajasi: operatsion

@@ -1092,7 +1092,7 @@ function methodLabel(m) { return m === 'plastik' ? '💳 Plastik' : '💵 Naqt';
 function openStudioBookingModal(presetDate, edit) {
   const data = DATA.studio || {};
   const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
-  const operators = data.operators || ['Said', 'Umid'];
+  const operators = data.operators || ['Said', 'Umid', 'Shodiya'];
   const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
   const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000, tadbir: 80000 };
   const opRates = data.operatorRates || {};
@@ -1462,7 +1462,7 @@ function shootCard(s) {
 async function openShootModal(presetDate) {
   const data = DATA.shoots || {};
   if (!DATA.projects) DATA.projects = await api('/api/projects');
-  const operators = data.operators || ['Said', 'Umid'];
+  const operators = data.operators || ['Said', 'Umid', 'Shodiya'];
   const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
   const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
   const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000, tadbir: 80000 };
