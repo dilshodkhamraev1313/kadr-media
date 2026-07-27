@@ -1160,7 +1160,10 @@ function openStudioBookingModal(presetDate, edit) {
         amount: parseInt($('#sb_amount').value || '0', 10),
         note: $('#sb_note').value,
       };
-      if (!edit) Object.assign(body, readPaySplit());
+      if (!edit) {
+        const split = readPaySplit();
+        body.naqt = split.naqt; body.plastik = split.plastik; body.received_by = split.received_by;
+      }
       const res = edit
         ? await api(`/api/studio/${edit.id}`, { method: 'PUT', body: JSON.stringify(body) })
         : await api('/api/studio', { method: 'POST', body: JSON.stringify(body) });
