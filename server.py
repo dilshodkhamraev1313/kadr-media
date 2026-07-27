@@ -4768,6 +4768,57 @@ def api_close_day(user, b=None):
     return {"ok": True, "closedToday": True}
 
 
+def api_checklist_backfill(user, b):
+    """CEO — biror kishining checklist punktini O'TGAN (yoki bugungi) kun uchun
+    qo'lda 'bajarildi' deb belgilaydi (masalan yangi lavozim ish boshlagandan
+    oldingi kunlarni yoki unutilgan yopishni tuzatish uchun)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    person = (b.get("person") or "").strip()
+    cdate = (b.get("cdate") or "").strip()
+    item_text = (b.get("item_text") or "").strip()
+    note = (b.get("note") or "Qo'lda tuzatish (CEO)").strip()
+    if not person or not cdate or not item_text:
+        return {"error": "person, cdate, item_text kerak"}, 400
+    conn = get_db()
+    item = conn.execute("SELECT id FROM checklist_items WHERE person=? AND text=?", (person, item_text)).fetchone()
+    if not item:
+        conn.close()
+        return {"error": "Checklist punkti topilmadi"}, 404
+    ex = conn.execute("SELECT id FROM checklist_done WHERE person=? AND cdate=? AND item_id=?",
+                      (person, cdate, item["id"])).fetchone()
+    if ex:
+        conn.execute("UPDATE checklist_done SET done=1, note=? WHERE id=?", (note, ex["id"]))
+    else:
+        conn.execute("INSERT INTO checklist_done (person, cdate, item_id, done, note) VALUES (?,?,?,1,?)",
+                     (person, cdate, item["id"], note))
+    log_audit(conn, user["name"], "checklist qo'lda tuzatildi (CEO)", f"{person} · {cdate} · {item_text}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_smm_backfill(user, b):
+    """CEO — biror kishining SMM loyihasini shu oy uchun bajarilgan deb belgilaydi
+    (masalan yangi lavozim ish boshlaganda o'tgan kunlar uchun tuzatish)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    person = (b.get("person") or "").strip()
+    project = (b.get("project") or "").strip()
+    if project not in SMM_PROJECTS:
+        return {"error": "Noto'g'ri loyiha"}, 400
+    ym = (b.get("ym") or uz_now().strftime("%Y-%m")).strip()
+    conn = get_db()
+    ex = conn.execute("SELECT id FROM smm_done WHERE person=? AND ym=? AND project=?",
+                      (person, ym, project)).fetchone()
+    if not ex:
+        conn.execute("INSERT INTO smm_done (person, project, ym) VALUES (?,?,?)", (person, project, ym))
+    log_audit(conn, user["name"], "SMM loyiha qo'lda belgilandi (CEO)", f"{person} · {project} · {ym}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 def api_reopen_day(user, b):
     """CEO xato yopilgan kunni qayta ochadi (bugungi belgilar ham tozalanadi)."""
     if user["role"] != "ceo":
@@ -5542,6 +5593,10 @@ class Handler(BaseHTTPRequestHandler):
             if not is_smm_user(user):
                 return self._forbid()
             return self._json(api_smm_toggle(user, b))
+        if path == "/api/checklist/backfill":
+            return self._json(api_checklist_backfill(user, b))
+        if path == "/api/smm/backfill":
+            return self._json(api_smm_backfill(user, b))
         if path == "/api/charity":
             if r != "ceo":
                 return self._forbid()
