@@ -1187,7 +1187,7 @@ function openStudioDetailModal(b) {
       <button class="mini-btn red" id="sb_delbtn">🗑 O'chirish</button>`;
   } else if (canEdit) {
     actions = `<button class="mini-btn blue" id="sb_editbtn">✏️ Tahrirlash</button>
-      ${rem > 0 ? `<button class="mini-btn green" id="sb_paybtn">+ To'lov qo'shish</button>` : ''}
+      <button class="mini-btn green" id="sb_paybtn">${rem > 0 ? '+ To\'lov qo\'shish' : '+ Qo\'shimcha to\'lov'}</button>
       <button class="mini-btn gray" id="sb_cancelbtn">🚫 Bekor qilish</button>
       <button class="mini-btn red" id="sb_delbtn">🗑 O'chirish</button>`;
   }
