@@ -269,8 +269,8 @@ SALARY = {
     "Umid": {"title": "Montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
              "montaj": True, "operator": True},
     "Shodiya": {"title": "Loyiha rahbari + montajchi + operator + SMM", "som": {"Fiksa": 500000, "Intizom": 500000},
-                "usd": {"Stories": 100, "SMM": 40}, "lead": True, "montaj": True, "operator": True,
-                "close_link": ["Stories", "SMM"]},
+                "usd": {"SMM": 40}, "stories_daily": 40000, "lead": True, "montaj": True, "operator": True,
+                "close_link": ["SMM"]},
 }
 
 # Rol='lead' bo'lsa ham montaj qiladigan rahbarlar (Shodiya): montajchi ro'yxatiga
@@ -3835,6 +3835,17 @@ def _lateness_penalty(conn, name, today):
     return capped, {"raw": raw, "cap": cap, "items": items}
 
 
+def _stories_earn(conn, name, ym):
+    """Kunlik Stories puli: faqat 'Stories joylandi' checklist punkti haqiqatan
+    bajarilgan (done=1) kunlar sanaladi — 0 dan boshlab, real ishga qarab."""
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT cd.cdate) AS n FROM checklist_done cd "
+        "JOIN checklist_items ci ON ci.id = cd.item_id "
+        "WHERE cd.person=? AND ci.text=? AND cd.done=1 AND CAST(cd.cdate AS TEXT) LIKE ?",
+        (name, "Stories joylandi", ym + "%")).fetchone()
+    return (row["n"] or 0) if row else 0
+
+
 def compute_salary(conn, name, rate):
     cfg = SALARY.get(name)
     if not cfg:
@@ -3882,6 +3893,14 @@ def compute_salary(conn, name, rate):
             if missed:
                 lbl = f"{label} (${usd}) · −{missed} kun yopilmagan"
         comps.append({"label": lbl, "amount": amt, "kind": kind})
+    if cfg.get("stories_daily"):
+        # Kun yopish intizomiga EMAS — faqat haqiqatan "Stories joylandi" belgilangan
+        # kunlarga bog'liq (0 dan boshlab, real ish qancha bo'lsa shuncha).
+        days = _stories_earn(conn, name, ym)
+        rate_som = cfg["stories_daily"]
+        rate_fmt = "{:,}".format(rate_som).replace(",", " ")
+        comps.append({"label": f"Stories ({rate_fmt} so'm/kun · {days} kun qo'yilgan)",
+                      "amount": days * rate_som, "kind": "auto"})
     if cfg.get("lead"):
         lp, det = _leadership_pay(conn, name, rate)
         lbl = f"Rahbarlik ({len(det)} loyiha · reja bajarilishiga qarab)"
