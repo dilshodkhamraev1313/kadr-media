@@ -288,7 +288,7 @@ const NAV_ITEMS = [
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
   { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Gulmira', 'Said', 'Xonzoda', 'Umida', 'Sardor', 'Umid', 'Shodiya'] },
-  { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Said', 'Gulmira', 'Xonzoda', 'Umida'] },
+  { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Said', 'Gulmira', 'Xonzoda', 'Umida', 'Shodiya'] },
   { view: 'stats',     icon: '📈', label: 'Oylik statistika', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'reyting',   icon: '🏆', label: 'Reyting',        roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'shootstat', icon: '⏱', label: 'Syomka soatlari', roles: ['ceo', 'coordinator', 'lead'] },
@@ -2060,7 +2060,7 @@ async function openAssignTaskModal() {
   const load = (date) => api('/api/tasks' + (date ? '?date=' + date : ''));
   const first = await load('');
   if (first.error) { toast(first.error); return; }
-  const people = first.people || ['Said', 'Gulmira', 'Xonzoda', 'Umida'];
+  const people = first.people || ['Said', 'Gulmira', 'Xonzoda', 'Umida', 'Shodiya'];
   const draw = (st) => {
     const listHtml = (st.people || []).map((p) => {
       const tasks = st.tasks[p] || [];

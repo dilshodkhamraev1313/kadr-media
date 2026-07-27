@@ -167,7 +167,7 @@ SCENARIST_PAY = {"Xonzoda": 100000, "Umida": 50000}
 
 # Umida SMM qiladigan loyihalar. SMM to'liq daromadi shu loyihalar bajarilishiga bog'liq
 # (hammasi bajarilsa — to'liq; qismi bajarilsa — foizi). Umida oy davomida belgilaydi.
-SMM_PROJECTS = ["Namuna mebel", "Nodirbek arab tili", "Kadr studio"]
+SMM_PROJECTS = ["Kadr studio"]  # Namuna mebel (o'zi joylaydi) va Arab tili (tugagan) chiqarildi — 1 faol mijoz
 
 # Kadr Studio xarajatlari uchun tayyor nomlar (+ "Boshqa" izoh bilan).
 STUDIO_EXPENSE_NAMES = [
@@ -182,7 +182,7 @@ LEADERSHIP_USD_HALF = 25  # deadline o'tib ketgan bo'lsa
 STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun (har bron)
 
 # Kunlik sarhisob yopish majburiyati shu 4 kishida.
-DAILY_CLOSE_USERS = ("Said", "Gulmira", "Xonzoda", "Umida")
+DAILY_CLOSE_USERS = ("Said", "Gulmira", "Xonzoda", "Umida", "Shodiya")
 WORKDAYS_PER_MONTH = 25  # intizom bo'linadigan ish kunlari (yakshanba dam)
 CLOSE_PENALTY_PER_DAY = 20000  # har yopilmagan ish kuni uchun jazo (hamma uchun bir xil)
 
@@ -213,6 +213,11 @@ DEFAULT_CHECKLIST = {
         "SMM: persona / caption / oblojka / opisaniya",
         "Videolar Instagram'ga joylandi",
         "Ssenarist yordami (Xonzodaga)",
+    ],
+    "Shodiya": [
+        "Stories joylandi",
+        "Kadr Studio SMM: caption / oblojka / opisaniya",
+        "Videolar Instagram'ga joylandi",
     ],
 }
 
@@ -263,8 +268,9 @@ SALARY = {
     "Sardor": {"title": "Montajchi", "som": {"Fiksa": 500000, "Intizom": 500000}, "montaj": True},
     "Umid": {"title": "Montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
              "montaj": True, "operator": True},
-    "Shodiya": {"title": "Loyiha rahbari + montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
-                "lead": True, "montaj": True, "operator": True},
+    "Shodiya": {"title": "Loyiha rahbari + montajchi + operator + SMM", "som": {"Fiksa": 500000, "Intizom": 500000},
+                "usd": {"Stories": 100, "SMM": 40}, "lead": True, "montaj": True, "operator": True,
+                "close_link": ["Stories", "SMM"]},
 }
 
 # Rol='lead' bo'lsa ham montaj qiladigan rahbarlar (Shodiya): montajchi ro'yxatiga
@@ -456,7 +462,7 @@ TEAM = [
     ("Oygul",            "oygul",   "oygu2026", "editor",      "Montajchi",               "#FF6482", None),
     ("Umid",             "umid",    "umid2026", "editor",      "Montajchi",               "#5E5CE6", None),
     ("Umida",            "umida",   "umid2027", "editor",      "Montajchi · Ssenarist",   "#AC8E68", None),
-    ("Shodiya",          "shodiya", "shod2026", "lead",        "Loyiha rahbari + montajchi + operator", "#32D74B", None),
+    ("Shodiya",          "shodiya", "shod2026", "lead",        "Loyiha rahbari + montajchi + operator + SMM", "#32D74B", None),
     # SMM menejer (faqat joylash)
     ("Aisha",            "aisha",   "aisha2026","smm",         "SMM menejer · Joylash",   "#FF2D55", None),
     # Jarvis (AI yordamchi, Kadr Jarvis OS loyihasi) — coordinator darajasi: operatsion
