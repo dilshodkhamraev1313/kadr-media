@@ -31,6 +31,9 @@ IS_PG = DATABASE_URL.startswith("postgres")
 # TELEGRAM_CHAT_ID o'rnatilsa ishlaydi. O'rnatilmasa, jim turadi.
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+# AI moliyachi — rasmdan (chek/karta skrini) summani o'qish. Kalit bo'lmasa jim (sanoq+math ishlaydi).
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini").strip()
 
 # Toshkent vaqti — O'zbekiston UTC+5, yozgi vaqt yo'q.
 UZ_TZ = datetime.timezone(datetime.timedelta(hours=5))
@@ -676,6 +679,19 @@ def init_db():
         checklist TEXT DEFAULT '[]', updated_by TEXT, updated_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS onboarding_done (
         id {pk}, person TEXT, role_key TEXT, step INTEGER, done_at {ts})""")
+    # KASSA — kunlik moliya yopish (sanoq + rasm dalil) + rasmli xarajatlar
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS finance_images (
+        id {pk}, data TEXT, kind TEXT DEFAULT '', ai_amount INTEGER, created_by TEXT, created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS daily_finance (
+        id {pk}, fdate TEXT, opening INTEGER DEFAULT 0, income INTEGER DEFAULT 0,
+        expense INTEGER DEFAULT 0, expected INTEGER DEFAULT 0, cash_counted INTEGER DEFAULT 0,
+        card_balance INTEGER DEFAULT 0, actual INTEGER DEFAULT 0, diff INTEGER DEFAULT 0,
+        cash_img INTEGER, card_img INTEGER, note TEXT DEFAULT '', closed_by TEXT, closed_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS cash_expense (
+        id {pk}, edate TEXT, amount INTEGER DEFAULT 0, category TEXT DEFAULT '',
+        paid_to TEXT DEFAULT '', method TEXT DEFAULT 'naqt', paid_by TEXT DEFAULT '',
+        note TEXT DEFAULT '', img INTEGER, ai_amount INTEGER, ai_note TEXT DEFAULT '',
+        created_by TEXT, created_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS client_payments (
         id {pk}, project TEXT, ym TEXT, amount INTEGER DEFAULT 0,
         pdate TEXT, note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
@@ -2440,6 +2456,193 @@ def api_advisor(user):
         "trend": trend,
         "hasPrev": last is not None,
     }
+
+
+# ============================================================
+#  KASSA — kunlik moliya yopish (sanoq + rasm) + AI moliyachi (rasmdan o'qish)
+# ============================================================
+def can_cash(user):
+    return bool(user) and (user["role"] == "ceo" or user["name"] in ("Dilshod Khamraev", "Gulmira"))
+
+
+def _ai_read_amount(data_url):
+    """Rasmdan (chek/karta skrini) pul summasini o'qiydi (vision API).
+    Kalit yo'q bo'lsa None (AI o'chirilgan — sanoq+math baribir ishlaydi)."""
+    if not OPENAI_API_KEY or not data_url or not data_url.startswith("data:image"):
+        return None
+    try:
+        payload = json.dumps({
+            "model": OPENAI_VISION_MODEL,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "Bu chek yoki karta balans skrini. Undagi asosiy pul summasini FAQAT butun raqamda qaytar (probel, vergul, valyuta belgisisiz). Topa olmasang 0 qaytar."},
+                {"type": "image_url", "image_url": {"url": data_url}}]}],
+            "max_tokens": 20, "temperature": 0,
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions", data=payload,
+            headers={"Authorization": "Bearer " + OPENAI_API_KEY, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            resp = json.loads(r.read().decode())
+        txt = resp["choices"][0]["message"]["content"]
+        digits = "".join(ch for ch in txt if ch.isdigit())
+        return int(digits) if digits else 0
+    except Exception:
+        return None
+
+
+def _save_fin_image(conn, data_url, kind, ai_amount, by):
+    if not data_url:
+        return None
+    sql = "INSERT INTO finance_images (data, kind, ai_amount, created_by, created_at) VALUES (?,?,?,?,?)"
+    params = (data_url, kind, ai_amount, by, now_local())
+    if IS_PG:
+        return conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    return conn.execute(sql, params).lastrowid
+
+
+def _ai_match_note(entered, ai_amount):
+    """AI o'qigan summa kiritilgan bilan mos yoki yo'qligi haqida izoh."""
+    if ai_amount is None:
+        return ""
+    if ai_amount == 0:
+        return "🤖 AI rasmdan summani aniq o'qiy olmadi — qo'lda tekshiring"
+    tol = max(1000, int(entered * 0.02))  # 2% yoki 1000 so'm chidamlilik
+    if abs(ai_amount - entered) <= tol:
+        return f"🤖✅ AI rasmdan {ai_amount:,} so'm o'qidi — mos".replace(",", " ")
+    return f"🤖⚠️ AI rasmdan {ai_amount:,} so'm o'qidi — kiritilgan {entered:,} bilan MOS EMAS!".replace(",", " ")
+
+
+def _cash_sums(conn, day):
+    """Berilgan kun uchun kirim (income_ledger) va chiqim (studio xarajat + maosh + kassa xarajati)."""
+    like = day + "%"
+    income = conn.execute("SELECT COALESCE(SUM(amount),0) s FROM income_ledger WHERE CAST(pdate AS TEXT) LIKE ?", (like,)).fetchone()["s"] or 0
+    e_studio = conn.execute("SELECT COALESCE(SUM(amount),0) s FROM studio_expenses WHERE CAST(edate AS TEXT) LIKE ?", (like,)).fetchone()["s"] or 0
+    e_pay = conn.execute("SELECT COALESCE(SUM(amount),0) s FROM payments WHERE CAST(pdate AS TEXT) LIKE ?", (like,)).fetchone()["s"] or 0
+    e_cash = conn.execute("SELECT COALESCE(SUM(amount),0) s FROM cash_expense WHERE CAST(edate AS TEXT) LIKE ?", (like,)).fetchone()["s"] or 0
+    return income, e_studio + e_pay + e_cash, {"studio": e_studio, "salary": e_pay, "cash": e_cash}
+
+
+def api_cash_today(user):
+    """Kassa — bugungi kirim/chiqim/kutilgan qoldiq + bugungi rasmli xarajatlar + yopilgan/yopilmagani."""
+    conn = get_db()
+    today = uz_today().isoformat()
+    income, expense, br = _cash_sums(conn, today)
+    last = conn.execute(
+        "SELECT actual FROM daily_finance WHERE fdate<? ORDER BY fdate DESC, id DESC LIMIT 1", (today,)).fetchone()
+    opening = (last["actual"] if last else 0) or 0
+    expected = opening + income - expense
+    closed = conn.execute("SELECT * FROM daily_finance WHERE fdate=? ORDER BY id DESC LIMIT 1", (today,)).fetchone()
+    exps = [dict(r) for r in conn.execute(
+        "SELECT id, amount, category, paid_to, method, paid_by, note, img, ai_note, created_by FROM cash_expense WHERE CAST(edate AS TEXT) LIKE ? ORDER BY id DESC",
+        (today + "%",)).fetchall()]
+    conn.close()
+    return {
+        "date": today, "opening": opening, "income": income, "expense": expense,
+        "breakdown": br, "expected": expected,
+        "todayExpenses": exps, "aiOn": bool(OPENAI_API_KEY),
+        "closed": dict(closed) if closed else None,
+        "canCash": can_cash(user),
+    }
+
+
+def api_cash_expense(user, b):
+    """Kassa xarajati — MAJBURIY rasm (chek/naqt fotosi). AI rasmdan summani tekshiradi."""
+    if not can_cash(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    try:
+        amount = int(b.get("amount") or 0)
+    except (ValueError, TypeError):
+        amount = 0
+    if amount <= 0:
+        return {"error": "Summani kiriting"}, 400
+    img = b.get("image") or ""
+    if not img:
+        return {"error": "Chek yoki naqt pul rasmini yuklang (majburiy)"}, 400
+    method = b.get("method") if b.get("method") in ("naqt", "plastik") else "naqt"
+    paid_by = b.get("paid_by") if b.get("paid_by") in ("Dilshod Khamraev", "Gulmira") else user["name"]
+    edate = b.get("edate") or uz_today().isoformat()
+    conn = get_db()
+    ai_amount = _ai_read_amount(img)
+    ai_note = _ai_match_note(amount, ai_amount)
+    img_id = _save_fin_image(conn, img, "expense", ai_amount, user["name"])
+    conn.execute(
+        "INSERT INTO cash_expense (edate, amount, category, paid_to, method, paid_by, note, img, ai_amount, ai_note, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (edate, amount, (b.get("category") or "").strip(), (b.get("paid_to") or "").strip(), method, paid_by,
+         (b.get("note") or "").strip(), img_id, ai_amount, ai_note, user["name"], now_local()))
+    log_audit(conn, user["name"], "kassa xarajat", f"{amount} so'm · {b.get('category') or ''} · {method}")
+    conn.commit()
+    conn.close()
+    send_telegram(f"💸 <b>Kassa xarajat</b>\n{amount:,} so'm · {b.get('category') or '—'}\n👤 {paid_by} · {'💳' if method=='plastik' else '💵'}\n👮 {user['name']}".replace(",", " "))
+    return {"ok": True, "aiNote": ai_note}
+
+
+def api_cash_close(user, b):
+    """Kun moliya yopish — naqt sanog'i + karta balansi + rasm dalil → kutilgan bilan solishtiradi."""
+    if not can_cash(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    day = b.get("date") or uz_today().isoformat()
+
+    def iv(k):
+        try:
+            return int(b.get(k) or 0)
+        except (ValueError, TypeError):
+            return 0
+    cash_counted = iv("cash_counted")
+    card_balance = iv("card_balance")
+    cash_url = b.get("cash_img") or ""
+    card_url = b.get("card_img") or ""
+    if not card_url and not cash_url:
+        return {"error": "Kamida bitta dalil rasm yuklang (naqt fotosi yoki karta skrini)"}, 400
+    conn = get_db()
+    income, expense, br = _cash_sums(conn, day)
+    last = conn.execute("SELECT actual FROM daily_finance WHERE fdate<? ORDER BY fdate DESC, id DESC LIMIT 1", (day,)).fetchone()
+    prev = last is not None
+    opening = (last["actual"] if last else 0) or 0
+    actual = cash_counted + card_balance
+    # Birinchi yopishda — bazaviy qoldiqni belgilaymiz (farq 0). Keyingilarda haqiqiy solishtirish.
+    expected = (opening + income - expense) if prev else actual
+    diff = actual - expected
+    # AI: karta skrinidan balansni tekshirish
+    ai_card = _ai_read_amount(card_url) if card_url else None
+    card_note = _ai_match_note(card_balance, ai_card) if card_url else ""
+    cash_id = _save_fin_image(conn, cash_url, "cash_count", None, user["name"]) if cash_url else None
+    card_id = _save_fin_image(conn, card_url, "card_balance", ai_card, user["name"]) if card_url else None
+    note = ((b.get("note") or "").strip() + (" " + card_note if card_note else "")).strip()
+    ex = conn.execute("SELECT id FROM daily_finance WHERE fdate=?", (day,)).fetchone()
+    if ex:
+        conn.execute("""UPDATE daily_finance SET opening=?, income=?, expense=?, expected=?, cash_counted=?,
+            card_balance=?, actual=?, diff=?, cash_img=?, card_img=?, note=?, closed_by=?, closed_at=? WHERE id=?""",
+            (opening, income, expense, expected, cash_counted, card_balance, actual, diff, cash_id, card_id, note, user["name"], now_local(), ex["id"]))
+    else:
+        conn.execute("""INSERT INTO daily_finance (fdate, opening, income, expense, expected, cash_counted,
+            card_balance, actual, diff, cash_img, card_img, note, closed_by, closed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (day, opening, income, expense, expected, cash_counted, card_balance, actual, diff, cash_id, card_id, note, user["name"], now_local()))
+    log_audit(conn, user["name"], "kun moliya yopdi", f"{day} · haqiqiy {actual} · farq {diff}")
+    conn.commit()
+    conn.close()
+    icon = "✅" if diff == 0 else "⚠️"
+    send_telegram(
+        f"{icon} <b>Kun moliya yopildi</b> ({day})\n"
+        f"📥 Kirim: {income:,} · 📤 Chiqim: {expense:,}\n"
+        f"🎯 Kutilgan: {expected:,} · 💰 Haqiqiy: {actual:,}\n"
+        f"{'✅ Mos keldi' if diff==0 else '⚠️ FARQ: ' + format(diff, ',')} so'm\n👮 {user['name']}".replace(",", " "))
+    return {"ok": True, "expected": expected, "actual": actual, "diff": diff, "cardNote": card_note}
+
+
+def api_cash_history(user):
+    """Kassa — oxirgi kunlik yopishlar (farq bilan)."""
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT fdate, opening, income, expense, expected, cash_counted, card_balance, actual, diff, note, closed_by FROM daily_finance ORDER BY fdate DESC LIMIT 45").fetchall()]
+    conn.close()
+    return {"days": rows}
+
+
+def api_finance_image(user, iid):
+    conn = get_db()
+    row = conn.execute("SELECT data FROM finance_images WHERE id=?", (iid,)).fetchone()
+    conn.close()
+    return {"data": row["data"]} if row else {"error": "Topilmadi"}
 
 
 def api_mark_client_payment(user, b):
@@ -5093,6 +5296,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role != "ceo" else self._json(api_cashflow(user))
         if path == "/api/advisor":
             return self._forbid() if role != "ceo" else self._json(api_advisor(user))
+        if path == "/api/cash/today":
+            return self._forbid() if not can_cash(user) else self._json(api_cash_today(user))
+        if path == "/api/cash/history":
+            return self._forbid() if not can_cash(user) else self._json(api_cash_history(user))
+        if path == "/api/finance/image":
+            if not can_cash(user):
+                return self._forbid()
+            iid = self._int((parse_qs(urlparse(self.path).query).get("id") or ["0"])[0])
+            return self._json(api_finance_image(user, iid))
         if path == "/api/control-center":
             return self._forbid() if role not in ("ceo", "coordinator", "lead") else self._json(api_control_center(user))
         if path == "/api/late-videos":
@@ -5199,6 +5411,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_set_video_project(user, b))
         if path == "/api/penalty/waive":
             return self._json(api_waive_penalty(user, b))
+        if path == "/api/cash/expense":
+            return self._json(api_cash_expense(user, b))
+        if path == "/api/cash/close":
+            return self._json(api_cash_close(user, b))
         if path == "/api/playbooks":
             return self._json(api_playbook_save(user, b))
         if path == "/api/onboarding":

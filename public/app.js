@@ -280,6 +280,7 @@ const NAV_ITEMS = [
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
   { view: 'cashflow',  icon: '💵', label: 'Pul oqimi',     roles: ['ceo'] },
+  { view: 'kassa',     icon: '💰', label: 'Kassa',         roles: ['ceo', 'lead'], names: ['Dilshod Khamraev', 'Gulmira'] },
   { view: 'late',      icon: '⏰', label: 'Kechikkanlar',   roles: ['ceo'] },
   { view: 'archive',   icon: '🗄', label: 'Oylik arxiv',    roles: ['ceo'] },
   { view: 'income',    icon: '💳', label: 'To\'lovlar',      roles: ['ceo'] },
@@ -363,6 +364,7 @@ const TITLES = {
   advisor:   ['Moliyachi', 'Kunlik moliyaviy holat, ogohlantirishlar va prognoz'],
   finance:   ['Moliya', 'Montaj xarajatlari va to\'lovlar'],
   cashflow:  ['Pul oqimi', 'Mijoz to\'lovlari va umumiy kirim-chiqim'],
+  kassa:     ['Kassa', 'Kunlik tushum-xarajat, balans va kun moliya yopish (rasm dalil)'],
   late:      ['Kechikkanlar', 'Deadline o\'tib puli kamaygan videolar — pulni tiklash'],
   archive:   ['Oylik arxiv', 'Har oyni muzlatib saqlash — o\'tgan oylar o\'zgarmaydi'],
   income:    ['To\'lovlar', 'Kelib tushgan pullar — kim qabul qildi, naqt/plastik'],
@@ -405,6 +407,7 @@ async function render() {
     else if (VIEW === 'advisor') await viewAdvisor();
     else if (VIEW === 'finance') await viewFinance();
     else if (VIEW === 'cashflow') await viewCashflow();
+    else if (VIEW === 'kassa') await viewCash();
     else if (VIEW === 'late') await viewLate();
     else if (VIEW === 'archive') await viewArchive();
     else if (VIEW === 'income') await viewIncome();
@@ -2584,6 +2587,144 @@ async function viewAdvisor() {
 
   document.querySelectorAll('.adv-hub-btn[data-goview]').forEach((b) =>
     b.addEventListener('click', () => { VIEW = b.dataset.goview; FILTER = 'all'; SEARCH = ''; render(); }));
+}
+
+// ---------- KASSA (kunlik moliya + rasm dalil + AI) ----------
+function resizeImage(file, cb) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const max = 1200; let { width, height } = img;
+      if (width > max || height > max) {
+        if (width > height) { height = Math.round(height * max / width); width = max; }
+        else { width = Math.round(width * max / height); height = max; }
+      }
+      const c = document.createElement('canvas'); c.width = width; c.height = height;
+      c.getContext('2d').drawImage(img, 0, 0, width, height);
+      cb(c.toDataURL('image/jpeg', 0.7));
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+async function viewFinImage(id) {
+  const r = await api('/api/finance/image?id=' + id);
+  if (!r || !r.data) { toast('Rasm topilmadi'); return; }
+  openModal('🖼 Dalil rasm', `<img src="${r.data}" style="width:100%;border-radius:10px" />`, () => {});
+}
+
+async function viewCash() {
+  const [d, h] = await Promise.all([api('/api/cash/today'), api('/api/cash/history')]);
+  DATA.cash = d;
+  const br = d.breakdown || {};
+  const cl = d.closed;
+  const expenses = (d.todayExpenses || []).map((e) => `
+    <div class="ldg-row">
+      <span>${money(e.amount)} · <b>${esc(e.category || '—')}</b> ${e.method === 'plastik' ? '💳' : '💵'}${e.paid_by ? ' · ' + esc(e.paid_by) : ''}${e.paid_to ? ' → ' + esc(e.paid_to) : ''}
+        ${e.ai_note ? `<div class="muted" style="font-size:12px">${esc(e.ai_note)}</div>` : ''}</span>
+      ${e.img ? `<button class="mini-btn gray fin-img" data-img="${e.img}">🖼</button>` : ''}
+    </div>`).join('') || '<div class="muted" style="padding:8px 0">Bugun xarajat kiritilmagan</div>';
+
+  const histRows = (h.days || []).map((x) => `
+    <div class="mrow"><span>${fmtDate(x.fdate)} <span class="muted">· ${esc(x.closed_by || '')}</span></span>
+      <b>📥${money(x.income).replace(" so'm", '')} 📤${money(x.expense).replace(" so'm", '')} · <span style="color:${x.diff === 0 ? 'var(--green)' : 'var(--red)'}">${x.diff === 0 ? '✅ mos' : 'farq ' + money(x.diff)}</span></b></div>`).join('') || '<div class="muted">Tarix yo\'q</div>';
+
+  $('#content').innerHTML = `
+    <div class="stats-grid">
+      ${statTile('🏦', money(d.opening), 'Ochilish qoldig\'i (kecha)', 'blue')}
+      ${statTile('📥', money(d.income), 'Bugungi tushum', 'green')}
+      ${statTile('📤', money(d.expense), 'Bugungi xarajat', 'orange')}
+      ${statTile('🎯', money(d.expected), 'Kutilgan qoldiq', (d.expected >= 0 ? 'purple' : 'red'))}
+    </div>
+    <div class="panel" style="margin:14px 0">
+      <div class="pb-card-top"><h3>💰 Bugun (${esc(d.date)})</h3>
+        <div style="display:flex;gap:8px">
+          <button class="btn-ghost" id="k_exp">＋ Xarajat (rasm bilan)</button>
+          ${cl ? `<span class="pill ${cl.diff === 0 ? 'green' : 'red'}">${cl.diff === 0 ? '✅ Yopilgan' : '⚠️ Farq ' + money(cl.diff)}</span>` : `<button class="btn-save" id="k_close" style="max-width:200px">🌙 Kun moliya yopish</button>`}
+        </div></div>
+      <div class="money-rows" style="margin-top:6px">
+        <div class="mrow"><span>🎥 Studio xarajati</span><b>${money(br.studio || 0)}</b></div>
+        <div class="mrow"><span>💸 Maosh to'lovlari</span><b>${money(br.salary || 0)}</b></div>
+        <div class="mrow"><span>🧾 Kassa xarajatlari</span><b>${money(br.cash || 0)}</b></div>
+      </div>
+      ${cl ? `<div class="cash-alert ${cl.diff === 0 ? 'ok' : 'warn'}" style="margin-top:10px">Naqt ${money(cl.cash_counted)} + Karta ${money(cl.card_balance)} = <b>${money(cl.actual)}</b> · Kutilgan <b>${money(cl.expected)}</b> · ${cl.diff === 0 ? '✅ mos keldi' : '⚠️ FARQ: ' + money(cl.diff)}${cl.note ? '<br>' + esc(cl.note) : ''}</div>` : ''}
+      ${!d.aiOn ? `<p class="muted" style="margin-top:8px;font-size:12px">🤖 AI rasm-tekshiruvi o'chiq (OPENAI_API_KEY o'rnatilmagan). Sanoq + hisob + rasm-dalil baribir ishlaydi.</p>` : ''}
+    </div>
+    <div class="panel" style="margin:14px 0"><h3>🧾 Bugungi xarajatlar</h3><div class="ldg-list">${expenses}</div></div>
+    <div class="panel"><h3>📅 Kunlik yopishlar tarixi</h3><div class="money-rows">${histRows}</div></div>`;
+
+  const be = $('#k_exp'); if (be) be.addEventListener('click', openCashExpenseModal);
+  const bc = $('#k_close'); if (bc) bc.addEventListener('click', () => openCashCloseModal(d));
+  $$('.fin-img').forEach((b) => b.addEventListener('click', () => viewFinImage(b.dataset.img)));
+}
+
+function openCashExpenseModal() {
+  let imgData = '';
+  openModal('💸 Kassa xarajati (rasm majburiy)', `
+    <div class="field"><label>Summa (so'm)</label><input id="ke_amt" type="number" inputmode="numeric" placeholder="150000" /></div>
+    <div class="field-row">
+      <div class="field"><label>Nimaga (kategoriya)</label><input id="ke_cat" placeholder="masalan: Tushlik / Taksi / Rekvizit" /></div>
+      <div class="field"><label>Kimga berildi (ixtiyoriy)</label><input id="ke_to" placeholder="masalan: Sardor" /></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Usul</label><select id="ke_method"><option value="naqt">💵 Naqt</option><option value="plastik">💳 Plastik</option></select></div>
+      <div class="field"><label>Qaysi hisobdan</label><select id="ke_by"><option>Dilshod Khamraev</option><option ${ME.name === 'Gulmira' ? 'selected' : ''}>Gulmira</option></select></div>
+    </div>
+    <div class="field"><label>📷 Chek / naqt pul rasmi (majburiy)</label><input id="ke_file" type="file" accept="image/*" capture="environment" /></div>
+    <div id="ke_prev"></div>
+    <div class="field"><label>Izoh</label><input id="ke_note" placeholder="ixtiyoriy" /></div>
+    <div class="modal-actions"><button class="btn-save" id="ke_save">💾 Saqlash</button></div>`,
+  () => {
+    $('#ke_file').addEventListener('change', (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      resizeImage(f, (data) => { imgData = data; $('#ke_prev').innerHTML = `<img src="${data}" style="max-width:100%;border-radius:8px;margin-bottom:8px" />`; });
+    });
+    $('#ke_save').addEventListener('click', async () => {
+      const amt = parseInt($('#ke_amt').value || '0', 10);
+      if (amt <= 0) { toast('Summani kiriting'); return; }
+      if (!imgData) { toast('📷 Chek/naqt rasmini yuklang'); return; }
+      const body = { amount: amt, category: $('#ke_cat').value, paid_to: $('#ke_to').value, method: $('#ke_method').value, paid_by: $('#ke_by').value, note: $('#ke_note').value, image: imgData };
+      const r = await api('/api/cash/expense', { method: 'POST', body: JSON.stringify(body) });
+      if (r && r.error) { toast(r.error); return; }
+      closeModal(); toast('💸 Xarajat saqlandi' + (r.aiNote ? ' · ' + r.aiNote.replace(/🤖.?/, '') : '')); render();
+    });
+  });
+}
+
+function openCashCloseModal(d) {
+  let cashImg = '', cardImg = '';
+  const upd = () => {
+    const cash = parseInt($('#kc_cash').value || '0', 10) || 0;
+    const card = parseInt($('#kc_card').value || '0', 10) || 0;
+    const actual = cash + card; const diff = actual - d.expected;
+    $('#kc_calc').innerHTML = `Haqiqiy: <b>${money(actual)}</b> · Kutilgan: <b>${money(d.expected)}</b> · <span style="color:${diff === 0 ? 'var(--green)' : 'var(--red)'}">${diff === 0 ? '✅ mos keladi' : '⚠️ FARQ: ' + money(diff)}</span>`;
+  };
+  openModal('🌙 Kun moliya yopish', `
+    <p class="muted" style="margin-bottom:10px">Kutilgan qoldiq: <b>${money(d.expected)}</b> (kecha ${money(d.opening)} + tushum ${money(d.income)} − xarajat ${money(d.expense)})</p>
+    <div class="field"><label>💵 Naqt pul (sanaldi)</label><input id="kc_cash" type="number" inputmode="numeric" placeholder="0" /></div>
+    <div class="field"><label>💳 Karta balansi</label><input id="kc_card" type="number" inputmode="numeric" placeholder="0" /></div>
+    <div id="kc_calc" class="calc-line"></div>
+    <div class="field"><label>📷 Naqt pul rasmi</label><input id="kc_cashfile" type="file" accept="image/*" capture="environment" /></div>
+    <div id="kc_cashprev"></div>
+    <div class="field"><label>📷 Karta balansi skrini</label><input id="kc_cardfile" type="file" accept="image/*" /></div>
+    <div id="kc_cardprev"></div>
+    <div class="field"><label>Izoh</label><input id="kc_note" placeholder="ixtiyoriy" /></div>
+    <div class="modal-actions"><button class="btn-save" id="kc_save">✅ Yopish va solishtirish</button></div>`,
+  () => {
+    ['kc_cash', 'kc_card'].forEach((id) => $('#' + id).addEventListener('input', upd)); upd();
+    $('#kc_cashfile').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) resizeImage(f, (x) => { cashImg = x; $('#kc_cashprev').innerHTML = `<img src="${x}" style="max-width:100%;border-radius:8px;margin-bottom:8px" />`; }); });
+    $('#kc_cardfile').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) resizeImage(f, (x) => { cardImg = x; $('#kc_cardprev').innerHTML = `<img src="${x}" style="max-width:100%;border-radius:8px;margin-bottom:8px" />`; }); });
+    $('#kc_save').addEventListener('click', async () => {
+      if (!cashImg && !cardImg) { toast('📷 Kamida bitta dalil rasm yuklang'); return; }
+      const body = { date: d.date, cash_counted: parseInt($('#kc_cash').value || '0', 10), card_balance: parseInt($('#kc_card').value || '0', 10), cash_img: cashImg, card_img: cardImg, note: $('#kc_note').value };
+      const r = await api('/api/cash/close', { method: 'POST', body: JSON.stringify(body) });
+      if (r && r.error) { toast(r.error); return; }
+      closeModal();
+      toast(r.diff === 0 ? '✅ Mos keldi — kun yopildi' : `⚠️ FARQ: ${money(r.diff)}`);
+      render();
+    });
+  });
 }
 
 async function viewCashflow() {
