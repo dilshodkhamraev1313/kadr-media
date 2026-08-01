@@ -2187,11 +2187,8 @@ def api_create_payment(user, b):
     log_audit(conn, user["name"], "maosh to'ladi", f"{editor} +{amount} so'm · {paid_from} {method}")
     conn.commit()
     conn.close()
-    mlbl = "💳 Plastik" if method == "plastik" else "💵 Naqt"
-    send_telegram(
-        f"💸 <b>Maosh to'landi</b>\n👤 {editor}\n💰 {amount:,} so'm\n🏦 Hisob: {paid_from} · {mlbl}\n👮 Kiritdi: {user['name']}".replace(",", " ")
-        + (f"\n📝 {b.get('note')}" if b.get("note") else "")
-    )
+    # Telegram'ga YUBORILMAYDI — kimning qancha maosh olayotgani umumiy guruhda
+    # ko'rinmasligi kerak (audit jurnalida saqlanadi, CEO/kassa sahifasida ko'rinadi).
     return {"ok": True, "id": pid}
 
 
