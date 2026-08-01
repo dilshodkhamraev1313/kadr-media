@@ -3846,13 +3846,23 @@ def _stories_earn(conn, name, ym):
     return (row["n"] or 0) if row else 0
 
 
-def compute_salary(conn, name, rate):
+def compute_salary(conn, name, rate, ym=None):
+    """Xodim maoshini hisoblaydi. ym berilmasa — joriy oy (odatdagi holat, hamma
+    joyda shu tarzda chaqiriladi). Arxiv uchun o'tgan oyni qayta tiklashda
+    ym='2026-07' beriladi — shunda kun-asosli komponentlar (Intizom, Stories,
+    kun yopish jarimasi) ham o'sha oyning oxirgi kuni holatida hisoblanadi
+    (real vaqtda oy oxirida qanday ko'rinган bo'lsa, xuddi shunday)."""
     cfg = SALARY.get(name)
     if not cfg:
         return None
     comps = []
-    today = uz_today()
-    ym = today.strftime("%Y-%m")
+    if ym:
+        from calendar import monthrange
+        yy, mm = (int(x) for x in ym.split("-"))
+        today = datetime.date(yy, mm, monthrange(yy, mm)[1])
+    else:
+        today = uz_today()
+        ym = today.strftime("%Y-%m")
     cl = cfg.get("close_link") or []          # kun yopishga bog'langan komponent(lar)
     close_links = [cl] if isinstance(cl, str) else list(cl)
     is_close = name in DAILY_CLOSE_USERS
@@ -3924,7 +3934,6 @@ def compute_salary(conn, name, rate):
             comps.append({"label": f"Kechikish jarimasi ({len(pdet['items'])} ta ish)", "amount": -pen,
                           "kind": "penalty", "detail": pdet})
     total = sum(c["amount"] for c in comps)
-    ym = uz_now().strftime("%Y-%m")
     paid = _paid_to(conn, name, ym)
     return {"name": name, "title": cfg.get("title", ""), "components": comps,
             "total": total, "paid": paid, "remaining": total - paid}
@@ -3981,7 +3990,7 @@ def _month_snapshot(conn, ym, actor):
     rate = get_usd_rate()
     salaries, payroll_total = [], 0
     for n in SALARY:
-        s = compute_salary(conn, n, rate)
+        s = compute_salary(conn, n, rate, ym=ym)
         if s:
             payroll_total += s["total"]
             salaries.append({"name": n, "title": s.get("title", ""), "total": s["total"],
@@ -4011,11 +4020,13 @@ def _month_snapshot(conn, ym, actor):
     }
 
 
-def api_archive_month(user):
-    """CEO — joriy oyni arxivlaydi (muzlatadi). Qayta bosilsa yangilanadi."""
+def api_archive_month(user, b=None):
+    """CEO — oyni arxivlaydi (muzlatadi). Qayta bosilsa yangilanadi.
+    b['ym'] berilsa — o'sha (o'tgan) oy arxivlanadi (masalan oy o'tib ketgach
+    unutilgan bo'lsa); berilmasa — joriy oy (odatdagi tugma bosilishi)."""
     if user["role"] != "ceo":
         return {"error": "Ruxsat yo'q"}, 403
-    ym = uz_now().strftime("%Y-%m")
+    ym = ((b or {}).get("ym") or "").strip() or uz_now().strftime("%Y-%m")
     conn = get_db()
     snap = _month_snapshot(conn, ym, user["name"])
     data = json.dumps(snap, ensure_ascii=False)
@@ -5479,7 +5490,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/projects/reset-stats":
             return self._json(api_reset_project_stats(user))
         if path == "/api/archive":
-            return self._json(api_archive_month(user))
+            return self._json(api_archive_month(user, b))
         if path == "/api/editors/recompute":
             return self._json(api_recompute_editor(user, (b.get("editor") or "").strip()))
         if path == "/api/videos/backfill":
