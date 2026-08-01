@@ -3862,10 +3862,23 @@ def api_smm_toggle(user, b):
     return {"ok": True, "project": project, "done": done}
 
 
+def _late_days_this_month(late_since, today):
+    """late_since — biror ish birinchi marta 'kechikkan' deb hisoblangan sana
+    (deadline+1 kun yoki QC muhlatidan keyingi kun). Faqat JORIY OYGA tegishli
+    kechikish kunlarini qaytaradi — oy boshidan oldingi kechikish o'tgan oy
+    uchun allaqachon hisoblangan/yopilgan hisoblanadi, yangi oyga o'tmaydi."""
+    month_start = datetime.date(today.year, today.month, 1)
+    start = max(late_since, month_start)
+    return max((today - start).days + 1, 0)
+
+
 def _lateness_penalty(conn, name, today):
-    """Kechikish jarimasi (shu oy, so'mda): rahbar kechikkan loyihalari (kuniga
-    LATE_PROJECT_PER_DAY) + Said sifat nazorati kechikishi (1 kun muhlatdan keyin
-    kuniga LATE_QC_PER_DAY). Fiksaning PENALTY_CAP_PCT ulushida cheklangan.
+    """Kechikish jarimasi (FAQAT shu oyga tegishli kunlar uchun, so'mda): rahbar
+    kechikkan loyihalari (kuniga LATE_PROJECT_PER_DAY) + Said sifat nazorati
+    kechikishi (1 kun muhlatdan keyin kuniga LATE_QC_PER_DAY). Fiksaning
+    PENALTY_CAP_PCT ulushida cheklangan. Loyiha/video o'tgan oydan beri
+    kechikkan bo'lsa ham, faqat joriy oy kunlari sanaladi (oldingi oy uchun
+    jarima o'sha oyda allaqachon hisoblangan/arxivlangan).
     Montaj kechikishi bu yerda YO'Q (u alohida 0/yarim pul bilan jazolangan).
     Qaytaradi: (jarima>=0, {raw, cap, items})."""
     items, raw = [], 0
@@ -3873,7 +3886,11 @@ def _lateness_penalty(conn, name, today):
     for p in api_projects():
         if p.get("responsible") != name or p["fullyDone"] or not p.get("overdue"):
             continue
-        days = abs(p.get("daysLeft") or 0)
+        try:
+            deadline_date = datetime.date.fromisoformat(p["deadline"])
+        except (ValueError, TypeError):
+            continue
+        days = _late_days_this_month(deadline_date + datetime.timedelta(days=1), today)
         if days <= 0:
             continue
         amt = days * LATE_PROJECT_PER_DAY
@@ -3886,7 +3903,8 @@ def _lateness_penalty(conn, name, today):
             m = _parse_dt(r["montaj_at"])
             if not m:
                 continue
-            days_late = (today - m.date()).days - QC_GRACE_DAYS
+            late_since = m.date() + datetime.timedelta(days=QC_GRACE_DAYS + 1)
+            days_late = _late_days_this_month(late_since, today)
             if days_late <= 0:
                 continue
             amt = days_late * LATE_QC_PER_DAY
