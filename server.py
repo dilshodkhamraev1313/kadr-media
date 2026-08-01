@@ -761,6 +761,13 @@ def init_db():
     # projects: mijoz o'zi joylaydigan loyihalar (joylash bosqichi yo'q)
     add_column_if_missing(conn, "projects", "self_post", "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "projects", "lead_usd", "INTEGER DEFAULT 50")  # rahbarlik puli: 30$ yoki 50$
+    # Har loyiha o'z sanasida alohida "yangilanadi" (10/20-sana mijozlar uchun).
+    # Yangilashdan OLDINGI holat shu ustunlarga muzlatiladi (tarixiy, kulrang ko'rinish,
+    # qayta hisoblanmaydi) — chunki u davr uchun daromad allaqachon hisoblangan/to'langan.
+    for c in ("prev_done_ssenariy", "prev_done_syomka", "prev_done_montaj", "prev_done_tasdiq", "prev_done_joylash", "prev_plan"):
+        add_column_if_missing(conn, "projects", c, "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "projects", "prev_period", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "projects", "prev_reset_at", "TEXT DEFAULT ''")
     _seed_checklist(conn)
     _seed_playbooks(conn)
     _backfill_studio_ledger(conn)
@@ -912,19 +919,65 @@ def api_get_project(pid):
     return decorate(row) if row else None
 
 
+def _freeze_and_reset_project(conn, pid, row):
+    """Loyihaning joriy bosqich sonlarini tarixiy (prev_*) ustunlarga muzlatadi
+    (kulrang ko'rsatish uchun — bu davr daromadi allaqachon hisoblangan, qayta
+    hisoblanmaydi), so'ng joriy sonlarni 0 ga va bosqich holatini
+    'kutilmoqda'ga tushiradi. Chaqiruvchi fullyDone tekshiruvini o'zi qiladi."""
+    conn.execute(
+        """UPDATE projects SET
+             prev_done_ssenariy=done_ssenariy, prev_done_syomka=done_syomka,
+             prev_done_montaj=done_montaj, prev_done_tasdiq=done_tasdiq,
+             prev_done_joylash=done_joylash, prev_plan=plan,
+             prev_period=?, prev_reset_at=?,
+             done_ssenariy=0, done_syomka=0, done_montaj=0, done_tasdiq=0, done_joylash=0,
+             ssenariy='kutilmoqda', syomka='kutilmoqda', montaj='kutilmoqda',
+             tasdiq='kutilmoqda', joylash='kutilmoqda', updated_at=CURRENT_TIMESTAMP
+           WHERE id=?""",
+        (uz_today().isoformat(), now_local(), pid))
+
+
 def api_reset_project_stats(user):
-    """CEO — yangi oy uchun barcha loyihalar statistikasini nolga tushiradi:
-    har bosqich soni (done_) = 0 va bosqich holati = kutilmoqda. Yozuvlar o'chmaydi."""
+    """CEO — BARCHA faol (tugamagan) loyihalar statistikasini bir yo'la yangilaydi
+    (kim o'z loyihasini alohida yangilashni unutgan bo'lsa, shuning uchun zaxira
+    tugma). Tugagan loyihalarga TEGILMAYDI. Eski sonlar tarixiy (prev_*) saqlanadi."""
     if user["role"] != "ceo":
         return {"error": "Ruxsat yo'q"}, 403
     conn = get_db()
-    sets = ", ".join([f"{c}=0" for c in DONE_COLS] + [f"{s}='kutilmoqda'" for s in STAGES])
-    conn.execute(f"UPDATE projects SET {sets}, updated_at=CURRENT_TIMESTAMP")
-    n = conn.execute("SELECT COUNT(*) AS n FROM projects").fetchone()["n"]
-    log_audit(conn, user["name"], "loyiha statistikasi reset qilindi", f"{n} loyiha · {uz_today().isoformat()}")
+    rows = conn.execute("SELECT * FROM projects").fetchall()
+    n = 0
+    for r in rows:
+        p = decorate(dict(r))
+        if p["fullyDone"]:
+            continue
+        _freeze_and_reset_project(conn, r["id"], r)
+        n += 1
+    log_audit(conn, user["name"], "loyiha statistikasi reset qilindi (barchasi)", f"{n} loyiha · {uz_today().isoformat()}")
     conn.commit()
     conn.close()
     return {"ok": True, "count": n}
+
+
+def api_reset_single_project(user, pid):
+    """CEO — bitta loyihani o'z sanasida (10/20-sana mijozlar uchun) alohida
+    yangilaydi. Tugagan loyihaga ruxsat berilmaydi (yangilash ma'nosiz)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    p = decorate(dict(row))
+    if p["fullyDone"]:
+        conn.close()
+        return {"error": "Bu loyiha tugagan — yangilash shart emas"}, 400
+    _freeze_and_reset_project(conn, pid, row)
+    log_audit(conn, user["name"], "loyihani yangiladi (davr)", f"#{pid} {row['name']}")
+    conn.commit()
+    row2 = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+    conn.close()
+    return decorate(dict(row2))
 
 
 def api_create_project(b):
@@ -5489,6 +5542,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_set_avatar(user, b))
         if path == "/api/projects/reset-stats":
             return self._json(api_reset_project_stats(user))
+        if len(seg) == 4 and seg[1] == "projects" and seg[3] == "reset":
+            pid = self._int(seg[2])
+            return self._json(api_reset_single_project(user, pid)) if pid else self._json({"error": "Topilmadi"}, 404)
         if path == "/api/archive":
             return self._json(api_archive_month(user, b))
         if path == "/api/editors/recompute":

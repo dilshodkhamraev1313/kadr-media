@@ -709,15 +709,30 @@ function projectCard(p) {
       </div>` : `
       <div class="pc-progress"><div class="progress-bar"><div class="progress-fill" style="width:${p.progress}%"></div></div>
         <div class="pc-progress-label"><span>${p.doneCount}/5 bosqich</span><span>${p.progress}%</span></div></div>`}
+      ${(p.prev_reset_at && !p.fullyDone) ? `
+      <div class="prev-box" title="Bu — o'tgan davrning muzlatilgan holati, qayta hisoblanmaydi (daromadi allaqachon hisoblangan)">
+        <div class="prev-head">🕘 Oxirgi davr (${fmtDate(p.prev_reset_at)} holatida) — tarixiy</div>
+        <div class="prev-grid">${STAGES.filter((s) => !(p.selfPost && s.key === 'joylash')).map((s) =>
+          `<span class="prev-chip">${s.label}: ${p['prev_done_' + s.key] || 0}/${p.prev_plan || 0}</span>`).join('')}</div>
+      </div>` : ''}
       ${p.muammo ? `<div class="pc-problem">⚠ ${esc(p.muammo)}</div>` : ''}
       <div class="pc-foot"><div class="pc-resp"><div class="mini-av" style="background:${colorFor(p.responsible)}">${initials(p.responsible)}</div><span>${esc(p.responsible) || '—'}</span></div>
         <div class="pc-deadline ${dlCls}">📅 ${dl}</div></div>
+      ${(ME.role === 'ceo' && !p.fullyDone) ? `<button class="mini-btn blue proj-reset" data-resetproj="${p.id}" data-name="${esc(p.name)}" style="margin-top:8px;width:100%">🔄 Shu loyihani yangilash (yangi davr)</button>` : ''}
     </div>`;
 }
 function bindProjectCards() {
-  if (!['ceo', 'coordinator', 'lead'].includes(ME.role)) return;
-  document.querySelectorAll('.project-card.clickable').forEach((el) =>
-    el.addEventListener('click', () => openProjectModal((DATA.projects || []).find((p) => p.id == el.dataset.id))));
+  if (['ceo', 'coordinator', 'lead'].includes(ME.role)) {
+    document.querySelectorAll('.project-card.clickable').forEach((el) =>
+      el.addEventListener('click', () => openProjectModal((DATA.projects || []).find((p) => p.id == el.dataset.id))));
+  }
+  document.querySelectorAll('.proj-reset').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!confirm(`«${b.dataset.name}» loyihasini yangilaysizmi?\n\nJoriy sonlar tarixiy (kulrang) bo'lib qoladi, yangi davr 0 dan boshlanadi.`)) return;
+    const r = await api(`/api/projects/${b.dataset.resetproj}/reset`, { method: 'POST', body: '{}' });
+    if (r && r.error) { toast(r.error); return; }
+    toast('🔄 Loyiha yangilandi'); render();
+  }));
 }
 
 // ============================================================
