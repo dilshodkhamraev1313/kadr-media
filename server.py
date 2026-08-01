@@ -5049,6 +5049,38 @@ def api_cron_deadline_check():
     return {"ok": True, "warned": warned, "expired": expired}
 
 
+def _auto_rollover_completed_projects(actor="Tizim"):
+    """Har oyning 1-sanasida (kunlik cron ichidan chaqiriladi) 100% bajarilgan
+    (fullyDone — barcha bosqich 'tayyor') loyihalarni AVTOMATIK yangilaydi:
+    joriy sonlar (done_X) tarixiy chegara sifatida muzlatiladi (o'zgarmaydi,
+    0ga tushmaydi), bosqich holati 'kutilmoqda'ga qaytadi — yangi oy uchun
+    yangi ish shu nuqtadan hisoblana boshlaydi. Butunlay tugagan (endi hech
+    qanday yangi ish kelmaydigan) loyihalarga bu zararsiz — ular shunchaki
+    'kutilmoqda' holatida osilib qoladi, raqamlari yo'qolmaydi.
+    Idempotent: shu oyda allaqachon yangilangan loyihaga qayta tegmaydi."""
+    today = uz_today()
+    if today.day != 1:
+        return []
+    ym = today.strftime("%Y-%m")
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM projects").fetchall()
+    renewed = []
+    for r in rows:
+        p = decorate(dict(r))
+        if not p["fullyDone"]:
+            continue
+        if (p.get("prev_reset_at") or "")[:7] == ym:
+            continue  # shu oyda allaqachon yangilangan
+        _freeze_and_reset_project(conn, r["id"], r)
+        renewed.append(p["name"])
+    if renewed:
+        log_audit(conn, actor, "loyihalar avtomatik yangilandi (100% bajarilgan, 1-sana)",
+                  f"{len(renewed)} ta: {', '.join(renewed)}")
+        conn.commit()
+    conn.close()
+    return renewed
+
+
 def api_cron_morning_digest():
     """~09:00 da tashqi cron chaqiradi — jamoaga bugungi kun uchun qisqa digest yuboradi."""
     today = uz_today()
@@ -5099,6 +5131,9 @@ def api_cron_morning_digest():
             rsp = p.get("responsible") or "—"
             overdue_by_lead.setdefault(rsp, []).append(p["name"])
 
+    # Oyning 1-sanasi — 100% bajarilgan loyihalarni avtomatik yangilaydi
+    renewed_projects = _auto_rollover_completed_projects()
+
     lines = ["☀️ <b>Xayrli tong, Kadr jamoasi!</b>", "📅 " + tstr, ""]
     total_shoot = bookings + shoots
     if total_shoot:
@@ -5119,11 +5154,14 @@ def api_cron_morning_digest():
             projs = ", ".join(overdue_by_lead[rsp][:4])
             lines.append(f"• <b>{rsp}</b> — kechikkan loyiha: {projs} 📁")
         lines.append("<i>Iltimos, bugun yopib qo'ying.</i>")
+    if renewed_projects:
+        lines.append("")
+        lines.append("🔄 <b>Yangi oy — 100% bajarilgan loyihalar avtomatik yangilandi:</b> " + ", ".join(renewed_projects))
     lines.append("")
     lines.append("Kuningiz barakali o'tsin! 💪")
     send_telegram("\n".join(lines))
     return {"ok": True, "shoots": total_shoot, "montaj": montaj, "qc": qc,
-            "post": post, "notClosed": not_closed,
+            "post": post, "notClosed": not_closed, "renewedProjects": renewed_projects,
             "overdueMontaj": overdue_by_ed, "overdueProjects": {k: len(v) for k, v in overdue_by_lead.items()}}
 
 
