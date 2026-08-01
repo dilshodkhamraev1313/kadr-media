@@ -5083,6 +5083,15 @@ def _auto_rollover_completed_projects(actor="Tizim"):
 
 def api_cron_morning_digest():
     """~09:00 da tashqi cron chaqiradi — jamoaga bugungi kun uchun qisqa digest yuboradi."""
+    try:
+        return _api_cron_morning_digest_inner()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"ok": False, "error": str(e)}, 500
+
+
+def _api_cron_morning_digest_inner():
     today = uz_today()
     if today.weekday() == 6:
         return {"ok": True, "skipped": "yakshanba"}
@@ -5132,7 +5141,13 @@ def api_cron_morning_digest():
             overdue_by_lead.setdefault(rsp, []).append(p["name"])
 
     # Oyning 1-sanasi — 100% bajarilgan loyihalarni avtomatik yangilaydi
-    renewed_projects = _auto_rollover_completed_projects()
+    # (xato bersa ham kunlik digest baribir yuborilishi kerak — shuning uchun izolyatsiya)
+    try:
+        renewed_projects = _auto_rollover_completed_projects()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        renewed_projects = []
 
     lines = ["☀️ <b>Xayrli tong, Kadr jamoasi!</b>", "📅 " + tstr, ""]
     total_shoot = bookings + shoots
