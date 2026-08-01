@@ -5101,17 +5101,17 @@ def _api_cron_morning_digest_inner():
 
     def _count(sql, params=()):
         row = conn.execute(sql, params).fetchone()
-        return row[0] if row else 0
+        return (row["n"] or 0) if row else 0
 
     bookings = _count(
-        "SELECT COUNT(*) FROM studio_bookings WHERE bdate=? "
+        "SELECT COUNT(*) AS n FROM studio_bookings WHERE bdate=? "
         "AND (status IS NULL OR status<>'bekor_qilindi')", (tstr,))
     shoots = _count(
-        "SELECT COUNT(*) FROM shoots WHERE sdate=? "
+        "SELECT COUNT(*) AS n FROM shoots WHERE sdate=? "
         "AND (status IS NULL OR status<>'bekor_qilindi')", (tstr,))
-    montaj = _count("SELECT COUNT(*) FROM videos WHERE status IN ('biriktirildi','qaytarildi')")
-    qc = _count("SELECT COUNT(*) FROM videos WHERE status='montaj_qilindi'")
-    post = _count("SELECT COUNT(*) FROM videos WHERE status='qabul_qilindi'")
+    montaj = _count("SELECT COUNT(*) AS n FROM videos WHERE status IN ('biriktirildi','qaytarildi')")
+    qc = _count("SELECT COUNT(*) AS n FROM videos WHERE status='montaj_qilindi'")
+    post = _count("SELECT COUNT(*) AS n FROM videos WHERE status='qabul_qilindi'")
 
     # kecha kun yopmaganlar (ish kuni bo'lsa)
     not_closed = []
