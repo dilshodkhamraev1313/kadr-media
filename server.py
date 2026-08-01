@@ -184,7 +184,6 @@ STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun
 # Kunlik sarhisob yopish majburiyati shu 4 kishida.
 DAILY_CLOSE_USERS = ("Said", "Gulmira", "Xonzoda", "Umida", "Shodiya")
 WORKDAYS_PER_MONTH = 25  # intizom bo'linadigan ish kunlari (yakshanba dam)
-CLOSE_PENALTY_PER_DAY = 20000  # har yopilmagan ish kuni uchun jazo (hamma uchun bir xil)
 
 # Kun yopish cheklisti — har kishi uchun tayyor vazifalar (loyihalarigacha).
 # Dashboardda tahrirlanadi; bular faqat boshlang'ich (seed) qiymatlar.
@@ -3936,38 +3935,42 @@ def compute_salary(conn, name, rate, ym=None):
         amt = int(som)
         lbl = label
         kind = "fixed"
-        if label == "Intizom" and name in ATTENDANCE_USERS:
+        if label == "Fiksa" and name in ATTENDANCE_USERS:
+            wd = _workdays_in_month(today.year, today.month)
+            came = _attended_days(conn, name, today)
+            daily = amt / wd if wd else 0
+            amt = int(round(daily * came))
+            lbl = f"Fiksa · {came}/{wd} kun kelgan"
+            kind = "auto"
+        elif label == "Intizom" and name in ATTENDANCE_USERS:
             ot = _ontime_days(conn, name, today)
             amt = min(ot * INTIZOM_PER_DAY, INTIZOM_FULL)
             lbl = f"Intizom · {ot} kun o'z vaqtida"
             kind = "auto"
         elif label in close_links and is_close:
-            amt, missed = _kpi_after_discipline(conn, name, amt, today)
+            amt, closed, wd = _kpi_after_discipline(conn, name, amt, today)
             kind = "auto"
-            if missed:
-                lbl = f"{label} · −{missed} kun yopilmagan"
+            lbl = f"{label} · {closed}/{wd} kun yopilgan"
         comps.append({"label": lbl, "amount": amt, "kind": kind})
     for label, usd in (cfg.get("usd") or {}).items():
         amt = int(usd) * rate
         lbl = f"{label} (${usd})"
         kind = "fixed"
         if label == "SMM":
-            # SMM = to'liq × (bajarilgan SMM loyihalar ÷ jami); + kun yopishga bog'liq bo'lsa jazo
+            # SMM = to'liq × (bajarilgan SMM loyihalar ÷ jami); + kun yopishga bog'liq bo'lsa kunlik ulush
             done = _smm_done_count(conn, name, ym)
             total = len(SMM_PROJECTS) or 1
             amt = int(round(amt * done / total))
             kind = "auto"
             parts = [f"{done}/{total} loyiha"]
             if "SMM" in close_links and is_close:
-                amt, missed = _kpi_after_discipline(conn, name, amt, today)
-                if missed:
-                    parts.append(f"−{missed} kun")
+                amt, closed, wd = _kpi_after_discipline(conn, name, amt, today)
+                parts.append(f"{closed}/{wd} kun yopilgan")
             lbl = f"SMM (${usd}) · " + " · ".join(parts)
         elif label in close_links and is_close:
-            amt, missed = _kpi_after_discipline(conn, name, amt, today)
+            amt, closed, wd = _kpi_after_discipline(conn, name, amt, today)
             kind = "auto"
-            if missed:
-                lbl = f"{label} (${usd}) · −{missed} kun yopilmagan"
+            lbl = f"{label} (${usd}) · {closed}/{wd} kun yopilgan"
         comps.append({"label": lbl, "amount": amt, "kind": kind})
     if cfg.get("stories_daily"):
         # Kun yopish intizomiga EMAS — faqat haqiqatan "Stories joylandi" belgilangan
@@ -4400,11 +4403,16 @@ def _missed_workdays(conn, name, today):
 
 
 def _kpi_after_discipline(conn, name, full, today):
-    """Kun yopishga bog'langan komponent: har yopilmagan ish kuni uchun flat −20 000
-    (komponent qiymatidan qat'i nazar — hamma uchun bir xil)."""
+    """Kun yopishga bog'langan komponent: 0dan boshlanadi, har (bugundan oldingi)
+    YOPILGAN ish kuni uchun kunlik ulush (full ÷ oy ish kunlari) qo'shiladi.
+    Bugungi kun hali "yopish jarayonida" — kun oxirida yopilgach ertaga hisobga kiradi.
+    Qaytaradi: (hisoblangan summa, yopilgan kunlar, oy ish kunlari)."""
+    wd = _workdays_in_month(today.year, today.month)
+    passed = _workdays_before(today)
     missed = _missed_workdays(conn, name, today)
-    ded = min(missed * CLOSE_PENALTY_PER_DAY, full)
-    return max(int(round(full - ded)), 0), missed
+    closed = max(passed - missed, 0)
+    daily = full / wd if wd else 0
+    return int(round(daily * closed)), closed, wd
 
 
 def _close_streak(conn, name, today):
@@ -5202,6 +5210,36 @@ def _ontime_days(conn, name, today):
         except (ValueError, TypeError):
             cnt += 1
     return cnt
+
+
+def _attended_days(conn, name, today):
+    """Shu oyda ishga kelgan kunlar soni (vaqtidan qat'i nazar — Fiksa uchun,
+    Intizomdan farqli, kech kelgan kun ham hisobga olinadi)."""
+    ym = today.strftime("%Y-%m")
+    rows = conn.execute(
+        "SELECT adate FROM attendance WHERE person=? AND adate LIKE ?",
+        (name, ym + "%"),
+    ).fetchall()
+    cnt = 0
+    for r in rows:
+        try:
+            if datetime.date.fromisoformat(r["adate"]).weekday() != 6:
+                cnt += 1
+        except (ValueError, TypeError):
+            cnt += 1
+    return cnt
+
+
+def _workdays_in_month(yy, mm):
+    """Oydagi jami ish kunlari (yakshanbadan tashqari) — kunlik stavka maxraji."""
+    from calendar import monthrange
+    days = monthrange(yy, mm)[1]
+    return sum(1 for d in range(1, days + 1) if datetime.date(yy, mm, d).weekday() != 6)
+
+
+def _workdays_before(today):
+    """Shu oyda BUGUNGACHA (bugun kirmaydi) o'tgan ish kunlari soni."""
+    return sum(1 for d in range(1, today.day) if datetime.date(today.year, today.month, d).weekday() != 6)
 
 
 def _record_attendance(conn, person, source):
