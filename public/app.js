@@ -701,10 +701,16 @@ function projectCard(p) {
       <div class="plan-box">
         <div class="plan-head"><span>📅 Oylik reja (${p.plan} ta/oy)</span><b>${p.planDone}/${p.planTotal} · ${p.planPct}%</b></div>
         <div class="plan-grid">${STAGES.filter((s) => !(p.selfPost && s.key === 'joylash')).map((s) => {
-          const dn = p['done_' + s.key] || 0; const pct = p.plan ? Math.min(Math.round(dn / p.plan * 100), 100) : 0;
-          const full = dn >= p.plan;
-          return `<div class="plan-stage"><div class="pl-top"><span>${s.label}</span><b class="${full ? 'full' : ''}">${dn}/${p.plan}</b></div>
-            <div class="pl-bar"><div class="pl-fill ${full ? 'done' : ''}" style="width:${pct}%"></div></div></div>`;
+          // Eski (muzlatilgan, allaqachon hisoblangan) qism kulrang, undan keyingi
+          // YANGI ish esa shu chiziqning davomida rangli bo'lib o'sadi.
+          const prevV = p['prev_done_' + s.key] || 0;
+          const curV = p['cur_done_' + s.key] || 0;
+          const total = prevV + (p.plan || 0);
+          const prevPct = total ? Math.min(Math.round(prevV / total * 100), 100) : 0;
+          const curPct = total ? Math.min(Math.round(curV / total * 100), 100 - prevPct) : 0;
+          const full = curV >= p.plan;
+          return `<div class="plan-stage"><div class="pl-top"><span>${s.label}</span><b class="${full ? 'full' : ''}">${curV}/${p.plan}${prevV ? ` <span class="muted">(+${prevV} eski)</span>` : ''}</b></div>
+            <div class="pl-bar">${prevV ? `<div class="pl-fill-prev" style="width:${prevPct}%"></div>` : ''}<div class="pl-fill ${full ? 'done' : ''}" style="width:${curPct}%"></div></div></div>`;
         }).join('')}</div>
       </div>` : `
       <div class="pc-progress"><div class="progress-bar"><div class="progress-fill" style="width:${p.progress}%"></div></div>

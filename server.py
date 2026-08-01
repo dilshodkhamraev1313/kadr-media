@@ -872,13 +872,21 @@ def decorate(row):
         (days_left is not None and days_left <= 2 and p["progress"] < 60) or has_problem
     )
 
-    # Oylik reja progressi (har bosqich uchun plan dona) — selfPost'da joylash yo'q
+    # Oylik reja progressi (har bosqich uchun plan dona) — selfPost'da joylash yo'q.
+    # done_X — UMRBOD jamlanuvchi hisoblagich (hech qachon 0ga tushmaydi).
+    # prev_done_X — oxirgi "loyihani yangilash" chegarasi (muzlatilgan, kulrang).
+    # cur_done_X = done_X − prev_done_X — JORIY davr uchun hisoblanadigan (rangli) qism.
     plan = p.get("plan") or 0
     done_cols = [c for c in DONE_COLS if not (self_post and c == "done_joylash")]
-    done_total = sum(p.get(c) or 0 for c in done_cols)
+    cur_total = 0
+    for c in done_cols:
+        prev_v = p.get("prev_" + c) or 0
+        cur_v = max((p.get(c) or 0) - prev_v, 0)
+        p["cur_" + c] = cur_v
+        cur_total += cur_v
     p["planTotal"] = plan * len(done_cols)
-    p["planDone"] = done_total
-    p["planPct"] = round(done_total / (plan * len(done_cols)) * 100) if plan and done_cols else 0
+    p["planDone"] = cur_total
+    p["planPct"] = round(cur_total / (plan * len(done_cols)) * 100) if plan and done_cols else 0
     return p
 
 
@@ -920,17 +928,20 @@ def api_get_project(pid):
 
 
 def _freeze_and_reset_project(conn, pid, row):
-    """Loyihaning joriy bosqich sonlarini tarixiy (prev_*) ustunlarga muzlatadi
-    (kulrang ko'rsatish uchun — bu davr daromadi allaqachon hisoblangan, qayta
-    hisoblanmaydi), so'ng joriy sonlarni 0 ga va bosqich holatini
-    'kutilmoqda'ga tushiradi. Chaqiruvchi fullyDone tekshiruvini o'zi qiladi."""
+    """Loyihaning JORIY (hozirgacha jamlangan) bosqich sonlarini 'muzlatish
+    chegarasi' sifatida prev_* ustunlarga belgilaydi — bu chegaragacha bo'lgan
+    qism kulrang (tarixiy, allaqachon hisoblangan/to'langan) bo'lib qoladi.
+    done_X ustunlari O'ZGARMAYDI (0ga TUSHIRILMAYDI!) — ular umrbod jamlanuvchi
+    hisoblagich, rahbar keyingi ishni ustiga qo'shib yozadi. Yangi davrda
+    hisoblanadigan daromad = done_X − prev_done_X (chegaradan keyingi qism).
+    Bosqich holati esa yangi davr belgisi sifatida 'kutilmoqda'ga tushadi
+    (jamlanuvchi son bilan aralashtirilmaydi — ikkalasi alohida narsa)."""
     conn.execute(
         """UPDATE projects SET
              prev_done_ssenariy=done_ssenariy, prev_done_syomka=done_syomka,
              prev_done_montaj=done_montaj, prev_done_tasdiq=done_tasdiq,
              prev_done_joylash=done_joylash, prev_plan=plan,
              prev_period=?, prev_reset_at=?,
-             done_ssenariy=0, done_syomka=0, done_montaj=0, done_tasdiq=0, done_joylash=0,
              ssenariy='kutilmoqda', syomka='kutilmoqda', montaj='kutilmoqda',
              tasdiq='kutilmoqda', joylash='kutilmoqda', updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
@@ -3786,7 +3797,9 @@ def _leadership_pay(conn, name, rate):
         plan = p.get("plan") or 0
         done_cols = [c for c in DONE_COLS if not (self_post and c == "done_joylash")]
         if plan > 0 and done_cols:
-            done_total = sum(p.get(c) or 0 for c in done_cols)
+            # JORIY davr uchun: umrbod jamlanuvchi son (done_X) minus oxirgi
+            # muzlatish chegarasi (prev_done_X) — muzlatilgan qism qayta hisoblanmaydi.
+            done_total = sum(max((p.get(c) or 0) - (p.get("prev_" + c) or 0), 0) for c in done_cols)
             denom = plan * len(done_cols)
             pct = min(done_total / denom, 1.0) if denom else 0.0
             by_plan = True
