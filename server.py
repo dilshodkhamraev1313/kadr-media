@@ -2177,14 +2177,15 @@ def api_create_payment(user, b):
     editor = b.get("editor") or ""
     amount = int(b.get("amount") or 0)
     method, paid_from = _norm_pay_source(b, user)   # usul + qaysi hisobdan (Dilshod/Gulmira)
+    pdate = b.get("pdate") or uz_today().isoformat()
     sql = "INSERT INTO payments (editor, amount, paid_by, note, pdate, paid_from, method) VALUES (?,?,?,?,?,?,?)"
-    params = (editor, amount, user["name"], b.get("note") or "",
-              b.get("pdate") or uz_today().isoformat(), paid_from, method)
+    params = (editor, amount, user["name"], b.get("note") or "", pdate, paid_from, method)
     if IS_PG:
         pid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:
         pid = conn.execute(sql, params).lastrowid
     log_audit(conn, user["name"], "maosh to'ladi", f"{editor} +{amount} so'm · {paid_from} {method}")
+    _flag_stale_close(conn, pdate)
     conn.commit()
     conn.close()
     # Telegram'ga YUBORILMAYDI — kimning qancha maosh olayotgani umumiy guruhda
@@ -2603,11 +2604,12 @@ def api_cash_today(user):
         "SELECT id, amount, category, paid_to, method, paid_by, note, img, ai_note, created_by FROM cash_expense WHERE CAST(edate AS TEXT) LIKE ? ORDER BY id DESC",
         (today + "%",)).fetchall()]
     conn.close()
+    stale = bool(closed) and ((closed["income"] or 0) != income or (closed["expense"] or 0) != expense)
     return {
         "date": today, "opening": opening, "income": income, "expense": expense,
         "breakdown": br, "expected": expected,
         "todayExpenses": exps, "aiOn": bool(OPENAI_API_KEY),
-        "closed": dict(closed) if closed else None,
+        "closed": dict(closed) if closed else None, "staleClose": stale,
         "canCash": can_cash(user),
     }
 
@@ -2637,6 +2639,7 @@ def api_cash_expense(user, b):
         (edate, amount, (b.get("category") or "").strip(), (b.get("paid_to") or "").strip(), method, paid_by,
          (b.get("note") or "").strip(), img_id, ai_amount, ai_note, user["name"], now_local()))
     log_audit(conn, user["name"], "kassa xarajat", f"{amount} so'm · {b.get('category') or ''} · {method}")
+    _flag_stale_close(conn, edate)
     conn.commit()
     conn.close()
     send_telegram(f"💸 <b>Kassa xarajat</b>\n{amount:,} so'm · {b.get('category') or '—'}\n👤 {paid_by} · {'💳' if method=='plastik' else '💵'}\n👮 {user['name']}".replace(",", " "))
@@ -2692,17 +2695,60 @@ def api_cash_close(user, b):
     title = "Kun QAYTA yopildi" if ex else "Kun moliya yopildi"
     send_telegram(
         f"{icon} <b>{title}</b> ({day})\n"
-        f"📥 Kirim: {income:,} · 📤 Chiqim: {expense:,}\n"
-        f"🎯 Kutilgan: {expected:,} · 💰 Haqiqiy: {actual:,}\n"
-        f"{'✅ Mos keldi' if diff==0 else '⚠️ FARQ: ' + format(diff, ',')} so'm\n👮 {user['name']}".replace(",", " "))
+        f"{'✅ Mos keldi' if diff==0 else '⚠️ Farq aniqlandi — CEO/Gulmira tekshiradi'}\n"
+        f"👮 {user['name']}"
+        # Summalar Telegram'ga YOZILMAYDI — jamoa guruhida hamma ko'radi, moliyaviy
+        # raqamlar faqat Kassa sahifasida (can_cash huquqiga ega kishilarga) ko'rinadi.
+    )
     return {"ok": True, "expected": expected, "actual": actual, "diff": diff, "cardNote": card_note}
 
 
+def _flag_stale_close(conn, day):
+    """Agar shu kun uchun Kassa ALLAQACHON yopilgan bo'lsa-yu, unga yangi pul
+    harakati (tushum/xarajat) kirsa — ogohlantiradi: kun QAYTA yopilishi kerak,
+    aks holda 'Umumiy kassa' eski (yopilgandagi) raqamda qolib ketadi."""
+    if conn.execute("SELECT 1 FROM daily_finance WHERE fdate=?", (day,)).fetchone():
+        send_telegram(
+            f"⚠️ <b>Kassa: {day} allaqachon yopilgan edi</b>\n"
+            f"Shu kunga yangi pul harakati kirdi — Kassa sahifasida shu kunni "
+            f"<b>qayta yoping</b> (aks holda 'Umumiy kassa' eski raqamda qolib ketadi)."
+        )
+
+
+def api_cash_day(user, date):
+    """Kassa — berilgan (o'tgan) kun uchun joriy (live) tushum/xarajat/kutilgan —
+    qayta yopish uchun. api_cash_today bilan bir xil shakl, lekin istalgan sanaga."""
+    if not can_cash(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    if not date:
+        return {"error": "Sana kerak"}, 400
+    conn = get_db()
+    income, expense, br = _cash_sums(conn, date)
+    last = conn.execute(
+        "SELECT actual FROM daily_finance WHERE fdate<? ORDER BY fdate DESC, id DESC LIMIT 1", (date,)).fetchone()
+    opening = (last["actual"] if last else 0) or 0
+    expected = opening + income - expense
+    closed = conn.execute("SELECT * FROM daily_finance WHERE fdate=? ORDER BY id DESC LIMIT 1", (date,)).fetchone()
+    conn.close()
+    return {
+        "date": date, "opening": opening, "income": income, "expense": expense,
+        "breakdown": br, "expected": expected, "aiOn": bool(OPENAI_API_KEY),
+        "closed": dict(closed) if closed else None,
+    }
+
+
 def api_cash_history(user):
-    """Kassa — oxirgi kunlik yopishlar (farq bilan)."""
+    """Kassa — oxirgi kunlik yopishlar (farq bilan). Har biri uchun JORIY (live)
+    tushum/xarajatni ham qayta hisoblab, saqlangan qiymat bilan solishtiradi —
+    farqli bo'lsa 'stale' (kun keyinroq yangi pul olib, qayta yopilishi kerak)."""
     conn = get_db()
     rows = [dict(r) for r in conn.execute(
         "SELECT fdate, opening, income, expense, expected, cash_counted, card_balance, actual, diff, note, closed_by FROM daily_finance ORDER BY fdate DESC LIMIT 45").fetchall()]
+    for r in rows:
+        live_income, live_expense, _ = _cash_sums(conn, r["fdate"])
+        r["liveIncome"] = live_income
+        r["liveExpense"] = live_expense
+        r["stale"] = (live_income != (r["income"] or 0)) or (live_expense != (r["expense"] or 0))
     conn.close()
     return {"days": rows}
 
@@ -3030,11 +3076,12 @@ def _add_income(conn, source_type, source_id, label, amount, b, user, note=""):
     method = (b.get("method") or "").strip().lower()
     if method not in INCOME_METHODS:
         method = "naqt"
+    pdate = b.get("pdate") or uz_today().isoformat()
     conn.execute(
         "INSERT INTO income_ledger (source_type, source_id, source_label, amount, received_by, method, pdate, note, created_by) "
         "VALUES (?,?,?,?,?,?,?,?,?)",
-        (source_type, source_id, label, int(amount), received_by, method,
-         b.get("pdate") or uz_today().isoformat(), note, user["name"]))
+        (source_type, source_id, label, int(amount), received_by, method, pdate, note, user["name"]))
+    _flag_stale_close(conn, pdate)
 
 
 def _add_income_split(conn, source_type, source_id, label, b, user, note="", default_amount=0):
@@ -3067,6 +3114,8 @@ def _add_income_split(conn, source_type, source_id, label, b, user, note="", def
                 "VALUES (?,?,?,?,?,?,?,?,?)",
                 (source_type, source_id, label, amt, received_by, method, pdate, note, user["name"]))
             total += amt
+    if total > 0:
+        _flag_stale_close(conn, pdate)
     return total
 
 
@@ -3354,6 +3403,7 @@ def api_create_studio_expense(user, b):
     else:
         eid = conn.execute(sql, params).lastrowid
     log_audit(conn, user["name"], "studio xarajat kiritdi", f"#{eid} {name} · {amount} so'm · {paid_by} {method}")
+    _flag_stale_close(conn, edate)
     conn.commit()
     row = dict(conn.execute("SELECT * FROM studio_expenses WHERE id=?", (eid,)).fetchone())
     conn.close()
@@ -3486,6 +3536,7 @@ def api_budget_spend(user, b):
     conn.execute("INSERT INTO studio_expenses (name, amount, edate, note, created_by, method, paid_by) VALUES (?,?,?,?,?,?,?)",
                  (category, amount, edate, b.get("note") or "", user["name"], method, paid_by))
     log_audit(conn, user["name"], "budjet xarajat", f"{category}: {amount} so'm · {paid_by} {method}")
+    _flag_stale_close(conn, edate)
     conn.commit()
     conn.close()
     return {"ok": True}
@@ -5562,6 +5613,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if not can_cash(user) else self._json(api_cash_today(user))
         if path == "/api/cash/history":
             return self._forbid() if not can_cash(user) else self._json(api_cash_history(user))
+        if path == "/api/cash/day":
+            date = (parse_qs(urlparse(self.path).query).get("date") or [""])[0]
+            return self._forbid() if not can_cash(user) else self._json(api_cash_day(user, date))
         if path == "/api/finance/image":
             if not can_cash(user):
                 return self._forbid()

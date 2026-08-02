@@ -2651,8 +2651,11 @@ async function viewCash() {
     </div>`).join('') || '<div class="muted" style="padding:8px 0">Bugun xarajat kiritilmagan</div>';
 
   const histRows = (h.days || []).map((x) => `
-    <div class="mrow"><span>${fmtDate(x.fdate)} <span class="muted">· ${esc(x.closed_by || '')}</span></span>
-      <b>📥${money(x.income).replace(" so'm", '')} 📤${money(x.expense).replace(" so'm", '')} · <span style="color:${x.diff === 0 ? 'var(--green)' : 'var(--red)'}">${x.diff === 0 ? '✅ mos' : 'farq ' + money(x.diff)}</span></b></div>`).join('') || '<div class="muted">Tarix yo\'q</div>';
+    <div class="mrow"><span>${fmtDate(x.fdate)} <span class="muted">· ${esc(x.closed_by || '')}</span>${x.stale ? ' <span class="pill red" style="font-size:11px">⚠️ qayta yopish kerak</span>' : ''}</span>
+      <span style="display:flex;align-items:center;gap:8px">
+        <b>📥${money(x.income).replace(" so'm", '')} 📤${money(x.expense).replace(" so'm", '')} · <span style="color:${x.diff === 0 ? 'var(--green)' : 'var(--red)'}">${x.diff === 0 ? '✅ mos' : 'farq ' + money(x.diff)}</span></b>
+        <button class="mini-btn gray hist-reclose" data-date="${x.fdate}">✏️</button>
+      </span></div>`).join('') || '<div class="muted">Tarix yo\'q</div>';
 
   const todayNet = d.income - d.expense;
   $('#content').innerHTML = `
@@ -2674,6 +2677,7 @@ async function viewCash() {
         <div class="mrow"><span>🧾 Kassa xarajatlari</span><b>${money(br.cash || 0)}</b></div>
       </div>
       ${cl ? `<div class="cash-alert ${cl.diff === 0 ? 'ok' : 'warn'}" style="margin-top:10px">Naqt ${money(cl.cash_counted)} + Karta ${money(cl.card_balance)} = <b>${money(cl.actual)}</b> · Kutilgan <b>${money(cl.expected)}</b> · ${cl.diff === 0 ? '✅ mos keldi' : '⚠️ FARQ: ' + money(cl.diff)}${cl.note ? '<br>' + esc(cl.note) : ''}</div>` : ''}
+      ${d.staleClose ? `<div class="cash-alert warn" style="margin-top:10px">⚠️ Bu kun yopilgandan keyin yangi pul harakati kirdi (tushum/xarajat o'zgardi) — "🔄 Qayta yopish" tugmasi bilan yangilang, aks holda Umumiy kassa eski raqamda qolib ketadi.</div>` : ''}
       ${!d.aiOn ? `<p class="muted" style="margin-top:8px;font-size:12px">🤖 AI rasm-tekshiruvi o'chiq (OPENAI_API_KEY o'rnatilmagan). Sanoq + hisob + rasm-dalil baribir ishlaydi.</p>` : ''}
     </div>
     <div class="panel" style="margin:14px 0"><h3>🧾 Bugungi xarajatlar</h3><div class="ldg-list">${expenses}</div></div>
@@ -2683,6 +2687,11 @@ async function viewCash() {
   const bc = $('#k_close'); if (bc) bc.addEventListener('click', () => openCashCloseModal(d));
   const br2 = $('#k_reclose'); if (br2) br2.addEventListener('click', () => openCashCloseModal(d, cl));
   $$('.fin-img').forEach((b) => b.addEventListener('click', () => viewFinImage(b.dataset.img)));
+  $$('.hist-reclose').forEach((b) => b.addEventListener('click', async () => {
+    const day = await api('/api/cash/day?date=' + b.dataset.date);
+    if (day && day.error) { toast(day.error); return; }
+    openCashCloseModal(day, day.closed);
+  }));
 }
 
 function openCashExpenseModal() {
