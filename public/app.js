@@ -2654,18 +2654,19 @@ async function viewCash() {
     <div class="mrow"><span>${fmtDate(x.fdate)} <span class="muted">· ${esc(x.closed_by || '')}</span></span>
       <b>📥${money(x.income).replace(" so'm", '')} 📤${money(x.expense).replace(" so'm", '')} · <span style="color:${x.diff === 0 ? 'var(--green)' : 'var(--red)'}">${x.diff === 0 ? '✅ mos' : 'farq ' + money(x.diff)}</span></b></div>`).join('') || '<div class="muted">Tarix yo\'q</div>';
 
+  const todayNet = d.income - d.expense;
   $('#content').innerHTML = `
     <div class="stats-grid">
-      ${statTile('🏦', money(d.opening), 'Ochilish qoldig\'i (kecha)', 'blue')}
       ${statTile('📥', money(d.income), 'Bugungi tushum', 'green')}
       ${statTile('📤', money(d.expense), 'Bugungi xarajat', 'orange')}
-      ${statTile('🎯', money(d.expected), 'Kutilgan qoldiq', (d.expected >= 0 ? 'purple' : 'red'))}
+      ${statTile('📊', money(todayNet), 'Bugungi qoldiq', (todayNet >= 0 ? 'blue' : 'red'))}
+      ${statTile('🏦', money(d.expected), 'Umumiy kassa', (d.expected >= 0 ? 'purple' : 'red'))}
     </div>
     <div class="panel" style="margin:14px 0">
       <div class="pb-card-top"><h3>💰 Bugun (${esc(d.date)})</h3>
         <div style="display:flex;gap:8px">
           <button class="btn-ghost" id="k_exp">＋ Xarajat (rasm bilan)</button>
-          ${cl ? `<span class="pill ${cl.diff === 0 ? 'green' : 'red'}">${cl.diff === 0 ? '✅ Yopilgan' : '⚠️ Farq ' + money(cl.diff)}</span>` : `<button class="btn-save" id="k_close" style="max-width:200px">🌙 Kun moliya yopish</button>`}
+          ${cl ? `<span class="pill ${cl.diff === 0 ? 'green' : 'red'}">${cl.diff === 0 ? '✅ Yopilgan' : '⚠️ Farq ' + money(cl.diff)}</span><button class="btn-ghost" id="k_reclose">🔄 Qayta yopish</button>` : `<button class="btn-save" id="k_close" style="max-width:200px">🌙 Kun moliya yopish</button>`}
         </div></div>
       <div class="money-rows" style="margin-top:6px">
         <div class="mrow"><span>🎥 Studio xarajati</span><b>${money(br.studio || 0)}</b></div>
@@ -2680,6 +2681,7 @@ async function viewCash() {
 
   const be = $('#k_exp'); if (be) be.addEventListener('click', openCashExpenseModal);
   const bc = $('#k_close'); if (bc) bc.addEventListener('click', () => openCashCloseModal(d));
+  const br2 = $('#k_reclose'); if (br2) br2.addEventListener('click', () => openCashCloseModal(d, cl));
   $$('.fin-img').forEach((b) => b.addEventListener('click', () => viewFinImage(b.dataset.img)));
 }
 
@@ -2716,31 +2718,33 @@ function openCashExpenseModal() {
   });
 }
 
-function openCashCloseModal(d) {
+function openCashCloseModal(d, prev) {
   let cashImg = '', cardImg = '';
   const upd = () => {
     const cash = parseInt($('#kc_cash').value || '0', 10) || 0;
     const card = parseInt($('#kc_card').value || '0', 10) || 0;
     const actual = cash + card; const diff = actual - d.expected;
-    $('#kc_calc').innerHTML = `Haqiqiy: <b>${money(actual)}</b> · Kutilgan: <b>${money(d.expected)}</b> · <span style="color:${diff === 0 ? 'var(--green)' : 'var(--red)'}">${diff === 0 ? '✅ mos keladi' : '⚠️ FARQ: ' + money(diff)}</span>`;
+    $('#kc_calc').innerHTML = `Haqiqiy: <b>${money(actual)}</b> · Umumiy kassa (kutilgan): <b>${money(d.expected)}</b> · <span style="color:${diff === 0 ? 'var(--green)' : 'var(--red)'}">${diff === 0 ? '✅ mos keladi' : '⚠️ FARQ: ' + money(diff)}</span>`;
   };
-  openModal('🌙 Kun moliya yopish', `
-    <p class="muted" style="margin-bottom:10px">Kutilgan qoldiq: <b>${money(d.expected)}</b> (kecha ${money(d.opening)} + tushum ${money(d.income)} − xarajat ${money(d.expense)})</p>
-    <div class="field"><label>💵 Naqt pul (sanaldi)</label><input id="kc_cash" type="number" inputmode="numeric" placeholder="0" /></div>
-    <div class="field"><label>💳 Karta balansi</label><input id="kc_card" type="number" inputmode="numeric" placeholder="0" /></div>
+  openModal(prev ? '🔄 Kunni qayta yopish' : '🌙 Kun moliya yopish', `
+    ${prev ? `<p class="muted" style="margin-bottom:10px">Bu kun avval <b>${money(prev.cash_counted)}</b> naqt + <b>${money(prev.card_balance)}</b> karta bilan yopilgan edi. Agar shundan keyin yana pul kirgan/chiqqan bo'lsa (masalan kechqurun mijoz to'lovi) — yangi UMUMIY summani (eskisi + qo'shilgani) kiriting, tizim qayta solishtiradi.</p>` : ''}
+    <p class="muted" style="margin-bottom:10px">Umumiy kassa (kutilgan): <b>${money(d.expected)}</b> (kecha ${money(d.opening)} + tushum ${money(d.income)} − xarajat ${money(d.expense)})</p>
+    <div class="field"><label>💵 Naqt pul (sanaldi)</label><input id="kc_cash" type="number" inputmode="numeric" placeholder="0" value="${prev ? prev.cash_counted : ''}" /></div>
+    <div class="field"><label>💳 Karta balansi</label><input id="kc_card" type="number" inputmode="numeric" placeholder="0" value="${prev ? prev.card_balance : ''}" /></div>
     <div id="kc_calc" class="calc-line"></div>
-    <div class="field"><label>📷 Naqt pul rasmi</label><input id="kc_cashfile" type="file" accept="image/*" capture="environment" /></div>
+    <div class="field"><label>📷 Naqt pul rasmi (yangi)</label><input id="kc_cashfile" type="file" accept="image/*" capture="environment" /></div>
     <div id="kc_cashprev"></div>
-    <div class="field"><label>📷 Karta balansi skrini</label><input id="kc_cardfile" type="file" accept="image/*" /></div>
+    <div class="field"><label>📷 Karta balansi skrini (yangi)</label><input id="kc_cardfile" type="file" accept="image/*" /></div>
     <div id="kc_cardprev"></div>
-    <div class="field"><label>Izoh</label><input id="kc_note" placeholder="ixtiyoriy" /></div>
-    <div class="modal-actions"><button class="btn-save" id="kc_save">✅ Yopish va solishtirish</button></div>`,
+    <div class="field"><label>Izoh</label><input id="kc_note" placeholder="masalan: kechqurun qo'shimcha mijoz to'lovi kirdi" value="${prev ? (prev.note || '') : ''}" /></div>
+    <div class="modal-actions"><button class="btn-save" id="kc_save">✅ ${prev ? 'Qayta yopish' : 'Yopish va solishtirish'}</button></div>`,
   () => {
     ['kc_cash', 'kc_card'].forEach((id) => $('#' + id).addEventListener('input', upd)); upd();
     $('#kc_cashfile').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) resizeImage(f, (x) => { cashImg = x; $('#kc_cashprev').innerHTML = `<img src="${x}" style="max-width:100%;border-radius:8px;margin-bottom:8px" />`; }); });
     $('#kc_cardfile').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) resizeImage(f, (x) => { cardImg = x; $('#kc_cardprev').innerHTML = `<img src="${x}" style="max-width:100%;border-radius:8px;margin-bottom:8px" />`; }); });
     $('#kc_save').addEventListener('click', async () => {
-      if (!cashImg && !cardImg) { toast('📷 Kamida bitta dalil rasm yuklang'); return; }
+      if (!cashImg && !cardImg) { toast('📷 Kamida bitta dalil rasm yuklang (yangi holat uchun)'); return; }
+      if (prev && !confirm('Bu kunning avvalgi yopilgan holati YANGI raqamlar bilan almashtiriladi. Davom etasizmi?')) return;
       const body = { date: d.date, cash_counted: parseInt($('#kc_cash').value || '0', 10), card_balance: parseInt($('#kc_card').value || '0', 10), cash_img: cashImg, card_img: cardImg, note: $('#kc_note').value };
       const r = await api('/api/cash/close', { method: 'POST', body: JSON.stringify(body) });
       if (r && r.error) { toast(r.error); return; }

@@ -2684,12 +2684,14 @@ def api_cash_close(user, b):
         conn.execute("""INSERT INTO daily_finance (fdate, opening, income, expense, expected, cash_counted,
             card_balance, actual, diff, cash_img, card_img, note, closed_by, closed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (day, opening, income, expense, expected, cash_counted, card_balance, actual, diff, cash_id, card_id, note, user["name"], now_local()))
-    log_audit(conn, user["name"], "kun moliya yopdi", f"{day} · haqiqiy {actual} · farq {diff}")
+    log_audit(conn, user["name"], "kun moliya QAYTA yopdi (yangilandi)" if ex else "kun moliya yopdi",
+              f"{day} · haqiqiy {actual} · farq {diff}")
     conn.commit()
     conn.close()
     icon = "✅" if diff == 0 else "⚠️"
+    title = "Kun QAYTA yopildi" if ex else "Kun moliya yopildi"
     send_telegram(
-        f"{icon} <b>Kun moliya yopildi</b> ({day})\n"
+        f"{icon} <b>{title}</b> ({day})\n"
         f"📥 Kirim: {income:,} · 📤 Chiqim: {expense:,}\n"
         f"🎯 Kutilgan: {expected:,} · 💰 Haqiqiy: {actual:,}\n"
         f"{'✅ Mos keldi' if diff==0 else '⚠️ FARQ: ' + format(diff, ',')} so'm\n👮 {user['name']}".replace(",", " "))
