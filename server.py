@@ -4096,6 +4096,28 @@ def api_payroll(user):
     return {"rate": rate, "isCeo": False, "me": me}
 
 
+def api_my_salary_history(user):
+    """Har kim FAQAT o'zining tarixini ko'radi: o'tgan (arxivlangan) oylardagi
+    jami/to'langan/qolgan + umrbod olgan pulning jami summasi (motivatsiya uchun).
+    Boshqa birovning maoshi bu yerda umuman ko'rinmaydi."""
+    name = user["name"]
+    if name not in SALARY:
+        return {"error": "Sizga maosh tizimi tegishli emas"}, 404
+    conn = get_db()
+    lifetime = conn.execute(
+        "SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE editor=?", (name,)).fetchone()["s"] or 0
+    rows = conn.execute("SELECT ym, data FROM monthly_archive ORDER BY ym DESC").fetchall()
+    history = []
+    for r in rows:
+        snap = json.loads(r["data"])
+        for s in snap.get("salaries", []):
+            if s["name"] == name:
+                history.append({"ym": r["ym"], "total": s["total"], "paid": s["paid"], "remaining": s["remaining"]})
+                break
+    conn.close()
+    return {"lifetimePaid": lifetime, "history": history}
+
+
 def api_waive_penalty(user, b):
     """CEO — xodimning shu oylik kechikish jarimasini kechiradi/qaytaradi (toggle)."""
     if user["role"] != "ceo":
@@ -5652,6 +5674,8 @@ class Handler(BaseHTTPRequestHandler):
             if role != "ceo" and user["name"] not in SALARY:
                 return self._forbid()
             return self._json(api_payroll(user))
+        if path == "/api/payroll/my-history":
+            return self._json(api_my_salary_history(user))
         if path == "/api/daily":
             if not is_daily_user(user) and role != "ceo":
                 return self._forbid()

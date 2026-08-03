@@ -1756,9 +1756,19 @@ async function viewSalary() {
   DATA.payroll = d;
   if (!d.isCeo) {
     const me = d.me;
+    const h = await api('/api/payroll/my-history').catch(() => null);
+    const histRows = (h && h.history || []).map((x) => `
+      <div class="mrow"><span>${esc(UZ_YM(x.ym))}</span>
+        <b>${money(x.total)} <span class="muted" style="font-weight:400">· to'langan ${money(x.paid)}</span></b></div>`).join('')
+      || '<div class="muted" style="padding:6px 0">Hali arxivlangan oy yo\'q</div>';
     $('#content').innerHTML = me
       ? `<div class="cards-grid" style="max-width:520px">${salaryCard(me)}</div>
-         <p class="muted" style="margin-top:14px">💡 Intizom va KPI keyingi bosqichlarda (kelish nazorati, kunlik yopish) aniqlashadi.</p>`
+         <p class="muted" style="margin-top:14px">💡 Intizom va KPI keyingi bosqichlarda (kelish nazorati, kunlik yopish) aniqlashadi.</p>
+         ${h ? `<div class="panel" style="margin-top:16px;max-width:520px">
+           ${statTile('🏆', money(h.lifetimePaid), 'Umrbod olgan maoshingiz', 'green')}
+           <div class="sec-label" style="margin:14px 0 8px">📅 Oylar bo'yicha tarixim</div>
+           <div class="money-rows">${histRows}</div>
+         </div>` : ''}`
       : emptyState('Maosh ma\'lumoti yo\'q');
     return;
   }
