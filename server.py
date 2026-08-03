@@ -2666,11 +2666,12 @@ def api_cash_close(user, b):
     conn = get_db()
     income, expense, br = _cash_sums(conn, day)
     last = conn.execute("SELECT actual FROM daily_finance WHERE fdate<? ORDER BY fdate DESC, id DESC LIMIT 1", (day,)).fetchone()
-    prev = last is not None
     opening = (last["actual"] if last else 0) or 0
     actual = cash_counted + card_balance
-    # Birinchi yopishda — bazaviy qoldiqni belgilaymiz (farq 0). Keyingilarda haqiqiy solishtirish.
-    expected = (opening + income - expense) if prev else actual
+    # HAR DOIM haqiqiy formula: kutilgan = ochilish + tushum − xarajat (birinchi
+    # yopish uchun ham — ochilish o'zi 0 bo'ladi, shuning uchun alohida "bazaviy"
+    # istisno kerak emas; bunday istisno haqiqiy farqni yashirib qo'yar edi).
+    expected = opening + income - expense
     diff = actual - expected
     # AI: karta skrinidan balansni tekshirish
     ai_card = _ai_read_amount(card_url) if card_url else None
