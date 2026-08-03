@@ -1726,8 +1726,10 @@ async function openTeamPayModal(person, rem) {
   openModal(`💸 ${esc(person)} — to'lov kiritish`, `
     <p class="muted" style="margin-bottom:10px">Qolgan (bu oy): <b>${money(rem)}</b></p>
     <div class="field"><label>Berilgan summa (so'm)</label><input id="tp_amt" type="number" inputmode="numeric" value="${rem > 0 ? rem : ''}" /></div>
+    <div class="field"><label>Sana (bo'sh qoldirsa — bugun)</label><input id="tp_date" type="date" /></div>
     ${expenseMetaFields()}
-    <div class="field"><label>Izoh (ixtiyoriy)</label><input id="tp_note" placeholder="masalan: avans / to'liq" /></div>
+    <div class="field"><label>Izoh (ixtiyoriy)</label><input id="tp_note" placeholder="masalan: avans / to'liq / o'tgan oy qolgani" /></div>
+    <p class="muted" style="font-size:12px;margin:-2px 0 4px">💡 O'tgan oyning qolgan maoshini to'layotgan bo'lsangiz — sanani o'sha kunga (yoki haqiqiy to'langan kunga) qo'yib, izohga oyni yozing.</p>
     <p class="muted" style="font-size:12px;margin:-2px 0 4px">💡 Gulmira hisobidan to'lansa — Kadr Studio hisobiga "jamoa maoshi" bo'lib yoziladi.</p>
     <div class="modal-actions"><button class="btn-save" id="tp_ok">✅ To'lovni saqlash</button></div>
     <div class="divider"></div>
@@ -1736,7 +1738,7 @@ async function openTeamPayModal(person, rem) {
     $('#tp_ok').addEventListener('click', async () => {
       const a = parseInt($('#tp_amt').value || '0', 10);
       if (a <= 0) { toast('Summani kiriting'); return; }
-      const r = await api('/api/payments', { method: 'POST', body: JSON.stringify({ editor: person, amount: a, note: $('#tp_note').value, ...readExpenseMeta() }) });
+      const r = await api('/api/payments', { method: 'POST', body: JSON.stringify({ editor: person, amount: a, pdate: $('#tp_date').value, note: $('#tp_note').value, ...readExpenseMeta() }) });
       if (r && r.error) { toast('⚠️ ' + r.error); return; }
       closeModal(); toast('💸 To\'lov kiritildi'); render();
     });
