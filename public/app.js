@@ -2682,6 +2682,7 @@ async function viewCash() {
         <div style="display:flex;gap:8px">
           <button class="btn-ghost" id="k_exp">＋ Xarajat (rasm bilan)</button>
           ${cl ? `<span class="pill ${cl.diff === 0 ? 'green' : 'red'}">${cl.diff === 0 ? '✅ Yopilgan' : '⚠️ Farq ' + money(cl.diff)}</span><button class="btn-ghost" id="k_reclose">🔄 Qayta yopish</button>` : `<button class="btn-save" id="k_close" style="max-width:200px">🌙 Kun moliya yopish</button>`}
+          <button class="btn-ghost" id="k_otherday">📅 Boshqa sanani yopish</button>
         </div></div>
       <div class="money-rows" style="margin-top:6px">
         <div class="mrow"><span>🎥 Studio xarajati</span><b>${money(br.studio || 0)}</b></div>
@@ -2698,12 +2699,28 @@ async function viewCash() {
   const be = $('#k_exp'); if (be) be.addEventListener('click', openCashExpenseModal);
   const bc = $('#k_close'); if (bc) bc.addEventListener('click', () => openCashCloseModal(d));
   const br2 = $('#k_reclose'); if (br2) br2.addEventListener('click', () => openCashCloseModal(d, cl));
+  const bod = $('#k_otherday'); if (bod) bod.addEventListener('click', openOtherDayCloseModal);
   $$('.fin-img').forEach((b) => b.addEventListener('click', () => viewFinImage(b.dataset.img)));
   $$('.hist-reclose').forEach((b) => b.addEventListener('click', async () => {
     const day = await api('/api/cash/day?date=' + b.dataset.date);
     if (day && day.error) { toast(day.error); return; }
     openCashCloseModal(day, day.closed);
   }));
+}
+
+function openOtherDayCloseModal() {
+  openModal('📅 Boshqa sanani yopish', `
+    <p class="muted" style="margin-bottom:10px">Hali umuman yopilmagan (yoki qayta tekshirmoqchi bo'lgan) o'tgan kunni tanlang.</p>
+    <div class="field"><label>Sana</label><input id="od_date" type="date" /></div>
+    <div class="modal-actions"><button class="btn-save" id="od_go">➡️ Davom etish</button></div>`, () => {
+    $('#od_go').addEventListener('click', async () => {
+      const date = $('#od_date').value;
+      if (!date) { toast('Sanani tanlang'); return; }
+      const day = await api('/api/cash/day?date=' + date);
+      if (day && day.error) { toast(day.error); return; }
+      openCashCloseModal(day, day.closed);
+    });
+  });
 }
 
 function openCashExpenseModal() {
