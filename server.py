@@ -929,22 +929,28 @@ def api_get_project(pid):
 def _freeze_and_reset_project(conn, pid, row):
     """Loyihaning JORIY (hozirgacha jamlangan) bosqich sonlarini 'muzlatish
     chegarasi' sifatida prev_* ustunlarga belgilaydi — bu chegaragacha bo'lgan
-    qism kulrang (tarixiy, allaqachon hisoblangan/to'langan) bo'lib qoladi.
+    qism kulrang (tarixiy, allaqachon hisoblangan/to'langan) bo'ladi.
     done_X ustunlari O'ZGARMAYDI (0ga TUSHIRILMAYDI!) — ular umrbod jamlanuvchi
     hisoblagich, rahbar keyingi ishni ustiga qo'shib yozadi. Yangi davrda
     hisoblanadigan daromad = done_X − prev_done_X (chegaradan keyingi qism).
     Bosqich holati esa yangi davr belgisi sifatida 'kutilmoqda'ga tushadi
-    (jamlanuvchi son bilan aralashtirilmaydi — ikkalasi alohida narsa)."""
+    (jamlanuvchi son bilan aralashtirilmaydi — ikkalasi alohida narsa).
+    Deadline ham YANGI davr oxiriga (joriy oyning oxirgi kuniga) suriladi —
+    aks holda eski deadline abadiy o'tgan holicha qolib, loyiha doim
+    'kechikkan' bo'lib ko'rinar va rahbarga har kuni bekorga jarima yozilar edi."""
+    from calendar import monthrange
+    today = uz_today()
+    new_deadline = datetime.date(today.year, today.month, monthrange(today.year, today.month)[1]).isoformat()
     conn.execute(
         """UPDATE projects SET
              prev_done_ssenariy=done_ssenariy, prev_done_syomka=done_syomka,
              prev_done_montaj=done_montaj, prev_done_tasdiq=done_tasdiq,
              prev_done_joylash=done_joylash, prev_plan=plan,
-             prev_period=?, prev_reset_at=?,
+             prev_period=?, prev_reset_at=?, deadline=?,
              ssenariy='kutilmoqda', syomka='kutilmoqda', montaj='kutilmoqda',
              tasdiq='kutilmoqda', joylash='kutilmoqda', updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
-        (uz_today().isoformat(), now_local(), pid))
+        (today.isoformat(), now_local(), new_deadline, pid))
 
 
 def api_reset_project_stats(user):
