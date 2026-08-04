@@ -478,8 +478,9 @@ function taskVideoItem(v) {
 }
 
 async function viewToday() {
-  const [t, att, dc] = await Promise.all([
+  const [t, att, dc, fa] = await Promise.all([
     api('/api/my-tasks'), api('/api/attendance').catch(() => ({})), api('/api/daily').catch(() => ({})),
+    api('/api/file-archive/today').catch(() => ({})),
   ]);
   DATA.myTasks = t;
   const tk = t.tasks || {};
@@ -506,6 +507,9 @@ async function viewToday() {
   }
   if (dc.amDaily && !dc.closedToday) {
     rem.push(`<div class="today-rem"><span>🌙 Bugun kun sarhisobini yopmagansiz</span><button class="mini-btn blue" id="t_close">Kunni yopish</button></div>`);
+  }
+  if (fa && !fa.error && !fa.marked) {
+    rem.push(`<div class="today-rem"><span>📁 Bugungi syomka fayllari hali belgilanmagan</span><button class="mini-btn green" id="t_filearchive">📁 Fayllar joylandi</button></div>`);
   }
   if (rem.length) html += `<div class="panel today-rems">${rem.join('')}</div>`;
 
@@ -534,6 +538,8 @@ async function viewToday() {
   $('#content').innerHTML = html;
   const ci = $('#t_checkin');
   if (ci) ci.addEventListener('click', async () => { await api('/api/attendance/checkin', { method: 'POST', body: '{}' }); toast('🌅 Belgilandi'); render(); });
+  const fab = $('#t_filearchive');
+  if (fab) fab.addEventListener('click', async () => { await api('/api/file-archive/mark', { method: 'POST', body: '{}' }); toast('📁 Belgilandi'); render(); });
   const cl = $('#t_close');
   if (cl) cl.addEventListener('click', () => { VIEW = 'daily'; render(); });
   const ob2 = $('#t_ombor');

@@ -185,6 +185,12 @@ STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun
 DAILY_CLOSE_USERS = ("Said", "Gulmira", "Xonzoda", "Umida", "Shodiya")
 WORKDAYS_PER_MONTH = 25  # intizom bo'linadigan ish kunlari (yakshanba dam)
 
+# Video arxiv mas'uli — syomka fayllarini hard/noutbukka joylab, yo'qotmasdan
+# montajchilarga tarqatish. Kuniga belgilagan kun uchun FILE_ARCHIVE_DAILY_RATE
+# so'm hisoblanadi (20 000 × ~25 ish kuni ≈ 500 000 so'm/oy).
+FILE_ARCHIVE_USERS = ("Sardor",)
+FILE_ARCHIVE_DAILY_RATE = 20000
+
 # Kun yopish cheklisti — har kishi uchun tayyor vazifalar (loyihalarigacha).
 # Dashboardda tahrirlanadi; bular faqat boshlang'ich (seed) qiymatlar.
 DEFAULT_CHECKLIST = {
@@ -264,7 +270,8 @@ SALARY = {
     "Umida": {"title": "SMM + ssenarist + montajchi", "som": {"Intizom": 500000},
               "usd": {"Stories": 100, "SMM": 100}, "scenarist": True, "montaj": True,
               "close_link": ["Stories", "SMM"]},
-    "Sardor": {"title": "Montajchi", "som": {"Fiksa": 500000, "Intizom": 500000}, "montaj": True},
+    "Sardor": {"title": "Montajchi + Video arxiv mas'uli", "som": {"Fiksa": 500000, "Intizom": 500000},
+               "montaj": True, "file_archive_daily": FILE_ARCHIVE_DAILY_RATE},
     "Umid": {"title": "Montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
              "montaj": True, "operator": True},
     "Shodiya": {"title": "Loyiha rahbari + montajchi + operator + SMM", "som": {"Fiksa": 500000, "Intizom": 500000},
@@ -677,6 +684,8 @@ def init_db():
         on_time INTEGER DEFAULT 0, source TEXT DEFAULT 'bot', created_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS smm_done (
         id {pk}, person TEXT, project TEXT, ym TEXT)""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS file_archive_log (
+        id {pk}, person TEXT, fdate TEXT, created_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS penalty_waiver (
         id {pk}, person TEXT, ym TEXT, created_by TEXT, created_at {ts})""")
     # OMBOR — rol qo'llanmalari (bilim bazasi) + onboarding
@@ -3986,6 +3995,41 @@ def _stories_earn(conn, name, ym):
     return (row["n"] or 0) if row else 0
 
 
+def _file_archive_earn(conn, name, ym):
+    """Video arxiv puli: shu oyda 'fayllar joylandi' deb belgilangan kunlar soni."""
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT fdate) AS n FROM file_archive_log WHERE person=? AND CAST(fdate AS TEXT) LIKE ?",
+        (name, ym + "%")).fetchone()
+    return (row["n"] or 0) if row else 0
+
+
+def api_file_archive_today(user):
+    """Bugun video arxiv belgisi qo'yilganmi (shu foydalanuvchi uchun)."""
+    if user["name"] not in FILE_ARCHIVE_USERS:
+        return {"error": "Sizga tegishli emas"}, 403
+    conn = get_db()
+    today = uz_today().isoformat()
+    row = conn.execute("SELECT id FROM file_archive_log WHERE person=? AND fdate=?", (user["name"], today)).fetchone()
+    conn.close()
+    return {"marked": bool(row), "date": today}
+
+
+def api_file_archive_mark(user):
+    """Bugun uchun video arxiv belgisini qo'yadi (bir kunga bir marta)."""
+    if user["name"] not in FILE_ARCHIVE_USERS:
+        return {"error": "Sizga tegishli emas"}, 403
+    conn = get_db()
+    today = uz_today().isoformat()
+    ex = conn.execute("SELECT id FROM file_archive_log WHERE person=? AND fdate=?", (user["name"], today)).fetchone()
+    if not ex:
+        conn.execute("INSERT INTO file_archive_log (person, fdate, created_at) VALUES (?,?,?)",
+                     (user["name"], today, now_local()))
+        log_audit(conn, user["name"], "video arxiv belgiladi", today)
+        conn.commit()
+    conn.close()
+    return {"ok": True, "marked": True, "date": today}
+
+
 def compute_salary(conn, name, rate, ym=None):
     """Xodim maoshini hisoblaydi. ym berilmasa — joriy oy (odatdagi holat, hamma
     joyda shu tarzda chaqiriladi). Arxiv uchun o'tgan oyni qayta tiklashda
@@ -4055,6 +4099,14 @@ def compute_salary(conn, name, rate, ym=None):
         rate_som = cfg["stories_daily"]
         rate_fmt = "{:,}".format(rate_som).replace(",", " ")
         comps.append({"label": f"Stories ({rate_fmt} so'm/kun · {days} kun qo'yilgan)",
+                      "amount": days * rate_som, "kind": "auto"})
+    if cfg.get("file_archive_daily"):
+        # Video arxiv mas'uliyati — faqat haqiqatan "fayllar joylandi" deb
+        # belgilangan kunlarga bog'liq (0 dan boshlab, real ishga qarab).
+        days = _file_archive_earn(conn, name, ym)
+        rate_som = cfg["file_archive_daily"]
+        rate_fmt = "{:,}".format(rate_som).replace(",", " ")
+        comps.append({"label": f"Video arxiv ({rate_fmt} so'm/kun · {days} kun bajarilgan)",
                       "amount": days * rate_som, "kind": "auto"})
     if cfg.get("lead"):
         lp, det = _leadership_pay(conn, name, rate)
@@ -5716,6 +5768,8 @@ class Handler(BaseHTTPRequestHandler):
             if not is_smm_user(user) and role != "ceo":
                 return self._forbid()
             return self._json(api_smm(user))
+        if path == "/api/file-archive/today":
+            return self._json(api_file_archive_today(user))
         if len(seg) == 4 and seg[1] == "scripts" and seg[3] == "versions":
             sid = self._int(seg[2])
             return self._json(api_script_versions(sid)) if sid else self._json({"error": "Topilmadi"}, 404)
@@ -5867,6 +5921,8 @@ class Handler(BaseHTTPRequestHandler):
             if not is_smm_user(user):
                 return self._forbid()
             return self._json(api_smm_toggle(user, b))
+        if path == "/api/file-archive/mark":
+            return self._json(api_file_archive_mark(user))
         if path == "/api/checklist/backfill":
             return self._json(api_checklist_backfill(user, b))
         if path == "/api/smm/backfill":
