@@ -4014,8 +4014,9 @@ def compute_salary(conn, name, rate, ym=None):
             wd = _workdays_in_month(today.year, today.month)
             came = _attended_days(conn, name, today)
             daily = amt / wd if wd else 0
+            full_fmt = "{:,}".format(amt).replace(",", " ")
             amt = int(round(daily * came))
-            lbl = f"Fiksa · {came}/{wd} kun kelgan"
+            lbl = f"Fiksa (oylik {full_fmt}) · {came}/{wd} kun kelgan"
             kind = "auto"
         elif label == "Intizom" and name in ATTENDANCE_USERS:
             ot = _ontime_days(conn, name, today)
