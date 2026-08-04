@@ -4118,7 +4118,7 @@ def compute_salary(conn, name, rate, ym=None):
             came = _attended_days(conn, name, today)
             daily = amt / wd if wd else 0
             full_fmt = "{:,}".format(amt).replace(",", " ")
-            amt = int(round(daily * came))
+            amt = min(int(round(daily * came)), amt)  # oylikdan hech qachon oshmasin
             lbl = f"Fiksa (oylik {full_fmt}) · {came}/{wd} kun kelgan"
             kind = "auto"
         elif label == "Intizom" and name in ATTENDANCE_USERS:
@@ -4621,7 +4621,8 @@ def _kpi_after_discipline(conn, name, full, today):
     missed = _missed_workdays(conn, name, today)
     closed = max(passed - missed, 0)
     daily = full / wd if wd else 0
-    return int(round(daily * closed)), closed, wd
+    amt = min(int(round(daily * closed)), full)  # to'liq summadan hech qachon oshmasin
+    return amt, closed, wd
 
 
 def _close_streak(conn, name, today):
@@ -5440,10 +5441,12 @@ def _attended_days(conn, name, today):
 
 
 def _workdays_in_month(yy, mm):
-    """Oydagi jami ish kunlari (yakshanbadan tashqari) — kunlik stavka maxraji."""
-    from calendar import monthrange
-    days = monthrange(yy, mm)[1]
-    return sum(1 for d in range(1, days + 1) if datetime.date(yy, mm, d).weekday() != 6)
+    """Oydagi 'to'lanadigan' ish kunlari — kunlik stavka maxraji. Haqiqiy
+    kalendar kunlari emas, balki BELGILANGAN siyosat (WORKDAYS_PER_MONTH,
+    Intizom ham shu bilan hisoblanadi) — shunda Fiksa/bonus kunlik stavkasi
+    har doim aniq, yaxlit son bo'ladi (masalan 500 000/25 = 20 000/kun),
+    oyning necha kunligiga (28/30/31) qarab o'zgarib turmaydi."""
+    return WORKDAYS_PER_MONTH
 
 
 def _workdays_before(today):
