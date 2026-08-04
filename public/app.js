@@ -1385,8 +1385,20 @@ async function viewShoots() {
   if (!STUDIO_MONTH) { const t = new Date(); STUDIO_MONTH = { y: t.getFullYear(), m: t.getMonth() }; }
   const { y, m } = STUDIO_MONTH;
   const UZ_MONTH_FULL = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
-  const activeCount = (data.shoots || []).filter((s) => (s.status || 'active') !== 'bekor_qilindi').length;
-  const opStats = Object.entries(data.operatorTotals || {}).map(([n, v]) => statTile('👤', money(v), n + ' — operator puli', 'purple')).join('');
+  // Statistikalar ko'rsatilayotgan OYGA bog'liq (o'tgan oylarga o'tilsa — o'sha oy arxivi,
+  // bugungi/joriy oyga qaytilsa — 0 dan boshlab, eski oylar qo'shilmaydi).
+  const ymPrefix = `${y}-${String(m + 1).padStart(2, '0')}`;
+  const monthShoots = (data.shoots || []).filter((s) => (s.sdate || '').startsWith(ymPrefix));
+  const activeCount = monthShoots.filter((s) => (s.status || 'active') !== 'bekor_qilindi').length;
+  const opTotalsMonth = {};
+  monthShoots.forEach((s) => {
+    if ((s.status || 'active') !== 'bekor_qilindi' && s.operator) {
+      opTotalsMonth[s.operator] = (opTotalsMonth[s.operator] || 0) + (s.operator_pay || 0);
+    }
+  });
+  const todayYm = (() => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}`; })();
+  const isPastMonth = ymPrefix < todayYm;
+  const opStats = Object.entries(opTotalsMonth).map(([n, v]) => statTile('👤', money(v), n + ' — operator puli (shu oy)', 'purple')).join('');
   const mediaEvents = (data.shoots || []).map((s) => ({ ...s, bdate: s.sdate, client_name: s.project, source: 'media' }));
   const events = mediaEvents.concat(data.studioBookings || []);
   DATA.mediaCal = events;
@@ -1406,12 +1418,12 @@ async function viewShoots() {
   const cells = calMonthCells(events, y, m, pillFn);
   $('#content').innerHTML = `
     <div class="stats-grid">
-      ${statTile('🎬', activeCount, 'Aktiv syomkalar', 'blue')}
+      ${statTile('🎬', activeCount, `Aktiv syomkalar (${UZ_MONTH_FULL[m]})`, 'blue')}
       ${opStats}
     </div>
     <div class="cal-toolbar">
       <button class="btn-ghost" data-cal="prev">‹</button>
-      <h3 class="cal-title">${UZ_MONTH_FULL[m]} ${y}</h3>
+      <h3 class="cal-title">${UZ_MONTH_FULL[m]} ${y}${isPastMonth ? ' · arxiv' : ''}</h3>
       <button class="btn-ghost" data-cal="next">›</button>
       <button class="btn-ghost" data-cal="today">Bugun</button>
       <div class="cal-legend">${legend}</div>
