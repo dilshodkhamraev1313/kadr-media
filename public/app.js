@@ -2665,7 +2665,11 @@ async function viewCash() {
     <div class="ldg-row">
       <span>${money(e.amount)} · <b>${esc(e.category || '—')}</b> ${e.method === 'plastik' ? '💳' : '💵'}${e.paid_by ? ' · ' + esc(e.paid_by) : ''}${e.paid_to ? ' → ' + esc(e.paid_to) : ''}
         ${e.ai_note ? `<div class="muted" style="font-size:12px">${esc(e.ai_note)}</div>` : ''}</span>
-      ${e.img ? `<button class="mini-btn gray fin-img" data-img="${e.img}">🖼</button>` : ''}
+      <span style="display:flex;gap:6px">
+        ${e.img ? `<button class="mini-btn gray fin-img" data-img="${e.img}">🖼</button>` : ''}
+        <button class="mini-btn gray ke-edit" data-id="${e.id}">✏️</button>
+        <button class="mini-btn red ke-del" data-id="${e.id}">🗑</button>
+      </span>
     </div>`).join('') || '<div class="muted" style="padding:8px 0">Bugun xarajat kiritilmagan</div>';
 
   const histRows = (h.days || []).map((x) => `
@@ -2712,6 +2716,16 @@ async function viewCash() {
     if (day && day.error) { toast(day.error); return; }
     openCashCloseModal(day, day.closed);
   }));
+  $$('.ke-edit').forEach((b) => b.addEventListener('click', () => {
+    const exp = (d.todayExpenses || []).find((x) => String(x.id) === b.dataset.id);
+    if (exp) openCashExpenseModal(exp);
+  }));
+  $$('.ke-del').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Bu xarajatni o\'chirasizmi?')) return;
+    const r = await api('/api/cash/expense/' + b.dataset.id, { method: 'DELETE' });
+    if (r && r.error) { toast(r.error); return; }
+    toast('🗑 Xarajat o\'chirildi'); render();
+  }));
 }
 
 function openOtherDayCloseModal() {
@@ -2729,21 +2743,22 @@ function openOtherDayCloseModal() {
   });
 }
 
-function openCashExpenseModal() {
+function openCashExpenseModal(exp) {
   let imgData = '';
-  openModal('💸 Kassa xarajati (rasm majburiy)', `
-    <div class="field"><label>Summa (so'm)</label><input id="ke_amt" type="number" inputmode="numeric" placeholder="150000" /></div>
+  const edit = !!exp;
+  openModal(edit ? '✏️ Kassa xarajatini tahrirlash' : '💸 Kassa xarajati (rasm majburiy)', `
+    <div class="field"><label>Summa (so'm)</label><input id="ke_amt" type="number" inputmode="numeric" placeholder="150000" value="${edit ? exp.amount : ''}" /></div>
     <div class="field-row">
-      <div class="field"><label>Nimaga (kategoriya)</label><input id="ke_cat" placeholder="masalan: Tushlik / Taksi / Rekvizit" /></div>
-      <div class="field"><label>Kimga berildi (ixtiyoriy)</label><input id="ke_to" placeholder="masalan: Sardor" /></div>
+      <div class="field"><label>Nimaga (kategoriya)</label><input id="ke_cat" placeholder="masalan: Tushlik / Taksi / Rekvizit" value="${edit ? esc(exp.category || '') : ''}" /></div>
+      <div class="field"><label>Kimga berildi (ixtiyoriy)</label><input id="ke_to" placeholder="masalan: Sardor" value="${edit ? esc(exp.paid_to || '') : ''}" /></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Usul</label><select id="ke_method"><option value="naqt">💵 Naqt</option><option value="plastik">💳 Plastik</option></select></div>
-      <div class="field"><label>Qaysi hisobdan</label><select id="ke_by"><option>Dilshod Khamraev</option><option ${ME.name === 'Gulmira' ? 'selected' : ''}>Gulmira</option></select></div>
+      <div class="field"><label>Usul</label><select id="ke_method"><option value="naqt" ${edit && exp.method === 'naqt' ? 'selected' : ''}>💵 Naqt</option><option value="plastik" ${edit && exp.method === 'plastik' ? 'selected' : ''}>💳 Plastik</option></select></div>
+      <div class="field"><label>Qaysi hisobdan</label><select id="ke_by"><option ${edit && exp.paid_by === 'Dilshod Khamraev' ? 'selected' : ''}>Dilshod Khamraev</option><option ${edit ? (exp.paid_by === 'Gulmira' ? 'selected' : '') : (ME.name === 'Gulmira' ? 'selected' : '')}>Gulmira</option></select></div>
     </div>
-    <div class="field"><label>📷 Chek / naqt pul rasmi (majburiy)</label><input id="ke_file" type="file" accept="image/*" capture="environment" /></div>
+    <div class="field"><label>📷 Chek / naqt pul rasmi ${edit ? '(ixtiyoriy — bo\'sh qoldirsa eskisi qoladi)' : '(majburiy)'}</label><input id="ke_file" type="file" accept="image/*" capture="environment" /></div>
     <div id="ke_prev"></div>
-    <div class="field"><label>Izoh</label><input id="ke_note" placeholder="ixtiyoriy" /></div>
+    <div class="field"><label>Izoh</label><input id="ke_note" placeholder="ixtiyoriy" value="${edit ? esc(exp.note || '') : ''}" /></div>
     <div class="modal-actions"><button class="btn-save" id="ke_save">💾 Saqlash</button></div>`,
   () => {
     $('#ke_file').addEventListener('change', (e) => {
@@ -2753,11 +2768,13 @@ function openCashExpenseModal() {
     $('#ke_save').addEventListener('click', async () => {
       const amt = parseInt($('#ke_amt').value || '0', 10);
       if (amt <= 0) { toast('Summani kiriting'); return; }
-      if (!imgData) { toast('📷 Chek/naqt rasmini yuklang'); return; }
+      if (!edit && !imgData) { toast('📷 Chek/naqt rasmini yuklang'); return; }
       const body = { amount: amt, category: $('#ke_cat').value, paid_to: $('#ke_to').value, method: $('#ke_method').value, paid_by: $('#ke_by').value, note: $('#ke_note').value, image: imgData };
-      const r = await api('/api/cash/expense', { method: 'POST', body: JSON.stringify(body) });
+      const r = edit
+        ? await api('/api/cash/expense/' + exp.id, { method: 'PUT', body: JSON.stringify(body) })
+        : await api('/api/cash/expense', { method: 'POST', body: JSON.stringify(body) });
       if (r && r.error) { toast(r.error); return; }
-      closeModal(); toast('💸 Xarajat saqlandi' + (r.aiNote ? ' · ' + r.aiNote.replace(/🤖.?/, '') : '')); render();
+      closeModal(); toast(edit ? '✏️ Xarajat yangilandi' : '💸 Xarajat saqlandi'); render();
     });
   });
 }

@@ -2661,6 +2661,65 @@ def api_cash_expense(user, b):
     return {"ok": True, "aiNote": ai_note}
 
 
+def api_cash_expense_update(user, eid, b):
+    """Kassa xarajatini tahrirlaydi — xato kiritilgan summa/kategoriya/rasm tuzatiladi."""
+    if not can_cash(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT * FROM cash_expense WHERE id=?", (eid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    try:
+        amount = int(b.get("amount")) if b.get("amount") not in (None, "") else row["amount"]
+    except (ValueError, TypeError):
+        amount = row["amount"]
+    if amount <= 0:
+        conn.close()
+        return {"error": "Summani kiriting"}, 400
+    method = b.get("method") if b.get("method") in ("naqt", "plastik") else row["method"]
+    paid_by = b.get("paid_by") if b.get("paid_by") in ("Dilshod Khamraev", "Gulmira") else row["paid_by"]
+    category = (b.get("category") if "category" in b else row["category"]) or ""
+    paid_to = (b.get("paid_to") if "paid_to" in b else row["paid_to"]) or ""
+    note = (b.get("note") if "note" in b else row["note"]) or ""
+    edate = b.get("edate") or row["edate"]
+    img_id, ai_amount, ai_note = row["img"], row["ai_amount"], row["ai_note"]
+    new_img = b.get("image") or ""
+    if new_img:
+        ai_amount = _ai_read_amount(new_img)
+        ai_note = _ai_match_note(amount, ai_amount)
+        img_id = _save_fin_image(conn, new_img, "expense", ai_amount, user["name"])
+    conn.execute(
+        "UPDATE cash_expense SET edate=?, amount=?, category=?, paid_to=?, method=?, paid_by=?, note=?, img=?, ai_amount=?, ai_note=? WHERE id=?",
+        (edate, amount, category.strip(), paid_to.strip(), method, paid_by, note.strip(), img_id, ai_amount, ai_note, eid))
+    log_audit(conn, user["name"], "kassa xarajatini tahrirladi",
+              f"#{eid} {row['amount']}->{amount} so'm · {category}")
+    _flag_stale_close(conn, edate)
+    if row["edate"] != edate:
+        _flag_stale_close(conn, row["edate"])
+    conn.commit()
+    conn.close()
+    return {"ok": True, "aiNote": ai_note}
+
+
+def api_cash_expense_delete(user, eid):
+    """Xato kiritilgan Kassa xarajatini o'chiradi."""
+    if not can_cash(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT * FROM cash_expense WHERE id=?", (eid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    conn.execute("DELETE FROM cash_expense WHERE id=?", (eid,))
+    log_audit(conn, user["name"], "kassa xarajatini o'chirdi",
+              f"#{eid} {row['amount']} so'm · {row['category'] or ''}")
+    _flag_stale_close(conn, row["edate"])
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 def api_cash_close(user, b):
     """Kun moliya yopish — naqt sanog'i + karta balansi + rasm dalil → kutilgan bilan solishtiradi."""
     if not can_cash(user):
@@ -5992,6 +6051,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "Topilmadi"}, 404)
             row = api_update_studio_booking(user, bid, b)
             return self._json(row) if row else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "cash" and seg[2] == "expense":
+            eid = self._int(seg[3])
+            if eid is None:
+                return self._json({"error": "Topilmadi"}, 404)
+            return self._json(api_cash_expense_update(user, eid, b))
         return self._json({"error": "Topilmadi"}, 404)
 
     def do_DELETE(self):
@@ -6025,6 +6089,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             eid = self._int(seg[3])
             return self._json(api_delete_studio_expense(user, eid)) if eid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "cash" and seg[2] == "expense":
+            eid = self._int(seg[3])
+            return self._json(api_cash_expense_delete(user, eid)) if eid else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 3 and seg[1] == "studio":
             if not can_edit_studio(user):
                 return self._forbid()
