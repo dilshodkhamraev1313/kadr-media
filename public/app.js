@@ -1757,7 +1757,7 @@ function salaryCard(p) {
     </div>`;
 }
 
-async function openTeamPayModal(person, rem) {
+async function openTeamPayModal(person, rem, defaultDate, ymLabel) {
   const all = await api('/api/payments').catch(() => []);
   const mine = (all || []).filter((p) => p.editor === person);
   const canDel = ME.role === 'ceo';
@@ -1766,9 +1766,9 @@ async function openTeamPayModal(person, rem) {
       ${canDel ? `<button class="mini-btn red pay-del" data-id="${p.id}">🗑</button>` : ''}</div>`).join('')
     || '<div class="muted" style="padding:6px 0">To\'lov tarixi yo\'q</div>';
   openModal(`💸 ${esc(person)} — to'lov kiritish`, `
-    <p class="muted" style="margin-bottom:10px">Qolgan (bu oy): <b>${money(rem)}</b></p>
+    <p class="muted" style="margin-bottom:10px">Qolgan (${ymLabel ? esc(ymLabel) : 'bu oy'}): <b>${money(rem)}</b></p>
     <div class="field"><label>Berilgan summa (so'm)</label><input id="tp_amt" type="number" inputmode="numeric" value="${rem > 0 ? rem : ''}" /></div>
-    <div class="field"><label>Sana (bo'sh qoldirsa — bugun)</label><input id="tp_date" type="date" /></div>
+    <div class="field"><label>Sana${defaultDate ? '' : ' (bo\'sh qoldirsa — bugun)'}</label><input id="tp_date" type="date" value="${defaultDate || ''}" /></div>
     ${expenseMetaFields()}
     <div class="field"><label>Izoh (ixtiyoriy)</label><input id="tp_note" placeholder="masalan: avans / to'liq / o'tgan oy qolgani" /></div>
     <p class="muted" style="font-size:12px;margin:-2px 0 4px">💡 O'tgan oyning qolgan maoshini to'layotgan bo'lsangiz — sanani o'sha kunga (yoki haqiqiy to'langan kunga) qo'yib, izohga oyni yozing.</p>
@@ -2995,7 +2995,14 @@ async function viewLate() {
 //  OYLIK ARXIV — har oyni muzlatib saqlash (CEO)
 // ============================================================
 const UZ_YM = (ym) => { const [y, m] = (ym || '').split('-'); return (UZ_MONTH_FULL[parseInt(m, 10) - 1] || m) + ' ' + y; };
+function lastDayOfYm(ym) {
+  if (!ym) return '';
+  const [y, m] = ym.split('-').map((x) => parseInt(x, 10));
+  const d = new Date(y, m, 0);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 function snapCard(s) {
+  const isCeo = ME.role === 'ceo';
   return `<div class="stats-grid" style="margin-bottom:10px">
     ${statTile('📥', money(s.mediaIncome || 0), 'Media daromadi', 'blue')}
     ${statTile('🎥', money((s.studio || {}).net || 0), 'Studio sof', 'purple')}
@@ -3003,7 +3010,11 @@ function snapCard(s) {
     ${statTile((s.companyNet || 0) >= 0 ? '📈' : '📉', money(s.companyNet || 0), 'Kompaniya sof', (s.companyNet || 0) >= 0 ? 'green' : 'red')}
   </div>
   <div class="panel"><h3>👥 Maoshlar</h3><div class="money-rows">
-    ${(s.salaries || []).map((p) => `<div class="mrow"><span>${esc(p.name)}</span><b>${money(p.total)}</b> <span class="muted">· to'landi ${money(p.paid)} · qoldi ${money(p.remaining)}</span></div>`).join('')}
+    ${(s.salaries || []).map((p) => `<div class="mrow"><span>${esc(p.name)}</span>
+      <span style="display:flex;align-items:center;gap:8px">
+        <b>${money(p.total)}</b> <span class="muted">· to'landi ${money(p.paid)} · qoldi ${money(p.remaining)}</span>
+        ${isCeo && p.remaining > 0 ? `<button class="mini-btn green snap-pay" data-person="${esc(p.name)}" data-rem="${p.remaining}" data-ym="${esc(s.ym || '')}">💸</button>` : ''}
+      </span></div>`).join('')}
   </div></div>
   <div class="panel"><h3>🎥 Kadr Studio</h3><div class="money-rows">
     <div class="mrow"><span>Tushum</span><b>${money((s.studio || {}).total || 0)}</b></div>
@@ -3011,6 +3022,12 @@ function snapCard(s) {
     <div class="mrow"><span>Xarajatlar</span><b style="color:var(--pink)">−${money((s.studio || {}).expenses || 0)}</b></div>
     <div class="mrow"><span>To'langan / Qarz</span><b>${money((s.studio || {}).paid || 0)} / <span style="color:var(--orange)">${money((s.studio || {}).debt || 0)}</span></b></div>
   </div></div>`;
+}
+function bindSnapCard() {
+  $$('.snap-pay').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openTeamPayModal(b.dataset.person, parseInt(b.dataset.rem, 10) || 0, lastDayOfYm(b.dataset.ym), b.dataset.ym);
+  }));
 }
 async function viewArchive() {
   const d = await api('/api/archives');
@@ -3035,6 +3052,7 @@ async function viewArchive() {
     </div>
     <div class="sec-label" style="margin-bottom:10px">🗄 Muzlatilgan oylar</div>
     <div class="fin-months">${archList}</div>`;
+  bindSnapCard();
   $('#arc_save').addEventListener('click', async () => {
     if (!confirm(`${UZ_YM(cur.ym)} oyini arxivlaysizmi? (hozirgi holat muzlatiladi)`)) return;
     const r = await api('/api/archive', { method: 'POST', body: '{}' });
@@ -3050,6 +3068,7 @@ async function viewArchive() {
       const snap = await api('/api/archive?ym=' + btn.dataset.ym);
       body.dataset.loaded = '1';
       body.innerHTML = snap.error ? `<div class="muted" style="padding:8px">${esc(snap.error)}</div>` : snapCard(snap);
+      bindSnapCard();
     }
   }));
 }
