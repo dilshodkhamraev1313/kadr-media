@@ -766,6 +766,8 @@ def init_db():
     # checklist_done: belgi (done) + qo'lda izoh (note — masalan nechta ssenariy)
     add_column_if_missing(conn, "checklist_done", "done", "INTEGER DEFAULT 1")
     add_column_if_missing(conn, "checklist_done", "note", "TEXT DEFAULT ''")
+    # scenarist_scripts: mijozdan ALOHIDA olingan to'lov (loyiha oylik puliga kirmagan bo'lsa)
+    add_column_if_missing(conn, "scenarist_scripts", "client_amount", "INTEGER DEFAULT 0")
     # projects: mijoz o'zi joylaydigan loyihalar (joylash bosqichi yo'q)
     add_column_if_missing(conn, "projects", "self_post", "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "projects", "lead_usd", "INTEGER DEFAULT 50")  # rahbarlik puli: 30$ yoki 50$
@@ -3790,16 +3792,28 @@ def api_scenarist(user):
 def api_create_scenarist_script(user, b):
     rate = SCENARIST_PAY.get(user["name"], 0)
     sdate = b.get("sdate") or uz_today().isoformat()
+    try:
+        client_amount = max(int(b.get("client_amount") or 0), 0)
+    except (ValueError, TypeError):
+        client_amount = 0
     conn = get_db()
-    sql = """INSERT INTO scenarist_scripts (author, project, client, title, amount, status, sdate, note)
-             VALUES (?,?,?,?,?,?,?,?)"""
+    sql = """INSERT INTO scenarist_scripts (author, project, client, title, amount, client_amount, status, sdate, note)
+             VALUES (?,?,?,?,?,?,?,?,?)"""
     params = (user["name"], b.get("project") or "", b.get("client") or "",
-              b.get("title") or "Nomsiz ssenariy", rate, "active", sdate, b.get("note") or "")
+              b.get("title") or "Nomsiz ssenariy", rate, client_amount, "active", sdate, b.get("note") or "")
     if IS_PG:
         sid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:
         sid = conn.execute(sql, params).lastrowid
-    log_audit(conn, user["name"], "ssenariy kiritdi", f"#{sid} {b.get('title')} (+{rate})")
+    # Mijozdan ALOHIDA to'lov olingan bo'lsa (loyiha oylik puliga kirmagan) — kompaniya
+    # kirim daftariga (SSOT) yoziladi. Loyiha ichidagi ssenariylar uchun bu yozilmaydi
+    # (pul allaqachon o'sha loyihaning oylik to'lovida hisobga olingan — 2 marta hisoblanmasin).
+    if client_amount > 0:
+        label = (b.get("project") or b.get("title") or "Ssenariy")
+        _add_income(conn, "script", sid, label, client_amount, b, user,
+                    note=f"Ssenariy — {b.get('title') or ''} ({user['name']})")
+    log_audit(conn, user["name"], "ssenariy kiritdi", f"#{sid} {b.get('title')} (+{rate})"
+              + (f" · mijozdan {client_amount}" if client_amount else ""))
     conn.commit()
     row = dict(conn.execute("SELECT * FROM scenarist_scripts WHERE id=?", (sid,)).fetchone())
     conn.close()
@@ -3807,6 +3821,7 @@ def api_create_scenarist_script(user, b):
         f"✍️ <b>Ssenariy kiritildi</b>\n{b.get('title') or ''}\n"
         f"👤 {user['name']} (+{rate:,} so'm)".replace(",", " ")
         + (f"\n📁 {b.get('project')}" if b.get("project") else "")
+        + (f"\n💰 Mijozdan alohida: {client_amount:,} so'm".replace(",", " ") if client_amount else "")
     )
     return row
 
@@ -4275,6 +4290,10 @@ def _month_snapshot(conn, ym, actor):
                              "paid": s["paid"], "remaining": s["remaining"]})
     media_income = conn.execute("SELECT COALESCE(SUM(monthly_fee),0) AS s FROM projects WHERE monthly_fee>0").fetchone()["s"] or 0
     like = ym + "%"
+    # Ssenariy — mijozdan ALOHIDA olingan to'lovlar (loyiha oylik puliga kirmagan holatlar)
+    script_income = conn.execute(
+        "SELECT COALESCE(SUM(amount),0) AS s FROM income_ledger WHERE source_type='script' AND pdate LIKE ?",
+        (like,)).fetchone()["s"] or 0
     active = [dict(r) for r in conn.execute(
         "SELECT amount, paid_amount, operator_pay FROM studio_bookings "
         "WHERE bdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (like,)).fetchall()]
@@ -4286,12 +4305,13 @@ def _month_snapshot(conn, ym, actor):
     ss = _shoot_stats(conn, ym)
     return {
         "ym": ym, "rate": rate, "salaries": salaries, "payrollTotal": payroll_total,
-        "mediaIncome": media_income,
+        "mediaIncome": media_income, "scriptIncome": script_income,
         "studio": {"total": st_total, "operatorPay": st_op, "expenses": st_exp,
                    "net": st_net, "paid": st_paid, "debt": max(st_total - st_paid, 0)},
-        # Kompaniya sof foyda = jami kirim − payroll − studio xarajat.
-        # Operator puli payroll ICHIDA (_op_earn) — shuning uchun studio net'dan qayta ayirilmaydi (2 marta emas).
-        "companyNet": media_income + st_total - payroll_total - st_exp,
+        # Kompaniya sof foyda = jami kirim (media + studio + ssenariy) − payroll − studio xarajat.
+        # Operator/ssenarist puli payroll ICHIDA (_op_earn/_scenarist_earn) — shuning uchun
+        # studio net'dan qayta ayirilmaydi (2 marta emas).
+        "companyNet": media_income + st_total + script_income - payroll_total - st_exp,
         "shoots": {"totalHours": ss["totalHours"], "studioHours": ss["studioHours"],
                    "mediaHours": ss["mediaHours"], "count": ss["count"], "byOperator": ss["byOperator"]},
         "generatedAt": now_local(), "by": actor,

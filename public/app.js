@@ -1670,20 +1670,44 @@ async function viewScenarist() {
 }
 
 function openScenaristModal() {
+  const rate = (DATA.scenarist || {}).rate || 0;
+  let separate = false;
   openModal('Tasdiqlangan ssenariy kiritish', `
-    <p class="muted" style="margin-bottom:12px">Mijoz tasdiqlagan ssenariyni kiriting — pul avtomatik hisoblanadi.</p>
+    <p class="muted" style="margin-bottom:12px">Mijoz tasdiqlagan ssenariyni kiriting — sizga ${money(rate)} avtomatik hisoblanadi.</p>
     <div class="field"><label>Ssenariy nomi</label><input id="sc_title" placeholder="masalan: Nova reels #12 — hook" /></div>
     <div class="field-row">
       <div class="field"><label>Loyiha</label><input id="sc_proj" placeholder="Loyiha nomi" /></div>
       <div class="field"><label>Sana</label><input id="sc_date" type="date" /></div>
     </div>
+    <div class="field"><label>Bu ssenariy qanday hisoblanadi?</label>
+      <div class="seg"><button id="sc_inner" class="on-k">📁 Ichki loyiha</button><button id="sc_outer">💰 Mijozdan alohida to'lov</button></div>
+      <p class="muted" style="font-size:12px;margin-top:4px">Loyiha oylik to'loviga kirgan bo'lsa — "Ichki loyiha" (odatdagi holat). Mijoz aynan shu ssenariy uchun alohida to'lagan bo'lsa — "Mijozdan alohida to'lov".</p>
+    </div>
+    <div id="sc_outer_fields" class="hidden">
+      <div class="field"><label>Mijozdan olingan summa (so'm)</label><input id="sc_camt" type="number" inputmode="numeric" placeholder="150000" /></div>
+      <div class="field-row">
+        <div class="field"><label>💰 Kim qabul qildi</label><select id="sc_recv">${INCOME_RECEIVERS.map((r) => `<option>${esc(r)}</option>`).join('')}</select></div>
+        <div class="field"><label>To'lov usuli</label><select id="sc_method">${INCOME_METHODS.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div>
+      </div>
+      <p class="muted" style="font-size:12px">💡 Sizga baribir ${money(rate)} hisoblanadi — farq kompaniya foydasiga yoziladi.</p>
+    </div>
     <div class="field"><label>Izoh (ixtiyoriy)</label><textarea id="sc_note"></textarea></div>
     <div class="modal-actions"><button class="btn-save" id="sc_save">✍️ Kiritish</button></div>`,
   () => {
+    const bi = $('#sc_inner'), bo = $('#sc_outer'), of = $('#sc_outer_fields');
+    bi.addEventListener('click', () => { separate = false; bi.className = 'on-k'; bo.className = ''; of.classList.add('hidden'); });
+    bo.addEventListener('click', () => { separate = true; bo.className = 'on-k'; bi.className = ''; of.classList.remove('hidden'); });
     $('#sc_save').addEventListener('click', async () => {
       const title = $('#sc_title').value.trim();
       if (!title) { toast('Ssenariy nomini kiriting'); return; }
       const body = { title, project: $('#sc_proj').value, sdate: $('#sc_date').value || null, note: $('#sc_note').value };
+      if (separate) {
+        const camt = parseInt($('#sc_camt').value || '0', 10);
+        if (camt <= 0) { toast('Mijozdan olingan summani kiriting'); return; }
+        body.client_amount = camt;
+        body.received_by = $('#sc_recv').value;
+        body.method = $('#sc_method').value;
+      }
       await api('/api/scenarist', { method: 'POST', body: JSON.stringify(body) });
       closeModal(); toast('✍️ Ssenariy kiritildi — pul hisoblandi'); render();
     });
