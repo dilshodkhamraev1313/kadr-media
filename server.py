@@ -766,8 +766,10 @@ def init_db():
     # checklist_done: belgi (done) + qo'lda izoh (note — masalan nechta ssenariy)
     add_column_if_missing(conn, "checklist_done", "done", "INTEGER DEFAULT 1")
     add_column_if_missing(conn, "checklist_done", "note", "TEXT DEFAULT ''")
-    # scenarist_scripts: mijozdan ALOHIDA olingan to'lov (loyiha oylik puliga kirmagan bo'lsa)
+    # scenarist_scripts: mijozdan ALOHIDA olinadigan to'lov (loyiha oylik puliga
+    # kirmagan bo'lsa) — client_amount qancha qarz, client_paid mijoz to'laganmi.
     add_column_if_missing(conn, "scenarist_scripts", "client_amount", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "scenarist_scripts", "client_paid", "INTEGER DEFAULT 0")
     # projects: mijoz o'zi joylaydigan loyihalar (joylash bosqichi yo'q)
     add_column_if_missing(conn, "projects", "self_post", "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "projects", "lead_usd", "INTEGER DEFAULT 50")  # rahbarlik puli: 30$ yoki 50$
@@ -921,13 +923,29 @@ def api_clients():
     return [dict(r) for r in rows]
 
 
+def _script_debts(conn):
+    """Har loyiha bo'yicha hali to'lanmagan ('mijozdan alohida to'lov' deb
+    belgilangan, lekin hali to'lov tushmagan) ssenariy qarzlari yig'indisi."""
+    rows = conn.execute(
+        "SELECT project, COALESCE(SUM(client_amount),0) AS s FROM scenarist_scripts "
+        "WHERE client_amount>0 AND client_paid=0 AND (status IS NULL OR status<>'bekor_qilindi') "
+        "GROUP BY project").fetchall()
+    return {r["project"]: r["s"] for r in rows if r["project"]}
+
+
 def api_projects():
     conn = get_db()
     rows = conn.execute(
         "SELECT * FROM projects ORDER BY deadline IS NULL, deadline ASC"
     ).fetchall()
+    debts = _script_debts(conn)
     conn.close()
-    return [decorate(r) for r in rows]
+    out = []
+    for r in rows:
+        p = decorate(r)
+        p["scriptDebt"] = debts.get(p["name"], 0)
+        out.append(p)
+    return out
 
 
 def api_get_project(pid):
@@ -2226,6 +2244,37 @@ def api_delete_payment(user, pid):
     return {"ok": True}
 
 
+def api_update_payment(user, pid, b):
+    """CEO — xato sanaga/summaga kiritilgan maosh to'lovini tuzatadi (masalan
+    avgustga yozilib qolgan, aslida iyul oyi qolgan maoshi bo'lgan to'lov)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT * FROM payments WHERE id=?", (pid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    try:
+        amount = int(b.get("amount")) if b.get("amount") not in (None, "") else row["amount"]
+    except (ValueError, TypeError):
+        amount = row["amount"]
+    pdate = b.get("pdate") or row["pdate"]
+    method = b.get("method") if b.get("method") in ("naqt", "plastik") else row["method"]
+    paid_from = b.get("paid_from") if b.get("paid_from") in ("Dilshod Khamraev", "Gulmira") else row["paid_from"]
+    note = b.get("note") if "note" in b else row["note"]
+    conn.execute(
+        "UPDATE payments SET amount=?, pdate=?, method=?, paid_from=?, note=? WHERE id=?",
+        (amount, pdate, method, paid_from, note, pid))
+    log_audit(conn, user["name"], "maosh to'lovini tuzatdi",
+              f"#{pid} {row['editor']} {row['pdate']}->{pdate} · {row['amount']}->{amount}")
+    _flag_stale_close(conn, pdate)
+    if row["pdate"] != pdate:
+        _flag_stale_close(conn, row["pdate"])
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 # ============================================================
 #  AUDIT LOG
 # ============================================================
@@ -2874,6 +2923,35 @@ def api_mark_client_payment(user, b):
     conn.commit()
     conn.close()
     return {"ok": True, "paid": True, "amount": int(total)}
+
+
+def api_pay_script_debt(user, b):
+    """CEO — loyihaning hali to'lanmagan ssenariy qarzini (mijoz to'laganda)
+    yopadi: barcha 'client_paid=0' ssenariylarni bitta to'lov sifatida kompaniya
+    kirim daftariga yozadi va 'to'landi' deb belgilaydi. Ssenaristning o'z puli
+    bunga bog'liq emas — u ssenariy kiritilgan zahoti allaqachon hisoblangan."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    project = (b.get("project") or "").strip()
+    if not project:
+        return {"error": "Loyiha kerak"}, 400
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, client_amount FROM scenarist_scripts WHERE project=? AND client_amount>0 "
+        "AND client_paid=0 AND (status IS NULL OR status<>'bekor_qilindi')", (project,)).fetchall()
+    debt = sum(r["client_amount"] or 0 for r in rows)
+    if debt <= 0:
+        conn.close()
+        return {"error": "Bu loyihada to'lanmagan ssenariy qarzi yo'q"}, 400
+    total = _add_income_split(conn, "script", 0, project, b, user,
+                              note=f"Ssenariy qarzi to'landi ({len(rows)} ta)", default_amount=debt)
+    ids = [r["id"] for r in rows]
+    placeholders = ",".join("?" * len(ids))
+    conn.execute(f"UPDATE scenarist_scripts SET client_paid=1 WHERE id IN ({placeholders})", ids)
+    log_audit(conn, user["name"], "ssenariy qarzini yopdi", f"{project} · {total} so'm ({len(rows)} ta ssenariy)")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "amount": total, "count": len(ids)}
 
 
 def api_tiers():
@@ -3805,15 +3883,14 @@ def api_create_scenarist_script(user, b):
         sid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:
         sid = conn.execute(sql, params).lastrowid
-    # Mijozdan ALOHIDA to'lov olingan bo'lsa (loyiha oylik puliga kirmagan) — kompaniya
-    # kirim daftariga (SSOT) yoziladi. Loyiha ichidagi ssenariylar uchun bu yozilmaydi
-    # (pul allaqachon o'sha loyihaning oylik to'lovida hisobga olingan — 2 marta hisoblanmasin).
-    if client_amount > 0:
-        label = (b.get("project") or b.get("title") or "Ssenariy")
-        _add_income(conn, "script", sid, label, client_amount, b, user,
-                    note=f"Ssenariy — {b.get('title') or ''} ({user['name']})")
+    # Mijozdan ALOHIDA to'lov olinadigan bo'lsa (loyiha oylik puliga kirmagan) —
+    # bu HALI kompaniya kirimiga YOZILMAYDI (mijoz hali to'lamagan!). Faqat
+    # o'sha loyihaning "ssenariy qarzi" sifatida qayd etiladi (client_paid=0) —
+    # mijoz haqiqatan to'laganda, alohida "qarzni yopish" amali orqali daftarga
+    # tushadi. Ssenaristning o'z puli (yuqoridagi `amount`) esa bunga bog'liq
+    # emas — darhol uning maoshiga qo'shiladi (montajchi/operator kabi).
     log_audit(conn, user["name"], "ssenariy kiritdi", f"#{sid} {b.get('title')} (+{rate})"
-              + (f" · mijozdan {client_amount}" if client_amount else ""))
+              + (f" · mijoz qarzi {client_amount}" if client_amount else ""))
     conn.commit()
     row = dict(conn.execute("SELECT * FROM scenarist_scripts WHERE id=?", (sid,)).fetchone())
     conn.close()
@@ -3821,7 +3898,7 @@ def api_create_scenarist_script(user, b):
         f"✍️ <b>Ssenariy kiritildi</b>\n{b.get('title') or ''}\n"
         f"👤 {user['name']} (+{rate:,} so'm)".replace(",", " ")
         + (f"\n📁 {b.get('project')}" if b.get("project") else "")
-        + (f"\n💰 Mijozdan alohida: {client_amount:,} so'm".replace(",", " ") if client_amount else "")
+        + (f"\n💰 Mijoz qarzi (hali to'lanmagan): {client_amount:,} so'm".replace(",", " ") if client_amount else "")
     )
     return row
 
@@ -5927,6 +6004,10 @@ class Handler(BaseHTTPRequestHandler):
             if r != "ceo":
                 return self._forbid()
             return self._json(api_mark_client_payment(user, b))
+        if path == "/api/scripts/pay-debt":
+            if r != "ceo":
+                return self._forbid()
+            return self._json(api_pay_script_debt(user, b))
         if path == "/api/studio":
             if not can_edit_studio(user):
                 return self._forbid()
@@ -6079,6 +6160,11 @@ class Handler(BaseHTTPRequestHandler):
             if eid is None:
                 return self._json({"error": "Topilmadi"}, 404)
             return self._json(api_cash_expense_update(user, eid, b))
+        if len(seg) == 3 and seg[1] == "payments":
+            pid = self._int(seg[2])
+            if pid is None:
+                return self._json({"error": "Topilmadi"}, 404)
+            return self._json(api_update_payment(user, pid, b))
         return self._json({"error": "Topilmadi"}, 404)
 
     def do_DELETE(self):

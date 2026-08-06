@@ -728,6 +728,10 @@ function projectCard(p) {
           `<span class="prev-chip">${s.label}: ${p['prev_done_' + s.key] || 0}/${p.prev_plan || 0}</span>`).join('')}</div>
       </div>` : ''}
       ${p.muammo ? `<div class="pc-problem">⚠ ${esc(p.muammo)}</div>` : ''}
+      ${(p.scriptDebt > 0) ? `<div class="pc-problem soft" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <span>✍️ Ssenariy qarzi: <b>${money(p.scriptDebt)}</b></span>
+          ${ME.role === 'ceo' ? `<button class="mini-btn green script-debt-pay" data-project="${esc(p.name)}" data-debt="${p.scriptDebt}">💸 To'ladi</button>` : ''}
+        </div>` : ''}
       <div class="pc-foot"><div class="pc-resp"><div class="mini-av" style="background:${colorFor(p.responsible)}">${initials(p.responsible)}</div><span>${esc(p.responsible) || '—'}</span></div>
         <div class="pc-deadline ${dlCls}">📅 ${dl}</div></div>
       ${(ME.role === 'ceo' && !p.fullyDone) ? `<button class="mini-btn blue proj-reset" data-resetproj="${p.id}" data-name="${esc(p.name)}" style="margin-top:8px;width:100%">🔄 Shu loyihani yangilash (yangi davr)</button>` : ''}
@@ -745,6 +749,26 @@ function bindProjectCards() {
     if (r && r.error) { toast(r.error); return; }
     toast('🔄 Loyiha yangilandi'); render();
   }));
+  document.querySelectorAll('.script-debt-pay').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openScriptDebtPayModal(b.dataset.project, parseInt(b.dataset.debt, 10) || 0);
+  }));
+}
+function openScriptDebtPayModal(project, debt) {
+  openModal(`✍️ ${esc(project)} — ssenariy qarzini yopish`, `
+    <p class="muted" style="margin-bottom:10px">Mijoz to'lagan ssenariy qarzi: <b>${money(debt)}</b></p>
+    ${paySplitFields(debt)}
+    <div class="modal-actions"><button class="btn-save" id="sdp_save">💾 Qarzni yopish</button></div>`,
+  () => {
+    bindPaySplit();
+    $('#sdp_save').addEventListener('click', async () => {
+      const split = readPaySplit();
+      if (split.amount <= 0) { toast('Summani kiriting'); return; }
+      const r = await api('/api/scripts/pay-debt', { method: 'POST', body: JSON.stringify({ project, received_by: split.received_by, naqt: split.naqt, plastik: split.plastik }) });
+      if (r && r.error) { toast(r.error); return; }
+      closeModal(); toast('✍️ Ssenariy qarzi yopildi'); render();
+    });
+  });
 }
 
 // ============================================================
@@ -1684,12 +1708,8 @@ function openScenaristModal() {
       <p class="muted" style="font-size:12px;margin-top:4px">Loyiha oylik to'loviga kirgan bo'lsa — "Ichki loyiha" (odatdagi holat). Mijoz aynan shu ssenariy uchun alohida to'lagan bo'lsa — "Mijozdan alohida to'lov".</p>
     </div>
     <div id="sc_outer_fields" class="hidden">
-      <div class="field"><label>Mijozdan olingan summa (so'm)</label><input id="sc_camt" type="number" inputmode="numeric" placeholder="150000" /></div>
-      <div class="field-row">
-        <div class="field"><label>💰 Kim qabul qildi</label><select id="sc_recv">${INCOME_RECEIVERS.map((r) => `<option>${esc(r)}</option>`).join('')}</select></div>
-        <div class="field"><label>To'lov usuli</label><select id="sc_method">${INCOME_METHODS.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div>
-      </div>
-      <p class="muted" style="font-size:12px">💡 Sizga baribir ${money(rate)} hisoblanadi — farq kompaniya foydasiga yoziladi.</p>
+      <div class="field"><label>Mijozdan olinadigan summa (so'm)</label><input id="sc_camt" type="number" inputmode="numeric" placeholder="150000" /></div>
+      <p class="muted" style="font-size:12px">💡 Sizga baribir ${money(rate)} hisoblanadi. Bu summa mijoz HALI TO'LAMAGAN — loyihaning "ssenariy qarzi" sifatida qayd etiladi, kompaniya kirimiga esa mijoz haqiqatan to'laganda (Loyihalar sahifasida "To'ladi" tugmasi bosilganda) tushadi.</p>
     </div>
     <div class="field"><label>Izoh (ixtiyoriy)</label><textarea id="sc_note"></textarea></div>
     <div class="modal-actions"><button class="btn-save" id="sc_save">✍️ Kiritish</button></div>`,
@@ -1703,10 +1723,8 @@ function openScenaristModal() {
       const body = { title, project: $('#sc_proj').value, sdate: $('#sc_date').value || null, note: $('#sc_note').value };
       if (separate) {
         const camt = parseInt($('#sc_camt').value || '0', 10);
-        if (camt <= 0) { toast('Mijozdan olingan summani kiriting'); return; }
+        if (camt <= 0) { toast('Mijozdan olinadigan summani kiriting'); return; }
         body.client_amount = camt;
-        body.received_by = $('#sc_recv').value;
-        body.method = $('#sc_method').value;
       }
       await api('/api/scenarist', { method: 'POST', body: JSON.stringify(body) });
       closeModal(); toast('✍️ Ssenariy kiritildi — pul hisoblandi'); render();
@@ -1763,7 +1781,10 @@ async function openTeamPayModal(person, rem, defaultDate, ymLabel) {
   const canDel = ME.role === 'ceo';
   const hist = mine.map((p) => `<div class="ldg-row">
       <span>${money(p.amount)}${p.paid_from ? ' · 🏦 ' + esc(p.paid_from) : ''} · ${p.method === 'plastik' ? '💳' : '💵'} <span class="muted">· ${fmtDate(p.pdate)}${p.note ? ' · ' + esc(p.note) : ''}</span></span>
-      ${canDel ? `<button class="mini-btn red pay-del" data-id="${p.id}">🗑</button>` : ''}</div>`).join('')
+      <span style="display:flex;gap:6px">
+        ${canDel ? `<button class="mini-btn gray pay-edit" data-id="${p.id}" data-amt="${p.amount}" data-date="${p.pdate}" data-note="${esc(p.note || '')}">✏️</button>` : ''}
+        ${canDel ? `<button class="mini-btn red pay-del" data-id="${p.id}">🗑</button>` : ''}
+      </span></div>`).join('')
     || '<div class="muted" style="padding:6px 0">To\'lov tarixi yo\'q</div>';
   openModal(`💸 ${esc(person)} — to'lov kiritish`, `
     <p class="muted" style="margin-bottom:10px">Qolgan (${ymLabel ? esc(ymLabel) : 'bu oy'}): <b>${money(rem)}</b></p>
@@ -1790,6 +1811,25 @@ async function openTeamPayModal(person, rem, defaultDate, ymLabel) {
       if (r && r.error) { toast('⚠️ ' + r.error); return; }
       toast('🗑 To\'lov o\'chirildi'); openTeamPayModal(person, rem);
     }));
+    $$('.pay-edit').forEach((b) => b.addEventListener('click', () => {
+      openEditPaymentModal(b.dataset.id, b.dataset.amt, b.dataset.date, b.dataset.note, () => openTeamPayModal(person, rem, defaultDate, ymLabel));
+    }));
+  });
+}
+function openEditPaymentModal(id, amt, date, note, onDone) {
+  openModal('✏️ To\'lovni tuzatish', `
+    <p class="muted" style="margin-bottom:10px">Masalan sana xato oyga (avgustga) yozilib qolgan bo'lsa — shu yerdan to'g'irlang.</p>
+    <div class="field"><label>Summa (so'm)</label><input id="ep_amt" type="number" inputmode="numeric" value="${amt}" /></div>
+    <div class="field"><label>Sana</label><input id="ep_date" type="date" value="${date}" /></div>
+    <div class="field"><label>Izoh</label><input id="ep_note" value="${esc(note || '')}" /></div>
+    <div class="modal-actions"><button class="btn-save" id="ep_save">💾 Saqlash</button></div>`, () => {
+    $('#ep_save').addEventListener('click', async () => {
+      const a = parseInt($('#ep_amt').value || '0', 10);
+      if (a <= 0) { toast('Summani kiriting'); return; }
+      const r = await api('/api/payments/' + id, { method: 'PUT', body: JSON.stringify({ amount: a, pdate: $('#ep_date').value, note: $('#ep_note').value }) });
+      if (r && r.error) { toast('⚠️ ' + r.error); return; }
+      toast('✏️ To\'lov tuzatildi'); onDone();
+    });
   });
 }
 
