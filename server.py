@@ -2436,6 +2436,7 @@ def api_cashflow(user):
                      "net": studio_net, "breakeven": studio_costs},
         "mediaPL": {"income": media_expected, "cost": media_cost, "net": media_net},
         "companyNet": company_net,
+        "rate": rate,
         # Naqd holat
         "cashNow": cash_now,
         "toCollect": to_collect,
@@ -2902,15 +2903,31 @@ def api_mark_client_payment(user, b):
         conn.close()
         return {"ok": True, "paid": False}
     prow = conn.execute("SELECT monthly_fee FROM projects WHERE name=?", (project,)).fetchone()
-    # to'lov summasi: naqt+plastik (split) yoki amount yoki loyiha oylik to'lovi
+    # to'lov summasi: naqt+plastik (split, so'mda) yoki dollar (kursga qarab so'mga
+    # aylantiriladi) yoki amount yoki loyiha oylik to'lovi
     def _iamt(k):
         try:
             return max(int(b.get(k) or 0), 0)
         except (ValueError, TypeError):
             return 0
+    usd_note = ""
     total = _iamt("naqt") + _iamt("plastik")
     if total == 0:
-        total = _iamt("amount") or ((prow["monthly_fee"] if prow else 0) or 0)
+        try:
+            usd_amt = max(float(b.get("usd_amount") or 0), 0)
+        except (ValueError, TypeError):
+            usd_amt = 0
+        if usd_amt > 0:
+            rate = get_usd_rate()
+            total = int(round(usd_amt * rate))
+            usd_fmt = ("{:g}".format(usd_amt))
+            rate_fmt = "{:,}".format(rate).replace(",", " ")
+            usd_note = f" (${usd_fmt} × {rate_fmt} kurs)"
+            method = (b.get("method") or "naqt").strip().lower()
+            b = dict(b, naqt=(total if method != "plastik" else 0),
+                     plastik=(total if method == "plastik" else 0))
+        else:
+            total = _iamt("amount") or ((prow["monthly_fee"] if prow else 0) or 0)
     sql = "INSERT INTO client_payments (project, ym, amount, pdate, note, created_by) VALUES (?,?,?,?,?,?)"
     params = (project, ym, int(total), uz_today().isoformat(), (b.get("note") or ""), user["name"])
     if IS_PG:
@@ -2919,7 +2936,7 @@ def api_mark_client_payment(user, b):
         cpid = conn.execute(sql, params).lastrowid
     # daftarga naqt/plastik bo'lib yoziladi, client_payment idga bog'lanadi
     _add_income_split(conn, "client", cpid, project, b, user,
-                      note="Mijoz oylik to'lovi", default_amount=total)
+                      note="Mijoz oylik to'lovi" + usd_note, default_amount=total)
     conn.commit()
     conn.close()
     return {"ok": True, "paid": True, "amount": int(total)}

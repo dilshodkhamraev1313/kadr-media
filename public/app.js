@@ -2905,7 +2905,7 @@ async function viewCashflow() {
       <div class="cf-cl"><div class="cf-name">${esc(c.project)}</div>
         <div class="cf-sub">${c.responsible ? '👤 ' + esc(c.responsible) + ' · ' : ''}${money(c.fee)}/oy</div></div>
       <div class="cf-right">${badge}
-        <button class="btn-ghost cf-toggle" data-pay="${esc(c.project)}" data-paid="${c.paid ? 1 : 0}" data-fee="${c.fee || 0}">${c.paid ? 'Bekor' : 'To\'landi'}</button></div>
+        <button class="btn-ghost cf-toggle" data-payproj="${esc(c.project)}" data-paid="${c.paid ? 1 : 0}" data-fee="${c.fee || 0}">${c.paid ? 'Bekor' : 'To\'landi'}</button></div>
     </div>`;
   }).join('') || emptyState('Loyihalarga oylik to\'lov kiritilmagan');
 
@@ -2972,28 +2972,58 @@ async function viewCashflow() {
     </div>
     <p class="muted" style="margin-top:10px">💡 Oylik to'lovni o'zgartirish: Loyihalar → loyihani oching → "💵 Oylik to'lov".</p>`;
 
-  $$('.cf-toggle').forEach((b) => b.addEventListener('click', async () => {
+  $$('.cf-toggle').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
     if (b.dataset.paid === '1') {
       // to'lovni bekor qilish (to'g'ridan-to'g'ri)
       b.disabled = true;
-      const res = await api('/api/cashflow/pay', { method: 'POST', body: JSON.stringify({ project: b.dataset.pay }) });
+      const res = await api('/api/cashflow/pay', { method: 'POST', body: JSON.stringify({ project: b.dataset.payproj }) });
       if (res && res.ok) { toast('Bekor qilindi'); render(); } else { b.disabled = false; toast('Xatolik'); }
     } else {
-      openClientPayModal(b.dataset.pay, parseInt(b.dataset.fee, 10) || 0);
+      openClientPayModal(b.dataset.payproj, parseInt(b.dataset.fee, 10) || 0, f.rate || 0);
     }
   }));
 }
 
-function openClientPayModal(project, fee) {
+function openClientPayModal(project, fee, rate) {
+  let curr = 'som';
   openModal(`💵 ${esc(project)} — to'lov qabul qilindi`, `
-    <p class="muted" style="margin-bottom:10px">Oylik summa: <b>${money(fee)}</b> — naqt va plastikka bo'lib ham kiritishingiz mumkin.</p>
-    ${paySplitFields(fee)}
+    <p class="muted" style="margin-bottom:10px">Oylik summa: <b>${money(fee)}</b></p>
+    <div class="seg" style="margin-bottom:10px"><button id="cp_som" class="on-k">🇺🇿 So'm</button><button id="cp_usd">💵 Dollar</button></div>
+    <div id="cp_som_fields">
+      <p class="muted" style="margin-bottom:8px">Naqt va plastikka bo'lib ham kiritishingiz mumkin.</p>
+      ${paySplitFields(fee)}
+    </div>
+    <div id="cp_usd_fields" class="hidden">
+      <div class="field"><label>💰 Kim qabul qildi</label><select id="cp_urecv">${INCOME_RECEIVERS.map((r) => `<option>${esc(r)}</option>`).join('')}</select></div>
+      <div class="field-row">
+        <div class="field"><label>Summa ($)</label><input id="cp_uamt" type="number" inputmode="decimal" placeholder="500" /></div>
+        <div class="field"><label>Usul</label><select id="cp_umethod"><option value="naqt">💵 Naqt</option><option value="plastik">💳 Plastik</option></select></div>
+      </div>
+      <div id="cp_ucalc" class="calc-line">Kurs: 1$ = ${money(rate)}</div>
+    </div>
     <div class="modal-actions"><button class="btn-save" id="cp_ok">✅ To'landi deb belgilash</button></div>`, () => {
     bindPaySplit();
+    const bs = $('#cp_som'), bu = $('#cp_usd'), sf = $('#cp_som_fields'), uf = $('#cp_usd_fields');
+    bs.addEventListener('click', () => { curr = 'som'; bs.className = 'on-k'; bu.className = ''; sf.classList.remove('hidden'); uf.classList.add('hidden'); });
+    bu.addEventListener('click', () => { curr = 'usd'; bu.className = 'on-k'; bs.className = ''; sf.classList.add('hidden'); uf.classList.remove('hidden'); });
+    const uAmt = $('#cp_uamt');
+    if (uAmt) uAmt.addEventListener('input', () => {
+      const usd = parseFloat(uAmt.value || '0') || 0;
+      $('#cp_ucalc').innerHTML = `Kurs: 1$ = ${money(rate)} · = <b>${money(Math.round(usd * rate))}</b>`;
+    });
     $('#cp_ok').addEventListener('click', async () => {
-      const s = readPaySplit();
-      if (s.amount <= 0) { toast('Summani kiriting'); return; }
-      const res = await api('/api/cashflow/pay', { method: 'POST', body: JSON.stringify({ project, ...s }) });
+      let body;
+      if (curr === 'usd') {
+        const usd = parseFloat(($('#cp_uamt') || {}).value || '0') || 0;
+        if (usd <= 0) { toast('Summani kiriting'); return; }
+        body = { project, usd_amount: usd, method: $('#cp_umethod').value, received_by: $('#cp_urecv').value };
+      } else {
+        const s = readPaySplit();
+        if (s.amount <= 0) { toast('Summani kiriting'); return; }
+        body = { project, ...s };
+      }
+      const res = await api('/api/cashflow/pay', { method: 'POST', body: JSON.stringify(body) });
       if (res && res.ok) { closeModal(); toast('✓ To\'landi deb belgilandi'); render(); }
       else { toast('⚠️ ' + (res && res.error || 'Xatolik')); }
     });
