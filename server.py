@@ -5868,8 +5868,11 @@ class Handler(BaseHTTPRequestHandler):
             rows = [dict(r) for r in conn.execute(
                 "SELECT id, author, project, title, amount, client_amount, client_paid, status, sdate "
                 "FROM scenarist_scripts ORDER BY id DESC").fetchall()]
+            ledger = [dict(r) for r in conn.execute(
+                "SELECT id, source_id, source_label, amount, pdate, note, created_by, created_at "
+                "FROM income_ledger WHERE source_type='script' ORDER BY id DESC").fetchall()]
             conn.close()
-            return self._json(rows)
+            return self._json({"scripts": rows, "income_ledger_script": ledger})
         if path == "/api/finance":
             return self._forbid() if role != "ceo" else self._json(api_finance())
         if path == "/api/cashflow":
