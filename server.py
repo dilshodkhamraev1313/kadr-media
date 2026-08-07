@@ -925,12 +925,19 @@ def api_clients():
 
 def _script_debts(conn):
     """Har loyiha bo'yicha hali to'lanmagan ('mijozdan alohida to'lov' deb
-    belgilangan, lekin hali to'lov tushmagan) ssenariy qarzlari yig'indisi."""
+    belgilangan, lekin hali to'lov tushmagan) ssenariy qarzlari yig'indisi.
+    Loyiha nomi ssenariy kiritishda erkin matn sifatida yoziladi, shuning
+    uchun katta-kichik harf/bo'sh joy farqiga qaramay moslashtiriladi."""
     rows = conn.execute(
         "SELECT project, COALESCE(SUM(client_amount),0) AS s FROM scenarist_scripts "
         "WHERE client_amount>0 AND client_paid=0 AND (status IS NULL OR status<>'bekor_qilindi') "
         "GROUP BY project").fetchall()
-    return {r["project"]: r["s"] for r in rows if r["project"]}
+    out = {}
+    for r in rows:
+        key = (r["project"] or "").strip().lower()
+        if key:
+            out[key] = out.get(key, 0) + (r["s"] or 0)
+    return out
 
 
 def api_projects():
@@ -943,7 +950,7 @@ def api_projects():
     out = []
     for r in rows:
         p = decorate(r)
-        p["scriptDebt"] = debts.get(p["name"], 0)
+        p["scriptDebt"] = debts.get((p["name"] or "").strip().lower(), 0)
         out.append(p)
     return out
 
@@ -2953,9 +2960,11 @@ def api_pay_script_debt(user, b):
     if not project:
         return {"error": "Loyiha kerak"}, 400
     conn = get_db()
-    rows = conn.execute(
-        "SELECT id, client_amount FROM scenarist_scripts WHERE project=? AND client_amount>0 "
-        "AND client_paid=0 AND (status IS NULL OR status<>'bekor_qilindi')", (project,)).fetchall()
+    key = project.lower()
+    all_rows = conn.execute(
+        "SELECT id, project, client_amount FROM scenarist_scripts WHERE client_amount>0 "
+        "AND client_paid=0 AND (status IS NULL OR status<>'bekor_qilindi')").fetchall()
+    rows = [r for r in all_rows if (r["project"] or "").strip().lower() == key]
     debt = sum(r["client_amount"] or 0 for r in rows)
     if debt <= 0:
         conn.close()
@@ -3149,13 +3158,14 @@ def api_delete_income(user, lid):
     if not can_edit_studio(user):
         return {"error": "Ruxsat yo'q"}, 403
     conn = get_db()
-    row = conn.execute("SELECT source_type, source_id FROM income_ledger WHERE id=?", (lid,)).fetchone()
+    row = conn.execute("SELECT source_type, source_id, pdate FROM income_ledger WHERE id=?", (lid,)).fetchone()
     if not row:
         conn.close()
         return {"error": "Topilmadi"}, 404
     conn.execute("DELETE FROM income_ledger WHERE id=?", (lid,))
     if row["source_type"] == "studio" and row["source_id"]:
         _recalc_studio_paid(conn, row["source_id"])
+    _flag_stale_close(conn, row["pdate"])
     log_audit(conn, user["name"], "to'lov yozuvi o'chirdi", f"ledger #{lid}")
     conn.commit()
     conn.close()
@@ -5861,18 +5871,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role not in APPROVER_ROLES else self._json(api_editors(user))
         if path == "/api/audit":
             return self._forbid() if role not in ADMIN_ROLES else self._json(api_audit())
-        if path == "/api/debug/scenarist-scripts":
-            if role != "ceo":
-                return self._forbid()
-            conn = get_db()
-            rows = [dict(r) for r in conn.execute(
-                "SELECT id, author, project, title, amount, client_amount, client_paid, status, sdate "
-                "FROM scenarist_scripts ORDER BY id DESC").fetchall()]
-            ledger = [dict(r) for r in conn.execute(
-                "SELECT id, source_id, source_label, amount, pdate, note, created_by, created_at "
-                "FROM income_ledger WHERE source_type='script' ORDER BY id DESC").fetchall()]
-            conn.close()
-            return self._json({"scripts": rows, "income_ledger_script": ledger})
         if path == "/api/finance":
             return self._forbid() if role != "ceo" else self._json(api_finance())
         if path == "/api/cashflow":
