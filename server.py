@@ -5861,6 +5861,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role not in APPROVER_ROLES else self._json(api_editors(user))
         if path == "/api/audit":
             return self._forbid() if role not in ADMIN_ROLES else self._json(api_audit())
+        if path == "/api/debug/scenarist-scripts":
+            if role != "ceo":
+                return self._forbid()
+            conn = get_db()
+            rows = [dict(r) for r in conn.execute(
+                "SELECT id, author, project, title, amount, client_amount, client_paid, status, sdate "
+                "FROM scenarist_scripts ORDER BY id DESC").fetchall()]
+            conn.close()
+            return self._json(rows)
         if path == "/api/finance":
             return self._forbid() if role != "ceo" else self._json(api_finance())
         if path == "/api/cashflow":
