@@ -257,7 +257,7 @@ LEADERSHIP = {
 #  usd  — dollarda (kursda so'mga aylanadi)
 #  flags — dinamik qismlar: lead(rahbarlik), operator, scenarist, montaj, studio_bonus
 SALARY = {
-    "Dilshod Khamraev": {"title": "CEO", "usd": {"CEO maosh": 500}},
+    "Dilshod Khamraev": {"title": "CEO", "som": {"CEO maosh": 16000000}},
     "Gulmira": {"title": "Kadr Studio rahbari",
                 "som": {"Fiksa": 2000000, "Intizom": 500000, "Operatsion boshqaruv": 500000},
                 "lead": True, "close_link": "Operatsion boshqaruv"},
