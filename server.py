@@ -6006,6 +6006,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_cash_expense(user, b))
         if path == "/api/cash/close":
             return self._json(api_cash_close(user, b))
+        if path == "/api/debug/cash-unclose":
+            if r != "ceo":
+                return self._forbid()
+            day = b.get("date") or ""
+            if not day:
+                return self._json({"error": "date kerak"}, 400)
+            conn = get_db()
+            conn.execute("DELETE FROM daily_finance WHERE fdate=?", (day,))
+            log_audit(conn, user["name"], "kun yopishni bekor qildi (xato yopish tuzatildi)", day)
+            conn.commit()
+            conn.close()
+            return self._json({"ok": True, "date": day})
         if path == "/api/playbooks":
             return self._json(api_playbook_save(user, b))
         if path == "/api/onboarding":
