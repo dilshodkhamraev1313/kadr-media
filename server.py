@@ -5886,7 +5886,7 @@ class Handler(BaseHTTPRequestHandler):
                 "SELECT id, source_type, source_label, amount, received_by, method, pdate, note FROM income_ledger "
                 "WHERE CAST(pdate AS TEXT) LIKE ? ORDER BY id", (like,)).fetchall()]
             studio_rows = [dict(r) for r in conn.execute(
-                "SELECT id, amount, category, note, edate FROM studio_expenses WHERE CAST(edate AS TEXT) LIKE ? ORDER BY id",
+                "SELECT id, amount, name, note, edate FROM studio_expenses WHERE CAST(edate AS TEXT) LIKE ? ORDER BY id",
                 (like,)).fetchall()]
             pay_rows = [dict(r) for r in conn.execute(
                 "SELECT id, editor, amount, method, paid_from, pdate FROM payments WHERE CAST(pdate AS TEXT) LIKE ? ORDER BY id",
