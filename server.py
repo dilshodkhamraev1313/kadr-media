@@ -2779,6 +2779,46 @@ def api_cash_expense_delete(user, eid):
     return {"ok": True}
 
 
+def api_cash_close_no_photo(user, b):
+    """VAQTINCHALIK (bir martalik) — CEO aniq so'ragan holatda rasm dalilisiz
+    kunni yopish. Odatdagi api_cash_close bilan bir xil, faqat rasm talabi
+    yo'q. Faqat CEO'ning o'zi, o'zi tasdiqlagan holatda ishlatiladi."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    day = b.get("date") or uz_today().isoformat()
+
+    def iv(k):
+        try:
+            return int(b.get(k) or 0)
+        except (ValueError, TypeError):
+            return 0
+    cash_counted = iv("cash_counted")
+    card_balance = iv("card_balance")
+    conn = get_db()
+    income, expense, br = _cash_sums(conn, day)
+    last = conn.execute("SELECT actual FROM daily_finance WHERE fdate<? ORDER BY fdate DESC, id DESC LIMIT 1", (day,)).fetchone()
+    opening = (last["actual"] if last else 0) or 0
+    actual = cash_counted + card_balance
+    expected = opening + income - expense
+    diff = actual - expected
+    note = (b.get("note") or "").strip()
+    ex = conn.execute("SELECT id FROM daily_finance WHERE fdate=?", (day,)).fetchone()
+    if ex:
+        conn.execute("""UPDATE daily_finance SET opening=?, income=?, expense=?, expected=?, cash_counted=?,
+            card_balance=?, actual=?, diff=?, note=?, closed_by=?, closed_at=? WHERE id=?""",
+            (opening, income, expense, expected, cash_counted, card_balance, actual, diff, note, user["name"], now_local(), ex["id"]))
+    else:
+        conn.execute("""INSERT INTO daily_finance (fdate, opening, income, expense, expected, cash_counted,
+            card_balance, actual, diff, note, closed_by, closed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (day, opening, income, expense, expected, cash_counted, card_balance, actual, diff, note, user["name"], now_local()))
+    log_audit(conn, user["name"], "kun moliya yopdi (rasmsiz, CEO tasdig'i bilan istisno)",
+              f"{day} · haqiqiy {actual} · farq {diff}")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "date": day, "opening": opening, "income": income, "expense": expense,
+            "expected": expected, "actual": actual, "diff": diff}
+
+
 def api_cash_close(user, b):
     """Kun moliya yopish — naqt sanog'i + karta balansi + rasm dalil → kutilgan bilan solishtiradi."""
     if not can_cash(user):
@@ -6006,6 +6046,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_cash_expense(user, b))
         if path == "/api/cash/close":
             return self._json(api_cash_close(user, b))
+        if path == "/api/debug/cash-close-no-photo":
+            return self._json(api_cash_close_no_photo(user, b))
         if path == "/api/playbooks":
             return self._json(api_playbook_save(user, b))
         if path == "/api/onboarding":
