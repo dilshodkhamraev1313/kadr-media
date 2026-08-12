@@ -5871,30 +5871,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role not in APPROVER_ROLES else self._json(api_editors(user))
         if path == "/api/audit":
             return self._forbid() if role not in ADMIN_ROLES else self._json(api_audit())
-        if path == "/api/debug/day-detail":
-            if role != "ceo":
-                return self._forbid()
-            qs = parse_qs(urlparse(self.path).query or "")
-            d = (qs.get("date") or [""])[0]
-            if not d:
-                return self._json({"error": "date kerak"}, 400)
-            conn = get_db()
-            like = d + "%"
-            income_rows = [dict(r) for r in conn.execute(
-                "SELECT id, source_type, source_label, amount, received_by, method, pdate, note FROM income_ledger "
-                "WHERE CAST(pdate AS TEXT) LIKE ? ORDER BY id", (like,)).fetchall()]
-            studio_rows = [dict(r) for r in conn.execute(
-                "SELECT id, amount, name, note, edate FROM studio_expenses WHERE CAST(edate AS TEXT) LIKE ? ORDER BY id",
-                (like,)).fetchall()]
-            pay_rows = [dict(r) for r in conn.execute(
-                "SELECT id, editor, amount, method, paid_from, pdate FROM payments WHERE CAST(pdate AS TEXT) LIKE ? ORDER BY id",
-                (like,)).fetchall()]
-            cash_rows = [dict(r) for r in conn.execute(
-                "SELECT id, amount, category, paid_to, method, paid_by, note, edate FROM cash_expense WHERE CAST(edate AS TEXT) LIKE ? ORDER BY id",
-                (like,)).fetchall()]
-            conn.close()
-            return self._json({"income_ledger": income_rows, "studio_expenses": studio_rows,
-                                "payments": pay_rows, "cash_expense": cash_rows})
         if path == "/api/finance":
             return self._forbid() if role != "ceo" else self._json(api_finance())
         if path == "/api/cashflow":
