@@ -2871,6 +2871,29 @@ def api_cash_day(user, date):
     }
 
 
+def api_cash_day_detail(day):
+    """Kassa — berilgan kunning har bir kirim/chiqim yozuvi alohida-alohida
+    (naqt/plastik va yozib qo'yilgan bo'lsa qaysi ustundan ekani bilan) —
+    kun yopilganda haqiqiy pul mos kelmasa, sababini topish uchun."""
+    conn = get_db()
+    like = day + "%"
+    income_rows = [dict(r) for r in conn.execute(
+        "SELECT id, source_type, source_label, amount, received_by, method, pdate, note FROM income_ledger "
+        "WHERE CAST(pdate AS TEXT) LIKE ? ORDER BY id", (like,)).fetchall()]
+    studio_rows = [dict(r) for r in conn.execute(
+        "SELECT id, amount, name, note, edate FROM studio_expenses WHERE CAST(edate AS TEXT) LIKE ? ORDER BY id",
+        (like,)).fetchall()]
+    pay_rows = [dict(r) for r in conn.execute(
+        "SELECT id, editor, amount, method, paid_from, pdate FROM payments WHERE CAST(pdate AS TEXT) LIKE ? ORDER BY id",
+        (like,)).fetchall()]
+    cash_rows = [dict(r) for r in conn.execute(
+        "SELECT id, amount, category, paid_to, method, paid_by, note, edate FROM cash_expense WHERE CAST(edate AS TEXT) LIKE ? ORDER BY id",
+        (like,)).fetchall()]
+    conn.close()
+    return {"income_ledger": income_rows, "studio_expenses": studio_rows,
+            "payments": pay_rows, "cash_expense": cash_rows}
+
+
 def api_cash_history(user):
     """Kassa — oxirgi kunlik yopishlar (farq bilan). Har biri uchun JORIY (live)
     tushum/xarajatni ham qayta hisoblab, saqlangan qiymat bilan solishtiradi —
@@ -5871,6 +5894,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role not in APPROVER_ROLES else self._json(api_editors(user))
         if path == "/api/audit":
             return self._forbid() if role not in ADMIN_ROLES else self._json(api_audit())
+        if path == "/api/cash/day-detail":
+            if not can_cash(user):
+                return self._forbid()
+            qs = parse_qs(urlparse(self.path).query or "")
+            d = (qs.get("date") or [""])[0]
+            if not d:
+                return self._json({"error": "date kerak"}, 400)
+            return self._json(api_cash_day_detail(d))
         if path == "/api/finance":
             return self._forbid() if role != "ceo" else self._json(api_finance())
         if path == "/api/cashflow":
