@@ -503,7 +503,7 @@ async function viewToday() {
     rem.push(`<div class="today-rem"><span>🎓 Kirish qo'llanmangizni o'rganing — ${ob.done || 0}/${ob.total} bajarildi</span><button class="mini-btn blue" id="t_ombor">Qo'llanma</button></div>`);
   }
   if (att.amAttend && att.me && !att.me.todayIn) {
-    rem.push(`<div class="today-rem"><span>⏰ Bugun kelganingizni belgilamagansiz</span><button class="mini-btn green" id="t_checkin">✋ Keldim</button></div>`);
+    rem.push(`<div class="today-rem"><span>⏰ Bugun hali "ish vaqti" guruhiga dumaloq video (kruzhok) tashlamagansiz</span></div>`);
   }
   if (dc.amDaily && !dc.closedToday) {
     rem.push(`<div class="today-rem"><span>🌙 Bugun kun sarhisobini yopmagansiz</span><button class="mini-btn blue" id="t_close">Kunni yopish</button></div>`);
@@ -536,8 +536,6 @@ async function viewToday() {
       `</div></div>`;
   }
   $('#content').innerHTML = html;
-  const ci = $('#t_checkin');
-  if (ci) ci.addEventListener('click', async () => { await api('/api/attendance/checkin', { method: 'POST', body: '{}' }); toast('🌅 Belgilandi'); render(); });
   const fab = $('#t_filearchive');
   if (fab) fab.addEventListener('click', async () => { await api('/api/file-archive/mark', { method: 'POST', body: '{}' }); toast('📁 Belgilandi'); render(); });
   const cl = $('#t_close');
@@ -1928,7 +1926,7 @@ async function viewDaily() {
       <p class="muted" style="margin-bottom:10px">Oy davomida SMM'ini (persona, caption, oblojka, joylash) tugatgan loyihalarni belgilang — SMM daromadingiz shunga qarab hisoblanadi.</p>
       <div class="smm-list">${items}</div></div>`;
   }
-  // --- Kelish (ertalabki kruzhok / Keldim) ---
+  // --- Kelish (ertalabki kruzhok — Telegram video_note orqali avtomatik) ---
   if (att.amAttend && att.me) {
     html += await attendanceCardHTML();
   }
@@ -2108,11 +2106,6 @@ async function viewDaily() {
     if (res.error) { toast(res.error); return; }
     toast(res.done ? '✅ Bajarildi deb belgilandi' : 'Belgi olib tashlandi'); render();
   }));
-  const ci = $('#checkin_btn');
-  if (ci) ci.addEventListener('click', async () => {
-    const res = await api('/api/attendance/checkin', { method: 'POST', body: '{}' });
-    toast(res.on_time ? '🌅 O\'z vaqtida belgilandi' : '🟡 Kech belgilandi'); render();
-  });
   const hb = $('#hook_btn');
   if (hb) hb.addEventListener('click', async () => {
     toast('Bot ulanmoqda...');
@@ -2499,7 +2492,7 @@ function editorCard(e) {
 // ============================================================
 //  CABINET (montajchining o'zi)
 // ============================================================
-// Kelish kartasi (kruzhok/Keldim) — kabinetlarda ishlatiladi
+// Kelish kartasi (Telegram kruzhok video orqali avtomatik) — kabinetlarda ishlatiladi
 async function attendanceCardHTML() {
   const att = await api('/api/attendance').catch(() => ({}));
   if (!att.amAttend || !att.me) return '';
@@ -2523,7 +2516,7 @@ async function attendanceCardHTML() {
     <div class="rh-prog">
       <div class="muted">Shu oy o'z vaqtida: <b style="color:var(--green)">${m.onTimeDays}</b> · kech: <b style="color:var(--orange)">${m.lateDays}</b> · kelmadi: <b style="color:var(--red)">${m.absentDays}</b>${m.otpuskDays ? ` · otpuskda: <b>${m.otpuskDays}</b>` : ''} · davomat: <b>${m.pct}%</b></div>
       <div class="muted">Intizom: <b>${money(m.intizom)}</b>${m.attendancePenalty ? ` · <span style="color:var(--red)">davomat jarimasi: −${money(m.attendancePenalty)}</span>` : ''}</div>
-      ${!inn ? `<button class="btn-save" id="checkin_btn" style="max-width:220px;margin-top:10px">✋ Keldim</button>` : ''}
+      ${!inn ? `<div class="muted" style="margin-top:6px">📹 "ish vaqti" guruhiga dumaloq video (kruzhok) tashlang — davomat shundan avtomatik belgilanadi</div>` : ''}
       ${otpuskLine}
     </div></div>`;
 }
@@ -2546,13 +2539,6 @@ function openOtpuskRequestModal() {
 function bindOtpusk() {
   const b = $('#otpusk_req_btn');
   if (b) b.addEventListener('click', openOtpuskRequestModal);
-}
-function bindCheckin() {
-  const ci = $('#checkin_btn');
-  if (ci) ci.addEventListener('click', async () => {
-    const res = await api('/api/attendance/checkin', { method: 'POST', body: '{}' });
-    toast(res.on_time ? '🌅 O\'z vaqtida belgilandi' : '🟡 Kech belgilandi'); render();
-  });
 }
 
 async function viewCabinet() {
@@ -2598,7 +2584,6 @@ async function viewCabinet() {
       <div class="panel"><h3>💸 To'lov tarixim</h3>${pays}</div>
     </div>`;
   bindVideoCards();
-  bindCheckin();
   bindOtpusk();
 }
 

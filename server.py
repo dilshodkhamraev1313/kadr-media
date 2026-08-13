@@ -5950,19 +5950,6 @@ def api_telegram_webhook(update):
     return {"ok": True}
 
 
-def api_checkin(user):
-    """Qo'lda 'Keldim' (zaxira) — bot ishlamay qolsa."""
-    if not is_attend_user(user):
-        return {"error": "Ruxsat yo'q"}
-    conn = get_db()
-    rec = _record_attendance(conn, user["name"], "manual")
-    conn.commit()
-    conn.close()
-    if not rec:
-        return {"ok": True, "already": True}
-    return {"ok": True, "time": rec["time"], "on_time": bool(rec["on_time"])}
-
-
 def _attend_month(conn, name, today):
     ym = today.strftime("%Y-%m")
     rows = {r["adate"]: dict(r) for r in conn.execute(
@@ -6424,10 +6411,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_checklist_delete(user, b))
         if path == "/api/tasks/assign":
             return self._json(api_assign_task(user, b))
-        if path == "/api/attendance/checkin":
-            if not is_attend_user(user):
-                return self._forbid()
-            return self._json(api_checkin(user))
         if path == "/api/smm/toggle":
             if not is_smm_user(user):
                 return self._forbid()
