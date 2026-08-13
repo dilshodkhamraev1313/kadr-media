@@ -244,6 +244,14 @@ LATE_QC_PER_DAY = 10000       # Said sifat nazoratini kechiktirgan har kun (1 ku
 QC_GRACE_DAYS = 1             # montaj qilingandan keyin sifat nazorati uchun muhlat
 PENALTY_CAP_PCT = 0.20        # jarima fiksaning shu ulushidan oshmasin (maoshni vayron qilmaslik)
 
+# Davomat (check-in) intizomi — kechikish jarimasi, mukammal davomat bonusi, otpusk.
+LATENESS_FREE_LIMIT = 3           # oyda shuncha marta kechikish jarimasiz
+LATENESS_PENALTY_PER_DAY = 20000  # 4-martadan boshlab har kechikkan kun uchun qo'shimcha jarima
+PERFECT_ATTENDANCE_BONUS = 500000  # butun oy (yakshanbadan tashqari) 100% vaqtida kelsa bonus
+OTPUSK_DAYS = 5                   # bir martalik otpusk davomiyligi (kun)
+OTPUSK_COOLDOWN_MONTHS = 2        # otpuskdan otpuskgacha eng kam oraliq
+INACTIVITY_DAYS = 3               # shuncha kun harakatsiz loyiha "stale" deb belgilanadi
+
 # Har xodim rahbarlik qiladigan loyihalar (nomi projects jadvalidagi bilan mos).
 LEADERSHIP = {
     "Said": ["Namuna mebel", "Nova school", "Nodirbek Primqulov (arab tili)"],
@@ -688,6 +696,10 @@ def init_db():
         id {pk}, person TEXT, fdate TEXT, created_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS penalty_waiver (
         id {pk}, person TEXT, ym TEXT, created_by TEXT, created_at {ts})""")
+    # OTPUSK — har 2 oyda 1 marta, 5 kunlik, jarimasiz ta'til so'rovi/tasdiqi
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS otpusk_requests (
+        id {pk}, person TEXT, start_date TEXT, end_date TEXT, status TEXT DEFAULT 'pending',
+        note TEXT DEFAULT '', requested_at {ts}, decided_at TEXT, decided_by TEXT)""")
     # OMBOR — rol qo'llanmalari (bilim bazasi) + onboarding
     conn.execute(f"""CREATE TABLE IF NOT EXISTS playbooks (
         id {pk}, role_key TEXT, title TEXT, sections TEXT DEFAULT '[]',
@@ -780,6 +792,8 @@ def init_db():
         add_column_if_missing(conn, "projects", c, "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "projects", "prev_period", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "projects", "prev_reset_at", "TEXT DEFAULT ''")
+    # Loyiha 3+ kun harakatsiz qolsa — bir martalik Telegram ogohlantirish (spam qilmaslik uchun flag)
+    add_column_if_missing(conn, "projects", "inactivity_notified", "INTEGER DEFAULT 0")
     _seed_checklist(conn)
     _seed_playbooks(conn)
     _backfill_studio_ledger(conn)
@@ -946,11 +960,20 @@ def api_projects():
         "SELECT * FROM projects ORDER BY deadline IS NULL, deadline ASC"
     ).fetchall()
     debts = _script_debts(conn)
+    # "Jim qolgan" (harakatsiz) — oxirgi marta biror bosqich "tayyor" bo'lgan vaqt
+    # (Nazorat markazidagi "silentProjects" bilan bir xil manba/mantiq).
+    act = {r["project_name"]: r["last"] for r in conn.execute(
+        "SELECT project_name, MAX(created_at) AS last FROM activity GROUP BY project_name").fetchall()}
+    today = uz_today()
     conn.close()
     out = []
     for r in rows:
         p = decorate(r)
         p["scriptDebt"] = debts.get((p["name"] or "").strip().lower(), 0)
+        last_d = _parse_dt(act.get(p["name"]))
+        inactive_days = (today - last_d.date()).days if last_d else None
+        p["inactiveDays"] = inactive_days
+        p["isStale"] = (not p["fullyDone"]) and inactive_days is not None and inactive_days >= INACTIVITY_DAYS
         out.append(p)
     return out
 
@@ -1122,6 +1145,7 @@ def api_update_project(pid, b):
                 "INSERT INTO activity (project_id,project_name,stage,status,actor,created_at) VALUES (?,?,?,?,?,?)",
                 (pid, merged["name"], s, "tayyor", actor, now_local()),
             )
+            conn.execute("UPDATE projects SET inactivity_notified=0 WHERE id=?", (pid,))
 
     # Yangi muammo qo'shildimi?
     new_problem = (
@@ -4185,6 +4209,54 @@ def _lateness_penalty(conn, name, today):
     return capped, {"raw": raw, "cap": cap, "items": items}
 
 
+def _attendance_penalty(conn, name, today):
+    """Davomat (check-in) kechikish jarimasi — oyda LATENESS_FREE_LIMIT martagacha
+    kechikish jarimasiz, 4-martadan boshlab HAR bir kechikkan kun uchun qo'shimcha
+    LATENESS_PENALTY_PER_DAY (bu — o'sha kunning yo'qolgan Intizomidan TASHQARI)."""
+    if name not in ATTENDANCE_USERS:
+        return 0, []
+    d = _month_attendance_days(conn, name, today)
+    extra = max(len(d["late"]) - LATENESS_FREE_LIMIT, 0)
+    return extra * LATENESS_PENALTY_PER_DAY, d["late"]
+
+
+def _perfect_attendance_bonus(conn, name, today):
+    """Butun oy (yakshanbadan tashqari, bugungacha) bironta ham kech/kelmagan
+    kun bo'lmasa — mukammal davomat bonusi (otpusk kunlari halaqit bermaydi)."""
+    if name not in ATTENDANCE_USERS:
+        return 0
+    d = _month_attendance_days(conn, name, today)
+    if d["late"] or d["absent"]:
+        return 0
+    if not d["on_time"] and not d["otpusk"]:
+        return 0
+    return PERFECT_ATTENDANCE_BONUS
+
+
+def _last_approved_otpusk_end(conn, person):
+    """Shu xodimning oxirgi TASDIQLANGAN otpuskining oxirgi kuni (yoki None)."""
+    row = conn.execute(
+        "SELECT end_date FROM otpusk_requests WHERE person=? AND status='approved' "
+        "ORDER BY end_date DESC LIMIT 1", (person,)).fetchone()
+    if not row:
+        return None
+    try:
+        return datetime.date.fromisoformat(row["end_date"])
+    except (ValueError, TypeError):
+        return None
+
+
+def _otpusk_eligible(conn, person, today=None):
+    """Xodim yangi otpusk so'rashi/CEO tasdiqlashi mumkinmi — oxirgi tasdiqlangan
+    otpuskdan OTPUSK_COOLDOWN_MONTHS oy o'tganmi. Qaytaradi: (mumkinmi, keyingi sana)."""
+    today = today or uz_today()
+    last_end = _last_approved_otpusk_end(conn, person)
+    if not last_end:
+        return True, None
+    next_ok = last_end + datetime.timedelta(days=OTPUSK_COOLDOWN_MONTHS * 30)
+    return today >= next_ok, next_ok
+
+
 def _stories_earn(conn, name, ym):
     """Kunlik Stories puli: faqat 'Stories joylandi' checklist punkti haqiqatan
     bajarilgan (done=1) kunlar sanaladi — 0 dan boshlab, real ishga qarab."""
@@ -4331,6 +4403,16 @@ def compute_salary(conn, name, rate, ym=None):
         else:
             comps.append({"label": f"Kechikish jarimasi ({len(pdet['items'])} ta ish)", "amount": -pen,
                           "kind": "penalty", "detail": pdet})
+    # Davomat (check-in) kechikish jarimasi — oyda 3 martadan keyin har kuni −20 000
+    att_pen, att_late = _attendance_penalty(conn, name, today)
+    if att_pen > 0:
+        comps.append({"label": f"Davomat jarimasi ({len(att_late)} marta kech, {LATENESS_FREE_LIMIT} tagacha jarimasiz)",
+                      "amount": -att_pen, "kind": "penalty"})
+    # Mukammal davomat bonusi — butun oy 100% vaqtida kelsa
+    perfect_bonus = _perfect_attendance_bonus(conn, name, today)
+    if perfect_bonus:
+        comps.append({"label": "Mukammal davomat bonusi (bu oy 100% vaqtida)",
+                      "amount": perfect_bonus, "kind": "auto"})
     total = sum(c["amount"] for c in comps)
     paid = _paid_to(conn, name, ym)
     return {"name": name, "title": cfg.get("title", ""), "components": comps,
@@ -4400,6 +4482,97 @@ def api_waive_penalty(user, b):
     conn.commit()
     conn.close()
     return {"ok": True, "person": person, "waived": waived}
+
+
+# ------------------------------------------------------------
+#  OTPUSK — har 2 oyda 1 marta, 5 kunlik, jarimasiz ta'til
+# ------------------------------------------------------------
+def api_request_otpusk(user, b):
+    """Xodim — o'ziga OTPUSK_DAYS kunlik otpusk so'raydi (start_date'dan boshlab).
+    2 oylik cooldown o'tmagan bo'lsa rad etiladi (CEOga ham xabar bormaydi —
+    xodimning o'zi bunday so'rov yubora olmasligini ko'radi)."""
+    if user["name"] not in ATTENDANCE_USERS:
+        return {"error": "Sizga tegishli emas"}, 403
+    start = (b.get("start_date") or "").strip()
+    if not start:
+        return {"error": "Boshlanish sanasi kerak"}, 400
+    try:
+        sd = datetime.date.fromisoformat(start)
+    except (ValueError, TypeError):
+        return {"error": "Sana noto'g'ri"}, 400
+    ed = sd + datetime.timedelta(days=OTPUSK_DAYS - 1)
+    conn = get_db()
+    pending = conn.execute(
+        "SELECT id FROM otpusk_requests WHERE person=? AND status='pending'", (user["name"],)).fetchone()
+    if pending:
+        conn.close()
+        return {"error": "Sizda allaqachon ko'rib chiqilayotgan otpusk so'rovi bor"}, 400
+    elig, next_ok = _otpusk_eligible(conn, user["name"])
+    if not elig:
+        conn.close()
+        return {"error": f"Hali otpusk olish vaqti kelmagan — keyingi imkoniyat: {next_ok.isoformat()}"}, 400
+    conn.execute(
+        "INSERT INTO otpusk_requests (person, start_date, end_date, status, note, requested_at) VALUES (?,?,?,?,?,?)",
+        (user["name"], sd.isoformat(), ed.isoformat(), "pending", (b.get("note") or "").strip(), now_local()))
+    log_audit(conn, user["name"], "otpusk so'radi", f"{sd.isoformat()} — {ed.isoformat()}")
+    conn.commit()
+    conn.close()
+    send_telegram(
+        f"🏖 <b>Otpusk so'rovi</b>\n👤 {user['name']}\n"
+        f"📅 {sd.isoformat()} — {ed.isoformat()} ({OTPUSK_DAYS} kun)\n\nCEO tasdiqlashi kerak."
+    )
+    return {"ok": True, "start_date": sd.isoformat(), "end_date": ed.isoformat()}
+
+
+def api_otpusk_list(user):
+    """CEO — barcha otpusk so'rovlari; xodim — faqat o'zinikini ko'radi."""
+    conn = get_db()
+    if user["role"] == "ceo":
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM otpusk_requests ORDER BY requested_at DESC").fetchall()]
+    else:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM otpusk_requests WHERE person=? ORDER BY requested_at DESC", (user["name"],)).fetchall()]
+    elig, next_ok = _otpusk_eligible(conn, user["name"]) if user["name"] in ATTENDANCE_USERS else (False, None)
+    conn.close()
+    return {"requests": rows, "eligible": elig, "nextEligible": next_ok.isoformat() if next_ok else None}
+
+
+def api_otpusk_decide(user, b):
+    """CEO — otpusk so'rovini tasdiqlaydi/rad etadi. Tasdiqlashda 2 oylik
+    cooldown YANA tekshiriladi (himoya — vaqt o'tib ketgan bo'lishi mumkin)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    rid = b.get("id")
+    decision = (b.get("decision") or "").strip()
+    if decision not in ("approved", "rejected"):
+        return {"error": "decision noto'g'ri"}, 400
+    conn = get_db()
+    row = conn.execute("SELECT * FROM otpusk_requests WHERE id=?", (rid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if row["status"] != "pending":
+        conn.close()
+        return {"error": "Bu so'rov allaqachon ko'rib chiqilgan"}, 400
+    if decision == "approved":
+        elig, next_ok = _otpusk_eligible(conn, row["person"])
+        if not elig:
+            conn.close()
+            return {"error": f"Hali otpusk olish vaqti kelmagan — keyingi imkoniyat: {next_ok.isoformat()}"}, 400
+    conn.execute(
+        "UPDATE otpusk_requests SET status=?, decided_at=?, decided_by=? WHERE id=?",
+        (decision, now_local(), user["name"], rid))
+    log_audit(conn, user["name"], "otpusk so'rovi " + ("tasdiqlandi" if decision == "approved" else "rad etildi"),
+              f"{row['person']} · {row['start_date']}—{row['end_date']}")
+    conn.commit()
+    conn.close()
+    send_telegram(
+        (f"✅ <b>Otpusk tasdiqlandi</b>\n👤 {row['person']}\n📅 {row['start_date']} — {row['end_date']}"
+         if decision == "approved" else
+         f"❌ <b>Otpusk rad etildi</b>\n👤 {row['person']}\n📅 {row['start_date']} — {row['end_date']}")
+    )
+    return {"ok": True, "decision": decision}
 
 
 # ------------------------------------------------------------
@@ -4729,8 +4902,11 @@ def api_leaderboard(user):
                             "AND status IN ('qabul_qilindi','joylandi')", (mo + "%",)),
             "posted": cnt("SELECT COUNT(*) AS n FROM videos WHERE posted_at LIKE ? AND status='joylandi'", (mo + "%",)),
         })
+    attendance = [_attend_month(conn, nm, uz_today()) for nm in ATTENDANCE_USERS]
+    attendance.sort(key=lambda x: -x["pct"])
     conn.close()
-    return {"month": ym, "montaj": montaj, "scenarists": scen, "operators": ops, "trend": trend}
+    return {"month": ym, "montaj": montaj, "scenarists": scen, "operators": ops, "trend": trend,
+            "attendance": attendance}
 
 
 # ------------------------------------------------------------
@@ -5371,6 +5547,60 @@ def api_cron_daily_check():
     return {"ok": True, "notClosed": not_closed}
 
 
+def api_cron_kassa_check():
+    """21:00da tashqi cron chaqiradi — bugungi Kassa hali yopilmagan bo'lsa
+    guruhga eslatma; kechagi Kassa ham hali yopilmagan bo'lsa (kechagi eslatma
+    e'tiborsiz qoldirilgan) — CEOga alohida, kuchliroq ogohlantirish."""
+    today = uz_today()
+    if today.weekday() == 6:
+        return {"ok": True, "skipped": "yakshanba"}
+    conn = get_db()
+    today_closed = bool(conn.execute(
+        "SELECT id FROM daily_finance WHERE fdate=?", (today.isoformat(),)).fetchone())
+    yesterday = today - datetime.timedelta(days=1)
+    yesterday_closed = True
+    if yesterday.weekday() != 6:
+        yesterday_closed = bool(conn.execute(
+            "SELECT id FROM daily_finance WHERE fdate=?", (yesterday.isoformat(),)).fetchone())
+    conn.close()
+    if not today_closed:
+        send_telegram(
+            f"💰 <b>Bugungi Kassa hali yopilmagan!</b>\n📅 {today.isoformat()}\n\n"
+            "Iltimos, kun tugashidan oldin Kassani yoping (naqt+karta sanog'i + rasm dalil bilan)."
+        )
+    if not yesterday_closed:
+        send_telegram(
+            f"🚨 <b>DIQQAT — Dilshod Khamraev</b>\nKecha ({yesterday.isoformat()}) Kassa hali ham yopilmagan!\n\n"
+            "Bu kun harakatlari hali hisoblanmagan holda qolyapti — iltimos, tezroq yoping."
+        )
+    return {"ok": True, "todayClosed": today_closed, "yesterdayClosed": yesterday_closed}
+
+
+def api_cron_inactive_projects():
+    """Tashqi cron (har kuni ertalab) chaqiradi — INACTIVITY_DAYS+ kun harakatsiz
+    (hali bitmagan, hali ogohlantirilmagan) loyihalar uchun bir martalik guruh
+    xabari yuboradi. Loyiha kartasining o'zida (isStale) alohida, har doim
+    ko'rinadi — bu faqat Telegram push qismi."""
+    conn = get_db()
+    stale = [p for p in api_projects() if p.get("isStale")]
+    notified = []
+    for p in stale:
+        row = conn.execute("SELECT inactivity_notified FROM projects WHERE id=?", (p["id"],)).fetchone()
+        if row and row["inactivity_notified"]:
+            continue
+        conn.execute("UPDATE projects SET inactivity_notified=1 WHERE id=?", (p["id"],))
+        notified.append(p["name"])
+        send_telegram(
+            f"🚨 <b>Loyiha harakatsiz qolyapti!</b>\n📁 {p['name']}\n"
+            f"👤 Mas'ul: {p.get('responsible') or '—'}\n"
+            f"⏳ Oxirgi harakat: {p.get('inactiveDays')}+ kun oldin\n\n"
+            "Iltimos, holatini tekshiring."
+        )
+    conn.commit()
+    conn.close()
+    return {"ok": True, "notified": notified}
+
+
 def api_cron_deadline_check():
     """Har ~soatda tashqi cron chaqiradi — montaj muddati yaqinlashgan/o'tgan
     videolar uchun bir marta Telegram eslatmasi yuboradi (deadline_reminded flag)."""
@@ -5552,39 +5782,66 @@ def is_attend_user(user):
     return bool(user) and user["name"] in ATTENDANCE_USERS
 
 
-def _ontime_days(conn, name, today):
-    """Shu oyda o'z vaqtida kelgan ish kunlari (yakshanba hisobga olinmaydi)."""
-    ym = today.strftime("%Y-%m")
+def _otpusk_dates_set(conn, person, ym):
+    """Shu oyga to'g'ri keladigan, CEO TASDIQLAGAN otpusk kunlari (ISO sana to'plami)."""
     rows = conn.execute(
-        "SELECT adate FROM attendance WHERE person=? AND adate LIKE ? AND on_time=1",
-        (name, ym + "%"),
-    ).fetchall()
-    cnt = 0
+        "SELECT start_date, end_date FROM otpusk_requests WHERE person=? AND status='approved'",
+        (person,)).fetchall()
+    out = set()
     for r in rows:
         try:
-            if datetime.date.fromisoformat(r["adate"]).weekday() != 6:  # yakshanba emas
-                cnt += 1
+            sd = datetime.date.fromisoformat(r["start_date"])
+            ed = datetime.date.fromisoformat(r["end_date"])
         except (ValueError, TypeError):
-            cnt += 1
-    return cnt
+            continue
+        d = sd
+        while d <= ed:
+            if d.strftime("%Y-%m") == ym:
+                out.add(d.isoformat())
+            d += datetime.timedelta(days=1)
+    return out
+
+
+def _month_attendance_days(conn, name, today):
+    """Oy boshidan `today`gacha (yakshanbasiz) har bir ish kunini toifalaydi:
+    o'z vaqtida / kech / kelmadi / otpuskda. Tasdiqlangan otpusk kunlari —
+    checkin bo'lmasa ham — har doim 'on_time' deb hisoblanadi (jarimasiz,
+    Fiksa/Intizomga ham zarar keltirmaydi), lekin alohida ham sanaladi."""
+    ym = today.strftime("%Y-%m")
+    otpusk = _otpusk_dates_set(conn, name, ym)
+    first = datetime.date(today.year, today.month, 1)
+    rows = {r["adate"]: dict(r) for r in conn.execute(
+        "SELECT * FROM attendance WHERE person=? AND adate LIKE ?", (name, ym + "%")).fetchall()}
+    on_time, late, absent, otp = [], [], [], []
+    d = first
+    while d <= today:
+        if d.weekday() != 6:
+            iso = d.isoformat()
+            if iso in otpusk:
+                otp.append(iso)
+            else:
+                r = rows.get(iso)
+                if not r:
+                    absent.append(iso)
+                elif r["on_time"]:
+                    on_time.append(iso)
+                else:
+                    late.append(iso)
+        d += datetime.timedelta(days=1)
+    return {"on_time": on_time, "late": late, "absent": absent, "otpusk": otp}
+
+
+def _ontime_days(conn, name, today):
+    """Shu oyda o'z vaqtida kelgan ish kunlari soni (otpusk kunlari ham shu ichida — jarimasiz)."""
+    d = _month_attendance_days(conn, name, today)
+    return len(d["on_time"]) + len(d["otpusk"])
 
 
 def _attended_days(conn, name, today):
     """Shu oyda ishga kelgan kunlar soni (vaqtidan qat'i nazar — Fiksa uchun,
-    Intizomdan farqli, kech kelgan kun ham hisobga olinadi)."""
-    ym = today.strftime("%Y-%m")
-    rows = conn.execute(
-        "SELECT adate FROM attendance WHERE person=? AND adate LIKE ?",
-        (name, ym + "%"),
-    ).fetchall()
-    cnt = 0
-    for r in rows:
-        try:
-            if datetime.date.fromisoformat(r["adate"]).weekday() != 6:
-                cnt += 1
-        except (ValueError, TypeError):
-            cnt += 1
-    return cnt
+    Intizomdan farqli, kech kelgan kun ham hisobga olinadi; otpusk ham kiradi)."""
+    d = _month_attendance_days(conn, name, today)
+    return len(d["on_time"]) + len(d["late"]) + len(d["otpusk"])
 
 
 def _workdays_in_month(yy, mm):
@@ -5711,14 +5968,20 @@ def _attend_month(conn, name, today):
     rows = {r["adate"]: dict(r) for r in conn.execute(
         "SELECT * FROM attendance WHERE person=? AND adate LIKE ?", (name, ym + "%")).fetchall()}
     tstr = today.isoformat()
-    on_time = sum(1 for r in rows.values() if r["on_time"])
-    late = sum(1 for r in rows.values() if not r["on_time"])
     t = rows.get(tstr)
+    d = _month_attendance_days(conn, name, today)
+    on_time, late, absent, otpusk = len(d["on_time"]), len(d["late"]), len(d["absent"]), len(d["otpusk"])
+    denom = on_time + late + absent  # otpusk kunlari % hisobiga kirmaydi (jarimasiz)
+    pct = round(100 * on_time / denom) if denom else 100
+    intizom_days = _ontime_days(conn, name, today)  # otpusk ham shu ichida (to'lov uchun)
+    att_pen, _ = _attendance_penalty(conn, name, today)
     return {
-        "name": name, "onTimeDays": on_time, "lateDays": late,
+        "name": name, "onTimeDays": on_time, "lateDays": late, "absentDays": absent,
+        "otpuskDays": otpusk, "pct": pct,
         "todayIn": bool(t), "todayTime": (t["checkin_time"] if t else None),
         "todayOnTime": (bool(t["on_time"]) if t else None),
-        "intizom": min(on_time * INTIZOM_PER_DAY, INTIZOM_FULL),
+        "intizom": min(intizom_days * INTIZOM_PER_DAY, INTIZOM_FULL),
+        "attendancePenalty": att_pen,
     }
 
 
@@ -5847,6 +6110,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_telegram_digest())
         if path == "/api/cron/daily-check":
             return self._json(api_cron_daily_check())
+        if path == "/api/cron/kassa-check":
+            return self._json(api_cron_kassa_check())
+        if path == "/api/cron/inactive-projects":
+            return self._json(api_cron_inactive_projects())
         if path == "/api/cron/deadline-check":
             return self._json(api_cron_deadline_check())
         if path == "/api/cron/morning-digest":
@@ -5996,6 +6263,10 @@ class Handler(BaseHTTPRequestHandler):
             if not is_attend_user(user) and role != "ceo":
                 return self._forbid()
             return self._json(api_attendance(user))
+        if path == "/api/otpusk":
+            if not is_attend_user(user) and role != "ceo":
+                return self._forbid()
+            return self._json(api_otpusk_list(user))
         if path == "/api/smm":
             if not is_smm_user(user) and role != "ceo":
                 return self._forbid()
@@ -6048,6 +6319,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_set_video_project(user, b))
         if path == "/api/penalty/waive":
             return self._json(api_waive_penalty(user, b))
+        if path == "/api/otpusk/request":
+            return self._json(api_request_otpusk(user, b))
+        if path == "/api/otpusk/decide":
+            return self._json(api_otpusk_decide(user, b))
         if path == "/api/cash/expense":
             return self._json(api_cash_expense(user, b))
         if path == "/api/cash/close":

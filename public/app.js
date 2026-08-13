@@ -694,7 +694,11 @@ async function viewProjects() {
 function projectCard(p) {
   const badges = [];
   if (p.fullyDone) badges.push('<span class="badge done">✓ Tayyor</span>');
-  else { if (p.overdue) badges.push('<span class="badge overdue">⏱ Kechikkan</span>'); if (p.atRisk && !p.overdue) badges.push('<span class="badge risk">⚠ Xavf</span>'); }
+  else {
+    if (p.overdue) badges.push('<span class="badge overdue">⏱ Kechikkan</span>');
+    if (p.atRisk && !p.overdue) badges.push('<span class="badge risk">⚠ Xavf</span>');
+    if (p.isStale) badges.push(`<span class="badge risk">😴 ${p.inactiveDays} kun jim</span>`);
+  }
   const dl = !p.deadline ? 'Muddat yo\'q' : p.fullyDone ? 'Yakunlandi' : p.daysLeft < 0 ? `${Math.abs(p.daysLeft)} kun kechikdi` : p.daysLeft === 0 ? 'Bugun!' : p.daysLeft <= 2 ? `${p.daysLeft} kun qoldi` : fmtDate(p.deadline);
   const dlCls = (!p.fullyDone && p.deadline && p.daysLeft < 0) ? 'late' : (!p.fullyDone && p.daysLeft <= 2) ? 'soon' : '';
   const clickable = ['ceo', 'coordinator', 'lead'].includes(ME.role);
@@ -1902,6 +1906,11 @@ async function viewDaily() {
     api('/api/daily'), api('/api/attendance').catch(() => ({})), api('/api/smm').catch(() => ({})),
   ]);
   DATA.daily = d; DATA.attend = att; DATA.smm = smm;
+  if (att.overview && ME.role === 'ceo') {
+    const op = await api('/api/otpusk').catch(() => ({}));
+    DATA.otpuskAll = op.requests || [];
+    DATA.otpuskPending = DATA.otpuskAll.filter((r) => r.status === 'pending');
+  }
   let html = '';
   // --- Vazifa biriktirish (Dilshod / Xonzoda) ---
   if (d.canAssign) {
@@ -1921,24 +1930,16 @@ async function viewDaily() {
   }
   // --- Kelish (ertalabki kruzhok / Keldim) ---
   if (att.amAttend && att.me) {
-    const m = att.me;
-    const inn = m.todayIn;
-    html += `
-      <div class="rank-hero ${inn && m.todayOnTime ? 'rank-elite' : ''}" style="margin-bottom:16px">
-        <div class="rh-left"><div class="rh-icon">${inn ? (m.todayOnTime ? '🌅' : '🟡') : '⏰'}</div>
-          <div><div class="rh-label">${inn ? (m.todayOnTime ? "O'z vaqtida keldingiz" : 'Kech keldingiz') : 'Bugun belgilanmagan'}</div>
-            <div class="rh-sub">${inn ? ('Bugun ' + m.todayTime + ' da') : (att.limit + ' gacha kelsangiz — o\'z vaqtida')}</div></div></div>
-        <div class="rh-prog">
-          <div class="muted">Shu oy o'z vaqtida: <b style="color:var(--green)">${m.onTimeDays}</b> · kech: <b style="color:var(--orange)">${m.lateDays}</b> · intizom: <b>${money(m.intizom)}</b></div>
-          ${!inn ? `<button class="btn-save" id="checkin_btn" style="max-width:220px;margin-top:10px">✋ Keldim</button>` : ''}
-        </div>
-      </div>`;
+    html += await attendanceCardHTML();
   }
   if (att.overview) {
-    html += `<div class="panel" style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h3 style="margin:0">Kelish (bugun)</h3><button class="btn-ghost" id="hook_btn">🤖 Botni ulash</button></div><div class="ceo-list">` +
+    const pendingOtpusk = (DATA.otpuskPending || []).length;
+    html += `<div class="panel" style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h3 style="margin:0">Kelish (bugun) — davomat hisoboti</h3>
+        <div style="display:flex;gap:8px">${pendingOtpusk ? `<button class="btn-ghost" id="otpusk_review_btn">🏖 Otpusk so'rovlari (${pendingOtpusk})</button>` : ''}<button class="btn-ghost" id="hook_btn">🤖 Botni ulash</button></div></div><div class="ceo-list">` +
       att.overview.map((o) => `
         <div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${colorFor(o.name)}">${initials(o.name)}</div>
-          <div><div class="ci-name">${esc(o.name)}</div><div class="ci-sub">Shu oy: ${o.onTimeDays} o'z vaqtida · ${o.lateDays} kech · ${money(o.intizom)}</div></div></div>
+          <div><div class="ci-name">${esc(o.name)}</div><div class="ci-sub">Shu oy: ${o.onTimeDays} vaqtida · ${o.lateDays} kech · ${o.absentDays} kelmadi · ${o.pct}% davomat · ${money(o.intizom)}${o.attendancePenalty ? ` · <span style="color:var(--red)">−${money(o.attendancePenalty)} jarima</span>` : ''}</div></div></div>
           <span class="pill ${o.todayIn ? (o.todayOnTime ? 'green' : 'orange') : 'red'}">${o.todayIn ? (o.todayOnTime ? '🌅 ' + o.todayTime : '🟡 ' + o.todayTime) : '⏳ yo\'q'}</span></div>`).join('') +
       `</div></div>`;
   }
@@ -2118,6 +2119,26 @@ async function viewDaily() {
     const res = await api('/api/telegram/setup-webhook', { method: 'POST', body: '{}' });
     if (res.ok) { toast('🤖 Webhook ulandi!'); }
     else { alert('Xatolik: ' + (res.error || JSON.stringify(res.telegram || res))); }
+  });
+  bindOtpusk();
+  const orb = $('#otpusk_review_btn');
+  if (orb) orb.addEventListener('click', () => openOtpuskReviewModal());
+}
+
+function openOtpuskReviewModal() {
+  const rows = (DATA.otpuskPending || []).map((r) => `
+    <div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${colorFor(r.person)}">${initials(r.person)}</div>
+      <div><div class="ci-name">${esc(r.person)}</div><div class="ci-sub">${fmtDate(r.start_date)} — ${fmtDate(r.end_date)}${r.note ? ' · ' + esc(r.note) : ''}</div></div></div>
+      <div style="display:flex;gap:6px">
+        <button class="mini-btn green" data-otdec="${r.id}" data-decision="approved">✅ Tasdiqlash</button>
+        <button class="mini-btn red" data-otdec="${r.id}" data-decision="rejected">❌ Rad etish</button>
+      </div></div>`).join('') || '<div class="muted">Ko\'rib chiqilayotgan so\'rov yo\'q</div>';
+  openModal('🏖 Otpusk so\'rovlari', `<div class="ceo-list">${rows}</div>`, () => {
+    $('#modalBody').querySelectorAll('[data-otdec]').forEach((b) => b.addEventListener('click', async () => {
+      const res = await api('/api/otpusk/decide', { method: 'POST', body: JSON.stringify({ id: parseInt(b.dataset.otdec, 10), decision: b.dataset.decision }) });
+      if (res && res.ok) { toast(b.dataset.decision === 'approved' ? '✅ Tasdiqlandi' : '❌ Rad etildi'); closeModal(); render(); }
+      else { toast('⚠️ ' + (res && res.error || 'Xatolik')); }
+    }));
   });
 }
 
@@ -2483,14 +2504,48 @@ async function attendanceCardHTML() {
   const att = await api('/api/attendance').catch(() => ({}));
   if (!att.amAttend || !att.me) return '';
   const m = att.me; const inn = m.todayIn;
+  const op = await api('/api/otpusk').catch(() => ({}));
+  const pending = (op.requests || []).find((r) => r.status === 'pending');
+  let otpuskLine;
+  if (pending) {
+    otpuskLine = `<div class="muted">🏖 Otpusk so'rovi yuborilgan (${fmtDate(pending.start_date)} — ${fmtDate(pending.end_date)}) · ko'rib chiqilmoqda</div>`;
+  } else if (op.eligible) {
+    otpuskLine = `<button class="mini-btn" id="otpusk_req_btn" style="margin-top:8px">🏖 Otpusk so'rash (${OTPUSK_DAYS_CONST} kun)</button>`;
+  } else if (op.nextEligible) {
+    otpuskLine = `<div class="muted">🏖 Keyingi otpusk imkoniyati: ${fmtDate(op.nextEligible)}</div>`;
+  } else {
+    otpuskLine = '';
+  }
   return `<div class="rank-hero ${inn && m.todayOnTime ? 'rank-elite' : ''}" style="margin-bottom:16px">
     <div class="rh-left"><div class="rh-icon">${inn ? (m.todayOnTime ? '🌅' : '🟡') : '⏰'}</div>
       <div><div class="rh-label">${inn ? (m.todayOnTime ? "O'z vaqtida keldingiz" : 'Kech keldingiz') : 'Bugun belgilanmagan'}</div>
         <div class="rh-sub">${inn ? ('Bugun ' + m.todayTime + ' da') : (att.limit + ' gacha kelsangiz — o\'z vaqtida')}</div></div></div>
     <div class="rh-prog">
-      <div class="muted">Shu oy o'z vaqtida: <b style="color:var(--green)">${m.onTimeDays}</b> · kech: <b style="color:var(--orange)">${m.lateDays}</b> · intizom: <b>${money(m.intizom)}</b></div>
+      <div class="muted">Shu oy o'z vaqtida: <b style="color:var(--green)">${m.onTimeDays}</b> · kech: <b style="color:var(--orange)">${m.lateDays}</b> · kelmadi: <b style="color:var(--red)">${m.absentDays}</b>${m.otpuskDays ? ` · otpuskda: <b>${m.otpuskDays}</b>` : ''} · davomat: <b>${m.pct}%</b></div>
+      <div class="muted">Intizom: <b>${money(m.intizom)}</b>${m.attendancePenalty ? ` · <span style="color:var(--red)">davomat jarimasi: −${money(m.attendancePenalty)}</span>` : ''}</div>
       ${!inn ? `<button class="btn-save" id="checkin_btn" style="max-width:220px;margin-top:10px">✋ Keldim</button>` : ''}
+      ${otpuskLine}
     </div></div>`;
+}
+const OTPUSK_DAYS_CONST = 5;
+function openOtpuskRequestModal() {
+  openModal('🏖 Otpusk so\'rash', `
+    <p class="muted" style="margin-bottom:10px">${OTPUSK_DAYS_CONST} kunlik otpusk — boshlanish sanasini tanlang. Bu kunlar jarimasiz hisoblanadi.</p>
+    <div class="field"><label>Boshlanish sanasi</label><input id="ov_start" type="date" /></div>
+    <div class="field"><label>Izoh (ixtiyoriy)</label><input id="ov_note" placeholder="Masalan: oilaviy sabab" /></div>
+    <div class="modal-actions"><button class="btn-save" id="ov_send">✅ So'rov yuborish</button></div>`, () => {
+    $('#ov_send').addEventListener('click', async () => {
+      const start = $('#ov_start').value;
+      if (!start) { toast('Sanani tanlang'); return; }
+      const res = await api('/api/otpusk/request', { method: 'POST', body: JSON.stringify({ start_date: start, note: $('#ov_note').value }) });
+      if (res && res.ok) { closeModal(); toast('🏖 Otpusk so\'rovi yuborildi'); render(); }
+      else { toast('⚠️ ' + (res && res.error || 'Xatolik')); }
+    });
+  });
+}
+function bindOtpusk() {
+  const b = $('#otpusk_req_btn');
+  if (b) b.addEventListener('click', openOtpuskRequestModal);
 }
 function bindCheckin() {
   const ci = $('#checkin_btn');
@@ -2544,6 +2599,7 @@ async function viewCabinet() {
     </div>`;
   bindVideoCards();
   bindCheckin();
+  bindOtpusk();
 }
 
 // ============================================================
@@ -3218,6 +3274,12 @@ async function viewLeaderboard() {
       </div></div>
       <div class="panel"><h3>📹 Operatorlar (bu oy)</h3><div class="lb-list">
         ${lbRows(d.operators || [], (x) => `<b>${x.month}</b> ta`)}
+      </div></div>
+      <div class="panel"><h3>🎯 Davomat (bu oy)</h3><div class="lb-list">
+        ${(d.attendance || []).map((x, i) => `<div class="lb-row${i === 0 && x.pct === 100 ? ' lb-top' : ''}">
+          <div class="lb-rank">${medal(i)}</div>
+          <div class="lb-name">${esc(x.name)}<span class="lb-sub">${x.onTimeDays} vaqtida · ${x.lateDays} kech · ${x.absentDays} kelmadi</span></div>
+          <div class="lb-val"><b>${x.pct}%</b></div></div>`).join('') || emptyState('Ma\'lumot yo\'q')}
       </div></div>
     </div>`;
 }
