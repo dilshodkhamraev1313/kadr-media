@@ -2136,23 +2136,41 @@ function openOtpuskReviewModal() {
 }
 
 // Kun yopish cheklistini tahrirlash (o'zi yoki CEO boshqalarникini)
+const STORIES_PREFIX = 'Stories: ';
+const STORIES_PERSONS = ['Shodiya'];
 async function openChecklistModal(person) {
   const data = await api('/api/checklist?person=' + encodeURIComponent(person));
   if (data.error) { toast(data.error); return; }
+  const isStoriesPerson = STORIES_PERSONS.includes(person);
+  const allProjects = isStoriesPerson ? (await api('/api/projects')).map((p) => p.name) : [];
   const render = (items) => {
-    const rows = items.map((i) => `
+    const assignedProjects = items.filter((i) => i.text.startsWith(STORIES_PREFIX)).map((i) => i.text.slice(STORIES_PREFIX.length));
+    const rows = items.map((i) => {
+      const isStories = i.text.startsWith(STORIES_PREFIX);
+      return `
       <div class="clm-row" data-id="${i.id}">
-        <input class="clm-text" value="${esc(i.text)}" />
-        <button class="mini-btn green clm-save">💾</button>
+        ${isStories ? '<span title="Stories loyihasi">🎬</span>' : ''}
+        <input class="clm-text" value="${esc(i.text)}" ${isStories ? 'disabled' : ''} />
+        ${isStories ? '' : '<button class="mini-btn green clm-save">💾</button>'}
         <button class="mini-btn red clm-del">🗑</button>
-      </div>`).join('') || '<div class="muted">Hozircha vazifa yo\'q.</div>';
+      </div>`;
+    }).join('') || '<div class="muted">Hozircha vazifa yo\'q.</div>';
+    const availableProjects = allProjects.filter((p) => !assignedProjects.includes(p));
+    const storiesSection = isStoriesPerson ? `
+      <div class="divider"></div>
+      <div class="sec-label">🎬 Stories loyihalari (har biri $${100}/oy, kuniga to'g'ri kelgan ulush)</div>
+      <div class="cl-add" style="margin-top:8px">
+        <select id="clm_story_project">${availableProjects.length ? availableProjects.map((p) => `<option>${esc(p)}</option>`).join('') : '<option disabled>Barcha loyihalar allaqachon biriktirilgan</option>'}</select>
+        <button class="btn-save" id="clm_story_add" style="max-width:150px" ${availableProjects.length ? '' : 'disabled'}>🎬 Biriktirish</button>
+      </div>` : '';
     openModal(`📋 ${esc(person)} — kunlik vazifalar`, `
       <p class="muted" style="margin-bottom:10px">Vazifalarni tahrirlang, o'chiring yoki yangi qo'shing. Har kuni shu ro'yxatdan belgilaydi.</p>
       <div class="clm-list">${rows}</div>
       <div class="cl-add" style="margin-top:12px">
         <input id="clm_new" placeholder="+ yangi vazifa (masalan: Amarkets — ssenariy)" />
         <button class="btn-save" id="clm_add" style="max-width:130px">Qo'shish</button>
-      </div>`, () => {
+      </div>
+      ${storiesSection}`, () => {
       $('#clm_add').addEventListener('click', async () => {
         const t = $('#clm_new').value.trim();
         if (!t) { toast('Matn kiriting'); return; }
@@ -2160,9 +2178,19 @@ async function openChecklistModal(person) {
         if (r.error) { toast(r.error); return; }
         reopen();
       });
+      const sa = $('#clm_story_add');
+      if (sa) sa.addEventListener('click', async () => {
+        const proj = $('#clm_story_project').value;
+        if (!proj) { toast('Loyihani tanlang'); return; }
+        const r = await api('/api/checklist/add', { method: 'POST', body: JSON.stringify({ person, text: STORIES_PREFIX + proj }) });
+        if (r.error) { toast(r.error); return; }
+        toast(`🎬 ${proj} biriktirildi`);
+        reopen();
+      });
       $$('.clm-row').forEach((row) => {
         const id = row.dataset.id;
-        row.querySelector('.clm-save').addEventListener('click', async () => {
+        const saveBtn = row.querySelector('.clm-save');
+        if (saveBtn) saveBtn.addEventListener('click', async () => {
           const t = row.querySelector('.clm-text').value.trim();
           if (!t) { toast('Matn bo\'sh'); return; }
           const r = await api('/api/checklist/update', { method: 'POST', body: JSON.stringify({ id: parseInt(id, 10), text: t }) });

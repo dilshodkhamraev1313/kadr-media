@@ -184,6 +184,7 @@ STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun
 # Kunlik sarhisob yopish majburiyati shu 4 kishida.
 DAILY_CLOSE_USERS = ("Said", "Gulmira", "Xonzoda", "Umida", "Shodiya")
 WORKDAYS_PER_MONTH = 25  # intizom bo'linadigan ish kunlari (yakshanba dam)
+STORIES_PROJECT_USD = 100  # har biriktirilgan "Stories" loyihasi uchun OYLIK maksimal ($/25 kun = kunlik ulush)
 
 # Video arxiv mas'uli — syomka fayllarini hard/noutbukka joylab, yo'qotmasdan
 # montajchilarga tarqatish. Kuniga belgilagan kun uchun FILE_ARCHIVE_DAILY_RATE
@@ -283,8 +284,8 @@ SALARY = {
     "Umid": {"title": "Montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
              "montaj": True, "operator": True},
     "Shodiya": {"title": "Loyiha rahbari + montajchi + operator + SMM", "som": {"Fiksa": 500000, "Intizom": 500000},
-                "usd": {"SMM": 40}, "stories_daily": 40000, "lead": True, "montaj": True, "operator": True,
-                "close_link": ["SMM"]},
+                "usd": {"SMM": 40}, "stories_projects_usd": STORIES_PROJECT_USD, "lead": True, "montaj": True,
+                "operator": True, "close_link": ["SMM"]},
 }
 
 # Rol='lead' bo'lsa ham montaj qiladigan rahbarlar (Shodiya): montajchi ro'yxatiga
@@ -4257,15 +4258,33 @@ def _otpusk_eligible(conn, person, today=None):
     return today >= next_ok, next_ok
 
 
-def _stories_earn(conn, name, ym):
-    """Kunlik Stories puli: faqat 'Stories joylandi' checklist punkti haqiqatan
-    bajarilgan (done=1) kunlar sanaladi — 0 dan boshlab, real ishga qarab."""
-    row = conn.execute(
-        "SELECT COUNT(DISTINCT cd.cdate) AS n FROM checklist_done cd "
-        "JOIN checklist_items ci ON ci.id = cd.item_id "
-        "WHERE cd.person=? AND ci.text=? AND cd.done=1 AND CAST(cd.cdate AS TEXT) LIKE ?",
-        (name, "Stories joylandi", ym + "%")).fetchone()
-    return (row["n"] or 0) if row else 0
+STORIES_PREFIX = "Stories: "
+
+
+def _stories_assigned_projects(conn, name):
+    """Shu kishiga 'stories' uchun biriktirilgan loyihalar (checklist_items'da
+    'Stories: {loyiha}' shaklidagi faol punktlar orqali qayd etiladi)."""
+    rows = conn.execute(
+        "SELECT id, text FROM checklist_items WHERE person=? AND active=1 AND text LIKE ?",
+        (name, STORIES_PREFIX + "%")).fetchall()
+    return [{"item_id": r["id"], "project": r["text"][len(STORIES_PREFIX):].strip()} for r in rows]
+
+
+def _stories_project_earn(conn, name, ym, rate):
+    """Har biriktirilgan 'Stories' loyihasi uchun kunlik hisoblangan pul: oyiga
+    STORIES_PROJECT_USD dollar, WORKDAYS_PER_MONTH kunga bo'lingan holda, faqat
+    haqiqatan 'story qo'yildi' deb belgilangan kunlar uchun (0dan boshlab,
+    loyiha oyiga hech qachon to'liq summadan oshmaydi)."""
+    items = []
+    for a in _stories_assigned_projects(conn, name):
+        days = conn.execute(
+            "SELECT COUNT(DISTINCT cd.cdate) AS n FROM checklist_done cd "
+            "WHERE cd.item_id=? AND cd.done=1 AND CAST(cd.cdate AS TEXT) LIKE ?",
+            (a["item_id"], ym + "%")).fetchone()["n"] or 0
+        days = min(days, WORKDAYS_PER_MONTH)
+        usd_amt = STORIES_PROJECT_USD * days / WORKDAYS_PER_MONTH
+        items.append({"project": a["project"], "days": days, "amount": int(round(usd_amt * rate))})
+    return items
 
 
 def _file_archive_earn(conn, name, ym):
@@ -4365,14 +4384,18 @@ def compute_salary(conn, name, rate, ym=None):
             kind = "auto"
             lbl = f"{label} (${usd}) · {closed}/{wd} kun yopilgan"
         comps.append({"label": lbl, "amount": amt, "kind": kind})
-    if cfg.get("stories_daily"):
-        # Kun yopish intizomiga EMAS — faqat haqiqatan "Stories joylandi" belgilangan
-        # kunlarga bog'liq (0 dan boshlab, real ish qancha bo'lsa shuncha).
-        days = _stories_earn(conn, name, ym)
-        rate_som = cfg["stories_daily"]
-        rate_fmt = "{:,}".format(rate_som).replace(",", " ")
-        comps.append({"label": f"Stories ({rate_fmt} so'm/kun · {days} kun qo'yilgan)",
-                      "amount": days * rate_som, "kind": "auto"})
+    if cfg.get("stories_projects_usd"):
+        # Har biriktirilgan loyiha uchun alohida — kun yopish intizomiga EMAS,
+        # faqat haqiqatan o'sha loyihaning "Stories: X" punkti belgilangan
+        # kunlarga bog'liq (0dan boshlab, oyiga loyiha boshiga maksimal $100).
+        items = _stories_project_earn(conn, name, ym, rate)
+        if items:
+            for it in items:
+                comps.append({
+                    "label": f"Stories: {it['project']} (${STORIES_PROJECT_USD}/oy) · {it['days']}/{WORKDAYS_PER_MONTH} kun qo'yilgan",
+                    "amount": it["amount"], "kind": "auto"})
+        else:
+            comps.append({"label": "Stories — hali loyiha biriktirilmagan", "amount": 0, "kind": "auto"})
     if cfg.get("file_archive_daily"):
         # Video arxiv mas'uliyati — faqat haqiqatan "fayllar joylandi" deb
         # belgilangan kunlarga bog'liq (0 dan boshlab, real ishga qarab).
