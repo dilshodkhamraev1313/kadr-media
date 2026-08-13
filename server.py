@@ -5894,6 +5894,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role not in APPROVER_ROLES else self._json(api_editors(user))
         if path == "/api/audit":
             return self._forbid() if role not in ADMIN_ROLES else self._json(api_audit())
+        if path == "/api/attendance/range":
+            if role != "ceo":
+                return self._forbid()
+            qs = parse_qs(urlparse(self.path).query or "")
+            f = (qs.get("from") or [""])[0]
+            t = (qs.get("to") or [""])[0]
+            if not f or not t:
+                return self._json({"error": "from/to kerak"}, 400)
+            conn = get_db()
+            rows = [dict(r) for r in conn.execute(
+                "SELECT person, adate, checkin_time, on_time, source FROM attendance "
+                "WHERE adate>=? AND adate<=? ORDER BY person, adate", (f, t)).fetchall()]
+            conn.close()
+            return self._json({"from": f, "to": t, "limit": ON_TIME_LIMIT,
+                                "people": list(ATTENDANCE_USERS), "rows": rows})
         if path == "/api/cash/day-detail":
             if not can_cash(user):
                 return self._forbid()
