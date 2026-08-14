@@ -4210,15 +4210,21 @@ def _lateness_penalty(conn, name, today):
     return capped, {"raw": raw, "cap": cap, "items": items}
 
 
+PENALTY_START_DATE = "2026-08-14"  # davomat jarimasi shu sanadan boshlab qo'llaniladi — undan
+                                    # oldingi kechikishlar (tizim hali yo'q edi) hisobga kirmaydi
+
+
 def _attendance_penalty(conn, name, today):
     """Davomat (check-in) kechikish jarimasi — oyda LATENESS_FREE_LIMIT martagacha
     kechikish jarimasiz, 4-martadan boshlab HAR bir kechikkan kun uchun qo'shimcha
-    LATENESS_PENALTY_PER_DAY (bu — o'sha kunning yo'qolgan Intizomidan TASHQARI)."""
+    LATENESS_PENALTY_PER_DAY (bu — o'sha kunning yo'qolgan Intizomidan TASHQARI).
+    Faqat PENALTY_START_DATE'dan boshlab (tizim joriy qilingan kundan) sanaladi."""
     if name not in ATTENDANCE_USERS:
         return 0, []
     d = _month_attendance_days(conn, name, today)
-    extra = max(len(d["late"]) - LATENESS_FREE_LIMIT, 0)
-    return extra * LATENESS_PENALTY_PER_DAY, d["late"]
+    late_counted = [x for x in d["late"] if x >= PENALTY_START_DATE]
+    extra = max(len(late_counted) - LATENESS_FREE_LIMIT, 0)
+    return extra * LATENESS_PENALTY_PER_DAY, late_counted
 
 
 def _perfect_attendance_bonus(conn, name, today):
