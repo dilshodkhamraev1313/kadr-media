@@ -269,7 +269,7 @@ SALARY = {
     "Dilshod Khamraev": {"title": "CEO", "som": {"CEO maosh": 16000000}},
     "Gulmira": {"title": "Kadr Studio rahbari",
                 "som": {"Fiksa": 2000000, "Intizom": 500000, "Operatsion boshqaruv": 500000},
-                "lead": True, "close_link": "Operatsion boshqaruv"},
+                "lead": True, "close_link": "Operatsion boshqaruv", "kassa_penalty": True},
     "Said": {"title": "Operator + loyiha rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
              "usd": {"Sifat nazorati": 100}, "lead": True, "operator": True,
              "close_link": "Sifat nazorati"},
@@ -4213,6 +4213,41 @@ def _lateness_penalty(conn, name, today):
 PENALTY_START_DATE = "2026-08-14"  # davomat jarimasi shu sanadan boshlab qo'llaniladi — undan
                                     # oldingi kechikishlar (tizim hali yo'q edi) hisobga kirmaydi
 
+KASSA_CLOSE_PERSON = "Gulmira"
+KASSA_PENALTY_PER_DAY = 50000      # Kassa KASSA_CLOSE_DEADLINE'gacha yopilmasa, shu kun uchun jarima
+KASSA_CLOSE_DEADLINE = "22:00"
+KASSA_PENALTY_START_DATE = "2026-08-15"  # bu jarima shu sanadan boshlab qo'llaniladi
+
+
+def _kassa_penalty(conn, name, today):
+    """Kassa KASSA_CLOSE_DEADLINE'gacha yopilmagan har bir kun uchun (faqat
+    KASSA_CLOSE_PERSON uchun, KASSA_PENALTY_START_DATE'dan buyon) −KASSA_PENALTY_PER_DAY.
+    Bugungi kun faqat muddat (22:00) o'tgan bo'lsagina hisobga kiradi."""
+    if name != KASSA_CLOSE_PERSON:
+        return 0, []
+    ym = today.strftime("%Y-%m")
+    closed_dates = {r["fdate"] for r in conn.execute(
+        "SELECT fdate FROM daily_finance WHERE fdate LIKE ?", (ym + "%",)).fetchall()}
+    now_time = uz_now().strftime("%H:%M")
+    missed = []
+    d = datetime.date(today.year, today.month, 1)
+    while d <= today:
+        iso = d.isoformat()
+        if d.weekday() != 6 and iso >= KASSA_PENALTY_START_DATE and iso not in closed_dates:
+            if d < today or now_time >= KASSA_CLOSE_DEADLINE:
+                missed.append(iso)
+        d += datetime.timedelta(days=1)
+    return len(missed) * KASSA_PENALTY_PER_DAY, missed
+
+
+TELEGRAM_USERNAME_BY_PERSON = {v: k for k, v in TELEGRAM_ATTEND.items()}
+
+
+def _telegram_mention(person):
+    """Guruhda odamni @username bilan belgilash uchun (bo'lmasa, ismi qalin qilib)."""
+    uname = TELEGRAM_USERNAME_BY_PERSON.get(person)
+    return f"@{uname}" if uname else f"<b>{person}</b>"
+
 
 def _attendance_penalty(conn, name, today):
     """Davomat (check-in) kechikish jarimasi — oyda LATENESS_FREE_LIMIT martagacha
@@ -4462,6 +4497,12 @@ def compute_salary(conn, name, rate, ym=None):
     if perfect_bonus:
         comps.append({"label": "Mukammal davomat bonusi (bu oy 100% vaqtida)",
                       "amount": perfect_bonus, "kind": "auto"})
+    # Kassa vaqtida yopilmagani uchun jarima (faqat Gulmira)
+    if cfg.get("kassa_penalty"):
+        kassa_pen, kassa_missed = _kassa_penalty(conn, name, today)
+        if kassa_pen > 0:
+            comps.append({"label": f"Kassa vaqtida yopilmadi ({len(kassa_missed)} kun, {KASSA_CLOSE_DEADLINE}gacha)",
+                          "amount": -kassa_pen, "kind": "penalty"})
     total = sum(c["amount"] for c in comps)
     paid = _paid_to(conn, name, ym)
     return {"name": name, "title": cfg.get("title", ""), "components": comps,
@@ -5597,12 +5638,15 @@ def api_cron_daily_check():
 
 
 def api_cron_kassa_check():
-    """21:00da tashqi cron chaqiradi — bugungi Kassa hali yopilmagan bo'lsa
-    guruhga eslatma; kechagi Kassa ham hali yopilmagan bo'lsa (kechagi eslatma
-    e'tiborsiz qoldirilgan) — CEOga alohida, kuchliroq ogohlantirish."""
+    """21:00 VA 22:00da tashqi cron chaqiradi (kuniga 2 marta):
+    - 21:00 (KASSA_CLOSE_DEADLINE'dan oldin): bugungi Kassa yopilmagan bo'lsa
+      guruhga eslatma + kechagi Kassa ham yopilmagan bo'lsa CEOga ogohlantirish.
+    - 22:00 (KASSA_CLOSE_DEADLINE'da): hali ham yopilmagan bo'lsa — Gulmirani
+      @username bilan belgilab, shu kun uchun jarima yozilgani haqida ogohlantirish."""
     today = uz_today()
     if today.weekday() == 6:
         return {"ok": True, "skipped": "yakshanba"}
+    now_time = uz_now().strftime("%H:%M")
     conn = get_db()
     today_closed = bool(conn.execute(
         "SELECT id FROM daily_finance WHERE fdate=?", (today.isoformat(),)).fetchone())
@@ -5612,17 +5656,27 @@ def api_cron_kassa_check():
         yesterday_closed = bool(conn.execute(
             "SELECT id FROM daily_finance WHERE fdate=?", (yesterday.isoformat(),)).fetchone())
     conn.close()
-    if not today_closed:
-        send_telegram(
-            f"💰 <b>Bugungi Kassa hali yopilmagan!</b>\n📅 {today.isoformat()}\n\n"
-            "Iltimos, kun tugashidan oldin Kassani yoping (naqt+karta sanog'i + rasm dalil bilan)."
-        )
-    if not yesterday_closed:
-        send_telegram(
-            f"🚨 <b>DIQQAT — Dilshod Khamraev</b>\nKecha ({yesterday.isoformat()}) Kassa hali ham yopilmagan!\n\n"
-            "Bu kun harakatlari hali hisoblanmagan holda qolyapti — iltimos, tezroq yoping."
-        )
-    return {"ok": True, "todayClosed": today_closed, "yesterdayClosed": yesterday_closed}
+    if now_time < KASSA_CLOSE_DEADLINE:
+        if not today_closed:
+            send_telegram(
+                f"💰 <b>Bugungi Kassa hali yopilmagan!</b>\n📅 {today.isoformat()}\n\n"
+                f"Iltimos, soat {KASSA_CLOSE_DEADLINE}gacha Kassani yoping (naqt+karta sanog'i + rasm dalil bilan) — "
+                f"aks holda {som(KASSA_PENALTY_PER_DAY)} jarima yoziladi."
+            )
+        if not yesterday_closed:
+            send_telegram(
+                f"🚨 <b>DIQQAT — Dilshod Khamraev</b>\nKecha ({yesterday.isoformat()}) Kassa hali ham yopilmagan!\n\n"
+                "Bu kun harakatlari hali hisoblanmagan holda qolyapti — iltimos, tezroq yoping."
+            )
+    else:
+        if not today_closed:
+            mention = _telegram_mention(KASSA_CLOSE_PERSON)
+            send_telegram(
+                f"⚫️ {mention} Bugungi ({today.isoformat()}) Kassa soat {KASSA_CLOSE_DEADLINE}gacha yopilmadi.\n"
+                f"Shu kun uchun daromadingizdan −{som(KASSA_PENALTY_PER_DAY)} jarima yozildi.\n\n"
+                "Iltimos, imkoni bo'lishi bilan Kassani yoping."
+            )
+    return {"ok": True, "todayClosed": today_closed, "yesterdayClosed": yesterday_closed, "phase": "reminder" if now_time < KASSA_CLOSE_DEADLINE else "penalty"}
 
 
 def api_cron_inactive_projects():
