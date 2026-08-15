@@ -6177,20 +6177,6 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/me":
             return self._json(public_user(user))
-        if path == "/api/debug/late-alerts-today":
-            if role != "ceo":
-                return self._forbid()
-            conn = get_db()
-            today = uz_today()
-            rows = conn.execute(
-                "SELECT person, checkin_time FROM attendance WHERE adate=? AND on_time=0", (today.isoformat(),)).fetchall()
-            sent = []
-            for r in rows:
-                color, text = _lateness_alert(conn, r["person"], today)
-                send_telegram(f"{color or '🟡'} <b>{r['person']}</b> ishga keldi — {r['checkin_time']} (kech)\n{text or ''}")
-                sent.append(r["person"])
-            conn.close()
-            return self._json({"ok": True, "sent": sent})
         if path == "/api/telegram/last":
             return self._forbid() if role != "ceo" else self._json(api_last_webhook())
         if path == "/api/telegram/webhook-info":
