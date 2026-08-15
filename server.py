@@ -6229,17 +6229,6 @@ class Handler(BaseHTTPRequestHandler):
         role = user["role"]
         show_all = "all=1" in (urlparse(self.path).query or "")
 
-        if path == "/api/debug/kassa-policy-announce":
-            if role != "ceo":
-                return self._forbid()
-            mention = _telegram_mention(KASSA_CLOSE_PERSON)
-            send_telegram(
-                f"📢 <b>Yangi qoida</b>\n{mention} bugundan ({KASSA_PENALTY_START_DATE}) boshlab — "
-                f"Kassa har kuni soat {KASSA_CLOSE_DEADLINE}gacha yopilmasa, shu kunlik daromadingizdan "
-                f"−{som(KASSA_PENALTY_PER_DAY)} jarima yoziladi.\n\n"
-                "Iltimos, har kuni vaqtida yoping 🙏"
-            )
-            return self._json({"ok": True})
         if path == "/api/me":
             return self._json(public_user(user))
         if path == "/api/telegram/last":
