@@ -249,8 +249,8 @@ PENALTY_CAP_PCT = 0.20        # jarima fiksaning shu ulushidan oshmasin (maoshni
 LATENESS_FREE_LIMIT = 3           # oyda shuncha marta kechikish jarimasiz
 LATENESS_PENALTY_PER_DAY = 20000  # 4-martadan boshlab har kechikkan kun uchun qo'shimcha jarima
 PERFECT_ATTENDANCE_BONUS = 500000  # butun oy (yakshanbadan tashqari) 100% vaqtida kelsa bonus
-OTPUSK_DAYS = 5                   # bir martalik otpusk davomiyligi (kun)
-OTPUSK_COOLDOWN_MONTHS = 2        # otpuskdan otpuskgacha eng kam oraliq
+OTPUSK_DAYS = 2                   # bir martalik otpusk davomiyligi (kun)
+OTPUSK_COOLDOWN_MONTHS = 1        # otpuskdan otpuskgacha eng kam oraliq (har oyda 1 marta)
 INACTIVITY_DAYS = 3               # shuncha kun harakatsiz loyiha "stale" deb belgilanadi
 
 # Har xodim rahbarlik qiladigan loyihalar (nomi projects jadvalidagi bilan mos).
@@ -4227,6 +4227,26 @@ def _attendance_penalty(conn, name, today):
     return extra * LATENESS_PENALTY_PER_DAY, late_counted
 
 
+LATENESS_ALERT_COLOR = {1: "🟡", 2: "🟠", 3: "🔴"}  # 4+ → ⚫️ (jarima amalda)
+
+
+def _lateness_alert(conn, name, today):
+    """Kechikish soni (PENALTY_START_DATE'dan buyon, jarimaga sanaladigan)
+    asosida rang + ogohlantirish matni. Hali kech kelmagan bo'lsa (None, None)."""
+    _, late_counted = _attendance_penalty(conn, name, today)
+    n = len(late_counted)
+    if n == 0:
+        return None, None
+    if n > LATENESS_FREE_LIMIT:
+        penalty_fmt = "{:,}".format(LATENESS_PENALTY_PER_DAY).replace(",", " ")
+        return "⚫️", f"Bu oy {n}-marta kech keldingiz — jarima allaqachon amalda (har kechikkan kun uchun −{penalty_fmt} so'm)."
+    color = LATENESS_ALERT_COLOR.get(n, "🟡")
+    remaining = LATENESS_FREE_LIMIT - n
+    if remaining > 0:
+        return color, f"Bu oy {n}-marta kech keldingiz. Yana {remaining} marta kechiksangiz, jarima pul yozila boshlaydi. Iltimos, vaqtida keling!"
+    return color, f"Bu oy {n}-marta kech keldingiz. DIQQAT: bu oxirgi jarimasiz kechikishingiz — keyingi safar kechiksangiz, har kuni uchun jarima yoziladi!"
+
+
 def _perfect_attendance_bonus(conn, name, today):
     """Butun oy (yakshanbadan tashqari, bugungacha) bironta ham kech/kelmagan
     kun bo'lmasa — mukammal davomat bonusi (otpusk kunlari halaqit bermaydi)."""
@@ -5861,16 +5881,19 @@ def _month_attendance_days(conn, name, today):
 
 
 def _ontime_days(conn, name, today):
-    """Shu oyda o'z vaqtida kelgan ish kunlari soni (otpusk kunlari ham shu ichida — jarimasiz)."""
+    """Shu oyda o'z vaqtida kelgan ish kunlari soni. Otpusk kunlari BONUS
+    hisoblanmaydi — ular butunlay hisobdan chiqib ketadi (na foyda, na zarar):
+    jarima yo'q, lekin Intizom ham qo'shilmaydi (ishga kelmagan)."""
     d = _month_attendance_days(conn, name, today)
-    return len(d["on_time"]) + len(d["otpusk"])
+    return len(d["on_time"])
 
 
 def _attended_days(conn, name, today):
     """Shu oyda ishga kelgan kunlar soni (vaqtidan qat'i nazar — Fiksa uchun,
-    Intizomdan farqli, kech kelgan kun ham hisobga olinadi; otpusk ham kiradi)."""
+    Intizomdan farqli, kech kelgan kun ham hisobga olinadi). Otpusk kunlari
+    kiritilmaydi — ishga kelmagani uchun Fiksa ham hisoblanmaydi."""
     d = _month_attendance_days(conn, name, today)
-    return len(d["on_time"]) + len(d["late"]) + len(d["otpusk"])
+    return len(d["on_time"]) + len(d["late"])
 
 
 def _workdays_in_month(yy, mm):
@@ -5969,11 +5992,16 @@ def api_telegram_webhook(update):
             return {"ok": True}
         conn = get_db()
         rec = _record_attendance(conn, person, "bot")
+        alert_color, alert_text = (None, None)
+        if rec and not rec["on_time"]:
+            alert_color, alert_text = _lateness_alert(conn, person, uz_today())
         conn.commit()
         conn.close()
         if rec:
-            tag = "✅ o'z vaqtida" if rec["on_time"] else "🟡 kech"
-            send_telegram(f"🟢 <b>{person}</b> ishga keldi — {rec['time']} ({tag})")
+            if rec["on_time"]:
+                send_telegram(f"🟢 <b>{person}</b> ishga keldi — {rec['time']} (✅ o'z vaqtida)")
+            else:
+                send_telegram(f"{alert_color or '🟡'} <b>{person}</b> ishga keldi — {rec['time']} (kech)\n{alert_text or ''}")
     except Exception:
         pass  # webhook hech qachon xato qaytarmasligi kerak
     return {"ok": True}
@@ -5989,8 +6017,9 @@ def _attend_month(conn, name, today):
     on_time, late, absent, otpusk = len(d["on_time"]), len(d["late"]), len(d["absent"]), len(d["otpusk"])
     denom = on_time + late + absent  # otpusk kunlari % hisobiga kirmaydi (jarimasiz)
     pct = round(100 * on_time / denom) if denom else 100
-    intizom_days = _ontime_days(conn, name, today)  # otpusk ham shu ichida (to'lov uchun)
+    intizom_days = _ontime_days(conn, name, today)
     att_pen, _ = _attendance_penalty(conn, name, today)
+    warn_color, warn_text = _lateness_alert(conn, name, today)
     return {
         "name": name, "onTimeDays": on_time, "lateDays": late, "absentDays": absent,
         "otpuskDays": otpusk, "pct": pct,
@@ -5998,6 +6027,7 @@ def _attend_month(conn, name, today):
         "todayOnTime": (bool(t["on_time"]) if t else None),
         "intizom": min(intizom_days * INTIZOM_PER_DAY, INTIZOM_FULL),
         "attendancePenalty": att_pen,
+        "warnColor": warn_color, "warnText": warn_text,
     }
 
 

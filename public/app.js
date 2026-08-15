@@ -2537,6 +2537,12 @@ async function attendanceCardHTML() {
   } else {
     otpuskLine = '';
   }
+  const warnColorMap = { '🟡': 'var(--yellow)', '🟠': 'var(--orange)', '🔴': 'var(--red)', '⚫️': '#fff' };
+  const warnBgMap = { '🟡': 'rgba(255,214,10,.12)', '🟠': 'rgba(255,159,10,.12)', '🔴': 'rgba(255,69,58,.12)', '⚫️': 'rgba(0,0,0,.6)' };
+  const warnBox = m.warnText ? `
+    <div style="margin-top:8px;padding:10px 12px;border-radius:10px;background:${warnBgMap[m.warnColor] || 'rgba(255,255,255,.06)'};border:1px solid ${warnColorMap[m.warnColor] || 'var(--border)'}">
+      <span style="color:${warnColorMap[m.warnColor] || 'inherit'};font-weight:600">${m.warnColor || ''} ${esc(m.warnText)}</span>
+    </div>` : '';
   return `<div class="rank-hero ${inn && m.todayOnTime ? 'rank-elite' : ''}" style="margin-bottom:16px">
     <div class="rh-left"><div class="rh-icon">${inn ? (m.todayOnTime ? '🌅' : '🟡') : '⏰'}</div>
       <div><div class="rh-label">${inn ? (m.todayOnTime ? "O'z vaqtida keldingiz" : 'Kech keldingiz') : 'Bugun belgilanmagan'}</div>
@@ -2544,11 +2550,12 @@ async function attendanceCardHTML() {
     <div class="rh-prog">
       <div class="muted">Shu oy o'z vaqtida: <b style="color:var(--green)">${m.onTimeDays}</b> · kech: <b style="color:var(--orange)">${m.lateDays}</b> · kelmadi: <b style="color:var(--red)">${m.absentDays}</b>${m.otpuskDays ? ` · otpuskda: <b>${m.otpuskDays}</b>` : ''} · davomat: <b>${m.pct}%</b></div>
       <div class="muted">Intizom: <b>${money(m.intizom)}</b>${m.attendancePenalty ? ` · <span style="color:var(--red)">davomat jarimasi: −${money(m.attendancePenalty)}</span>` : ''}</div>
+      ${warnBox}
       ${!inn ? `<div class="muted" style="margin-top:6px">📹 "ish vaqti" guruhiga dumaloq video (kruzhok) tashlang — davomat shundan avtomatik belgilanadi</div>` : ''}
       ${otpuskLine}
     </div></div>`;
 }
-const OTPUSK_DAYS_CONST = 5;
+const OTPUSK_DAYS_CONST = 2;
 function openOtpuskRequestModal() {
   openModal('🏖 Otpusk so\'rash', `
     <p class="muted" style="margin-bottom:10px">${OTPUSK_DAYS_CONST} kunlik otpusk — boshlanish sanasini tanlang. Bu kunlar jarimasiz hisoblanadi.</p>
