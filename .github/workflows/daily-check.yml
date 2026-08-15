@@ -1,0 +1,22 @@
+name: Kun sarhisobi yopilmadi eslatmasi
+
+on:
+  schedule:
+    - cron: "0 17 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  daily-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kun yopish holatini tekshirish
+        run: |
+          for i in 1 2 3; do
+            if curl -sf --max-time 60 "https://kadr-media.onrender.com/api/cron/daily-check"; then
+              echo "Tekshirildi."
+              exit 0
+            fi
+            echo "Urinish $i muvaffaqiyatsiz, qayta urinaman..."
+            sleep 20
+          done
+          exit 1

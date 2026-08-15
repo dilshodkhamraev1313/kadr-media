@@ -1,0 +1,22 @@
+name: Kassa yopilmadi eslatmasi
+
+on:
+  schedule:
+    - cron: "0 16 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  kassa-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kassa holatini tekshirish
+        run: |
+          for i in 1 2 3; do
+            if curl -sf --max-time 60 "https://kadr-media.onrender.com/api/cron/kassa-check"; then
+              echo "Tekshirildi."
+              exit 0
+            fi
+            echo "Urinish $i muvaffaqiyatsiz, qayta urinaman..."
+            sleep 20
+          done
+          exit 1
