@@ -1,0 +1,23 @@
+name: Ertangi kun rejasi (brif) eslatmasi
+
+on:
+  schedule:
+    - cron: "0 13 * * *"
+    - cron: "5 15 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  brief-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Brif holatini tekshirish
+        run: |
+          for i in 1 2 3; do
+            if curl -sf --max-time 60 "https://kadr-media.onrender.com/api/cron/brief-check"; then
+              echo "Tekshirildi."
+              exit 0
+            fi
+            echo "Urinish $i muvaffaqiyatsiz, qayta urinaman..."
+            sleep 20
+          done
+          exit 1

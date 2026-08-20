@@ -1,0 +1,22 @@
+name: Backstage nazorati (syomka)
+
+on:
+  schedule:
+    - cron: "*/15 3-16 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  backstage-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Backstage holatini tekshirish
+        run: |
+          for i in 1 2 3; do
+            if curl -sf --max-time 60 "https://kadr-media.onrender.com/api/cron/backstage-check"; then
+              echo "Tekshirildi."
+              exit 0
+            fi
+            echo "Urinish $i muvaffaqiyatsiz, qayta urinaman..."
+            sleep 20
+          done
+          exit 1

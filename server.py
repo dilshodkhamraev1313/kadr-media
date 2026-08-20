@@ -269,7 +269,8 @@ SALARY = {
     "Dilshod Khamraev": {"title": "CEO", "som": {"CEO maosh": 16000000}},
     "Gulmira": {"title": "Kadr Studio rahbari",
                 "som": {"Fiksa": 2000000, "Intizom": 500000, "Operatsion boshqaruv": 500000},
-                "lead": True, "close_link": "Operatsion boshqaruv", "kassa_penalty": True},
+                "lead": True, "close_link": "Operatsion boshqaruv", "kassa_penalty": True,
+                "backstage_penalty": True},
     "Said": {"title": "Operator + loyiha rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
              "usd": {"Sifat nazorati": 100}, "lead": True, "operator": True,
              "close_link": "Sifat nazorati"},
@@ -515,16 +516,18 @@ def uz_today():
     return uz_now().date()
 
 
-def send_telegram(text):
-    """Telegram'ga xabar yuboradi (fon oqimida, xatolar yutiladi)."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+def send_telegram(text, chat_id=None):
+    """Telegram'ga xabar yuboradi (fon oqimida, xatolar yutiladi).
+    chat_id berilmasa — jamoa guruhiga, berilsa — o'sha shaxsga (masalan CEOga)."""
+    target = chat_id or TELEGRAM_CHAT_ID
+    if not TELEGRAM_BOT_TOKEN or not target:
         return
 
     def _send():
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
             payload = json.dumps({
-                "chat_id": TELEGRAM_CHAT_ID,
+                "chat_id": target,
                 "text": text,
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
@@ -697,6 +700,9 @@ def init_db():
         id {pk}, person TEXT, fdate TEXT, created_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS penalty_waiver (
         id {pk}, person TEXT, ym TEXT, created_by TEXT, created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS daily_briefs (
+        id {pk}, person TEXT, for_date TEXT, text TEXT DEFAULT '',
+        submitted_at TEXT, created_at {ts})""")
     # OTPUSK — har 2 oyda 1 marta, 5 kunlik, jarimasiz ta'til so'rovi/tasdiqi
     conn.execute(f"""CREATE TABLE IF NOT EXISTS otpusk_requests (
         id {pk}, person TEXT, start_date TEXT, end_date TEXT, status TEXT DEFAULT 'pending',
@@ -770,6 +776,12 @@ def init_db():
     add_column_if_missing(conn, "shoots", "end_time", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "shoots", "room", "TEXT DEFAULT ''")  # lokatsiya: white/black/tashqi
     add_column_if_missing(conn, "shoots", "video_count", "INTEGER DEFAULT 0")  # tashqi syomka: olingan video soni
+    # backstage nazorati: syomka boshlanganidan keyin tayyorlab qo'yilganmi
+    add_column_if_missing(conn, "shoots", "backstage_ready", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "shoots", "backstage_by", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "shoots", "backstage_at", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "shoots", "backstage_warned", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "shoots", "backstage_penalized", "INTEGER DEFAULT 0")
     # xarajatlar: qayerdan pul chiqdi — usul (naqt/plastik) + kim to'ladi (Dilshod/Gulmira)
     add_column_if_missing(conn, "studio_expenses", "method", "TEXT DEFAULT 'naqt'")
     add_column_if_missing(conn, "studio_expenses", "paid_by", "TEXT DEFAULT ''")
@@ -3909,6 +3921,25 @@ def api_cancel_shoot(user, sid):
     return row
 
 
+def api_shoot_backstage_ready(user, sid):
+    """Gulmira (yoki CEO) syomka uchun backstage tayyorlangani belgilaydi —
+    BACKSTAGE_DEADLINE'gacha bosilmasa, jarima avtomatik yoziladi (cron)."""
+    if user["role"] != "ceo" and user["name"] != BACKSTAGE_PERSON:
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM shoots WHERE id=?", (sid,)).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    conn.execute("UPDATE shoots SET backstage_ready=1, backstage_by=?, backstage_at=? WHERE id=?",
+                 (user["name"], now_local(), sid))
+    log_audit(conn, user["name"], "backstage tayyor deb belgiladi", f"#{sid} {dict(ex).get('project')}")
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM shoots WHERE id=?", (sid,)).fetchone())
+    conn.close()
+    return row
+
+
 def api_delete_shoot(user, sid):
     conn = get_db()
     conn.execute("DELETE FROM shoots WHERE id=?", (sid,))
@@ -4037,7 +4068,7 @@ def _op_earn(conn, name, ym=None):
     ym = ym or uz_now().strftime("%Y-%m")
     like = ym + "%"
     a = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM studio_bookings WHERE operator=? AND bdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (name, like)).fetchone()["s"] or 0
-    b = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM shoots WHERE operator=? AND sdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (name, like)).fetchone()["s"] or 0
+    b = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM shoots WHERE operator=? AND sdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi') AND (backstage_penalized IS NULL OR backstage_penalized=0)", (name, like)).fetchone()["s"] or 0
     return a + b
 
 
@@ -4240,6 +4271,58 @@ def _kassa_penalty(conn, name, today):
     return len(missed) * KASSA_PENALTY_PER_DAY, missed
 
 
+BACKSTAGE_PERSON = "Gulmira"
+BACKSTAGE_PENALTY_PER_SHOOT = 50000   # backstage tayyorlanmagan har syomka uchun Gulmiraga
+BACKSTAGE_WARN_MINUTES = 40           # syomka boshlanganidan shuncha daqiqadan keyin ogohlantirish
+BACKSTAGE_DEADLINE = "20:00"          # shu vaqtgacha ham tayyor bo'lmasa — jarima
+BACKSTAGE_START_DATE = "2026-08-21"   # jarima shu sanadan boshlab qo'llaniladi (retroaktiv emas)
+
+
+def _backstage_penalty(conn, name, ym):
+    """Gulmiraga — shu oyda backstage tayyorlanmay jarimaga tortilgan har syomka uchun −50 000."""
+    if name != BACKSTAGE_PERSON:
+        return 0, 0
+    n = conn.execute(
+        "SELECT COUNT(*) AS n FROM shoots WHERE backstage_penalized=1 AND sdate LIKE ?",
+        (ym + "%",)).fetchone()["n"] or 0
+    return n * BACKSTAGE_PENALTY_PER_SHOOT, n
+
+
+BRIEF_DEADLINE = "20:00"        # bugun shu vaqtgacha ertangi kun rejasi yuborilishi kerak
+BRIEF_REMINDER_TIME = "18:00"   # shu vaqtda hali yozmaganlarga eslatma
+BRIEF_START_DATE = "2026-08-21"  # talab shu sanadan boshlab qo'llaniladi (retroaktiv emas)
+
+
+def _brief_missing_days(conn, name, today):
+    """Shu oyda (bugungacha, yakshanba/otpusksiz) 'ertangi kun rejasi' BRIEF_DEADLINE'gacha
+    yuborilmagan kunlar ro'yxati — bu kunlar Fiksa/Intizomga kirmaydi. Bugungi kun faqat
+    muddat (20:00) o'tgan bo'lsagina hisobga kiradi."""
+    if name not in ATTENDANCE_USERS:
+        return []
+    ym = today.strftime("%Y-%m")
+    otpusk = _otpusk_dates_set(conn, name, ym)
+    now_time = uz_now().strftime("%H:%M")
+    missed = []
+    d = datetime.date(today.year, today.month, 1)
+    while d <= today:
+        iso = d.isoformat()
+        if d.weekday() != 6 and iso >= BRIEF_START_DATE and iso not in otpusk:
+            if d < today or now_time >= BRIEF_DEADLINE:
+                for_date = (d + datetime.timedelta(days=1)).isoformat()
+                row = conn.execute(
+                    "SELECT submitted_at FROM daily_briefs WHERE person=? AND for_date=?",
+                    (name, for_date)).fetchone()
+                ok = False
+                if row and row["submitted_at"]:
+                    sub = str(row["submitted_at"])
+                    if sub[:10] == iso and sub[11:16] <= BRIEF_DEADLINE:
+                        ok = True
+                if not ok:
+                    missed.append(iso)
+        d += datetime.timedelta(days=1)
+    return missed
+
+
 TELEGRAM_USERNAME_BY_PERSON = {v: k for k, v in TELEGRAM_ATTEND.items()}
 
 
@@ -4247,6 +4330,21 @@ def _telegram_mention(person):
     """Guruhda odamni @username bilan belgilash uchun (bo'lmasa, ismi qalin qilib)."""
     uname = TELEGRAM_USERNAME_BY_PERSON.get(person)
     return f"@{uname}" if uname else f"<b>{person}</b>"
+
+
+def _get_ceo_chat_id(conn=None):
+    """CEOning shaxsiy Telegram chat_id'si (botga birinchi marta yozganda avtomatik saqlanadi)."""
+    close = conn is None
+    conn = conn or get_db()
+    row = conn.execute("SELECT svalue FROM settings WHERE skey='ceo_chat_id'").fetchone()
+    if close:
+        conn.close()
+    return row["svalue"] if row else None
+
+
+def _set_ceo_chat_id(conn, chat_id):
+    conn.execute("DELETE FROM settings WHERE skey='ceo_chat_id'")
+    conn.execute("INSERT INTO settings (skey, svalue) VALUES ('ceo_chat_id', ?)", (str(chat_id),))
 
 
 def _attendance_penalty(conn, name, today):
@@ -4403,22 +4501,27 @@ def compute_salary(conn, name, rate, ym=None):
     cl = cfg.get("close_link") or []          # kun yopishga bog'langan komponent(lar)
     close_links = [cl] if isinstance(cl, str) else list(cl)
     is_close = name in DAILY_CLOSE_USERS
+    brief_missed = _brief_missing_days(conn, name, today) if name in ATTENDANCE_USERS else []
     for label, som in (cfg.get("som") or {}).items():
         amt = int(som)
         lbl = label
         kind = "fixed"
         if label == "Fiksa" and name in ATTENDANCE_USERS:
             wd = _workdays_in_month(today.year, today.month)
-            came = _attended_days(conn, name, today)
+            came = max(0, _attended_days(conn, name, today) - len(brief_missed))
             daily = amt / wd if wd else 0
             full_fmt = "{:,}".format(amt).replace(",", " ")
             amt = min(int(round(daily * came)), amt)  # oylikdan hech qachon oshmasin
             lbl = f"Fiksa (oylik {full_fmt}) · {came}/{wd} kun kelgan"
+            if brief_missed:
+                lbl += f" (brif yozilmagan {len(brief_missed)} kun hisobga kirmadi)"
             kind = "auto"
         elif label == "Intizom" and name in ATTENDANCE_USERS:
-            ot = _ontime_days(conn, name, today)
+            ot = max(0, _ontime_days(conn, name, today) - len(brief_missed))
             amt = min(ot * INTIZOM_PER_DAY, INTIZOM_FULL)
             lbl = f"Intizom · {ot} kun o'z vaqtida"
+            if brief_missed:
+                lbl += f" (brif yozilmagan {len(brief_missed)} kun hisobga kirmadi)"
             kind = "auto"
         elif label in close_links and is_close:
             amt, closed, wd = _kpi_after_discipline(conn, name, amt, today)
@@ -4503,6 +4606,12 @@ def compute_salary(conn, name, rate, ym=None):
         if kassa_pen > 0:
             comps.append({"label": f"Kassa vaqtida yopilmadi ({len(kassa_missed)} kun, {KASSA_CLOSE_DEADLINE}gacha)",
                           "amount": -kassa_pen, "kind": "penalty"})
+    # Backstage vaqtida tayyorlanmagani uchun jarima (faqat Gulmira)
+    if cfg.get("backstage_penalty"):
+        bs_pen, bs_n = _backstage_penalty(conn, name, ym)
+        if bs_pen > 0:
+            comps.append({"label": f"Backstage tayyorlanmadi ({bs_n} ta syomka, {BACKSTAGE_DEADLINE}gacha)",
+                          "amount": -bs_pen, "kind": "penalty"})
     total = sum(c["amount"] for c in comps)
     paid = _paid_to(conn, name, ym)
     return {"name": name, "title": cfg.get("title", ""), "components": comps,
@@ -4663,6 +4772,50 @@ def api_otpusk_decide(user, b):
          f"❌ <b>Otpusk rad etildi</b>\n👤 {row['person']}\n📅 {row['start_date']} — {row['end_date']}")
     )
     return {"ok": True, "decision": decision}
+
+
+def api_brief_submit(user, b):
+    """Xodim ertangi kun ish rejasini (kunlik brif) yozadi. BRIEF_DEADLINE
+    (20:00)gacha yuborilmasa — ertaga kun yopilmaydi va Fiksa/Intizom kamayadi
+    (_brief_missing_days). Yuborilgan matn CEOga shaxsiy Telegram xabari sifatida ham ketadi."""
+    if user["name"] not in ATTENDANCE_USERS:
+        return {"error": "Sizga tegishli emas"}, 403
+    text = (b.get("text") or "").strip()
+    if not text:
+        return {"error": "Reja matnini yozing"}, 400
+    tomorrow = (uz_today() + datetime.timedelta(days=1)).isoformat()
+    conn = get_db()
+    ex = conn.execute("SELECT id FROM daily_briefs WHERE person=? AND for_date=?",
+                      (user["name"], tomorrow)).fetchone()
+    now = now_local()
+    if ex:
+        conn.execute("UPDATE daily_briefs SET text=?, submitted_at=? WHERE id=?", (text, now, ex["id"]))
+    else:
+        conn.execute(
+            "INSERT INTO daily_briefs (person, for_date, text, submitted_at, created_at) VALUES (?,?,?,?,?)",
+            (user["name"], tomorrow, text, now, now))
+    log_audit(conn, user["name"], "ertangi kun rejasini yozdi", tomorrow)
+    conn.commit()
+    ceo_chat = _get_ceo_chat_id(conn)
+    conn.close()
+    if ceo_chat:
+        send_telegram(f"📋 <b>{user['name']}</b> — ertangi kun ({tomorrow}) rejasi:\n{text}", chat_id=ceo_chat)
+    return {"ok": True, "forDate": tomorrow}
+
+
+def api_brief_today(user):
+    """Ertangi kun uchun o'zi yozgan rejani ko'rsatadi (yozganmi, matni, qachon)."""
+    if user["name"] not in ATTENDANCE_USERS:
+        return {"error": "Sizga tegishli emas"}, 403
+    tomorrow = (uz_today() + datetime.timedelta(days=1)).isoformat()
+    conn = get_db()
+    row = conn.execute("SELECT text, submitted_at FROM daily_briefs WHERE person=? AND for_date=?",
+                       (user["name"], tomorrow)).fetchone()
+    conn.close()
+    return {"forDate": tomorrow, "submitted": bool(row),
+            "text": (row["text"] if row else ""),
+            "submittedAt": (row["submitted_at"] if row else None),
+            "deadline": BRIEF_DEADLINE}
 
 
 # ------------------------------------------------------------
@@ -5448,6 +5601,14 @@ def api_close_day(user, b=None):
             first = tmap.get(no_note[0]["id"], "vazifa")
             conn.close()
             return {"error": f"Belgilangan har vazifaga izoh yozing (nima qildingiz). Masalan: «{first}»"}, 400
+        # 4) Ertangi kun ish rejasi (brif) yozilmagan bo'lsa — kun yopilmaydi
+        if user["name"] in ATTENDANCE_USERS and today >= BRIEF_START_DATE:
+            tomorrow = (uz_today() + datetime.timedelta(days=1)).isoformat()
+            brief = conn.execute("SELECT id FROM daily_briefs WHERE person=? AND for_date=?",
+                                 (user["name"], tomorrow)).fetchone()
+            if not brief:
+                conn.close()
+                return {"error": "Avval ertangi kun ish rejasini (brifni) yozib yuboring, keyin kunni yoping."}, 400
 
     # Biriktirilgan vazifalar holatini saqlaymiz (belgi + izoh)
     if raw is not None and assigned_in:
@@ -5679,6 +5840,95 @@ def api_cron_kassa_check():
     return {"ok": True, "todayClosed": today_closed, "yesterdayClosed": yesterday_closed, "phase": "reminder" if now_time < KASSA_CLOSE_DEADLINE else "penalty"}
 
 
+def _shoot_start_dt(today_iso, start_time):
+    """Syomka boshlanish vaqtini (sana+soat) datetime obyektiga aylantiradi."""
+    if not start_time:
+        return None
+    try:
+        dt = datetime.datetime.strptime(f"{today_iso} {start_time[:5]}", "%Y-%m-%d %H:%M")
+        return dt.replace(tzinfo=UZ_TZ)
+    except ValueError:
+        return None
+
+
+def api_cron_backstage_check():
+    """Tez-tez (masalan har 10-15 daqiqada) tashqi cron chaqiradi:
+    - Syomka boshlanganidan BACKSTAGE_WARN_MINUTES o'tib, backstage hali tayyor
+      bo'lmasa — operator + Gulmirani @ bilan belgilab bir martalik ogohlantirish.
+    - BACKSTAGE_DEADLINE (20:00)da hali ham tayyor bo'lmasa — bir martalik jarima:
+      operatorning shu syomka puli hisoblanmaydi, Gulmiraga −50 000."""
+    today = uz_today()
+    today_iso = today.isoformat()
+    now = uz_now()
+    now_time = now.strftime("%H:%M")
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM shoots WHERE sdate=? AND (status IS NULL OR status<>'bekor_qilindi') "
+        "AND (backstage_ready IS NULL OR backstage_ready=0)", (today_iso,)).fetchall()]
+    warned, penalized = [], []
+    for r in rows:
+        if today_iso < BACKSTAGE_START_DATE:
+            continue
+        if not r.get("backstage_warned"):
+            st = _shoot_start_dt(today_iso, r.get("start_time") or "")
+            if st and now >= st + datetime.timedelta(minutes=BACKSTAGE_WARN_MINUTES):
+                op_mention = (_telegram_mention(r["operator"]) + " ") if r.get("operator") else ""
+                send_telegram(
+                    f"🎬 <b>{r['project']}</b> uchun backstage hali tayyor emas!\n"
+                    f"{op_mention}{_telegram_mention(BACKSTAGE_PERSON)} — backstage tayyorlab, "
+                    f"dashboardda «Backstage tayyor» tugmasini bosing. Soat {BACKSTAGE_DEADLINE}gacha "
+                    f"bosilmasa jarima yoziladi."
+                )
+                conn.execute("UPDATE shoots SET backstage_warned=1 WHERE id=?", (r["id"],))
+                warned.append(r["id"])
+        if not r.get("backstage_penalized") and now_time >= BACKSTAGE_DEADLINE:
+            conn.execute("UPDATE shoots SET backstage_penalized=1 WHERE id=?", (r["id"],))
+            op_txt = ""
+            if r.get("operator"):
+                op_txt = f"\n{_telegram_mention(r['operator'])} — bu syomka uchun operator puli hisoblanmaydi."
+            send_telegram(
+                f"⚫️ <b>{r['project']}</b> — backstage tayyorlanmadi!\n"
+                f"{_telegram_mention(BACKSTAGE_PERSON)} — −{som(BACKSTAGE_PENALTY_PER_SHOOT)} jarima yozildi.{op_txt}"
+            )
+            penalized.append(r["id"])
+    conn.commit()
+    conn.close()
+    return {"ok": True, "warned": warned, "penalized": penalized}
+
+
+def api_cron_brief_check():
+    """18:00da (BRIEF_REMINDER_TIME) VA 20:05da (BRIEF_DEADLINE'dan keyin) tashqi
+    cron chaqiradi: ertangi kun rejasini hali yubormaganlarga @ bilan eslatma/ogohlantirish."""
+    today = uz_today()
+    if today.weekday() == 6:
+        return {"ok": True, "skipped": "yakshanba"}
+    if today.isoformat() < BRIEF_START_DATE:
+        return {"ok": True, "skipped": "hali boshlanmagan"}
+    now_time = uz_now().strftime("%H:%M")
+    tomorrow = (today + datetime.timedelta(days=1)).isoformat()
+    conn = get_db()
+    submitted = {r["person"] for r in conn.execute(
+        "SELECT person FROM daily_briefs WHERE for_date=?", (tomorrow,)).fetchall()}
+    conn.close()
+    missing = [p for p in ATTENDANCE_USERS if p not in submitted]
+    if not missing:
+        return {"ok": True, "missing": []}
+    mentions = ", ".join(_telegram_mention(p) for p in missing)
+    if now_time < BRIEF_DEADLINE:
+        send_telegram(
+            f"📋 Ertangi kun ({tomorrow}) ish rejangizni hali yubormadingiz: {mentions}\n"
+            f"Soat {BRIEF_DEADLINE}gacha yuboring — aks holda kun yopilmaydi va bugungi daromadingiz hisoblanmaydi."
+        )
+        phase = "reminder"
+    else:
+        send_telegram(
+            f"⚫️ Ertangi kun ({tomorrow}) rejasi yuborilmadi: {mentions}\n"
+            f"Bugungi kun yopilmaydi, Fiksa/Intizom shu kun uchun hisoblanmaydi."
+        )
+        phase = "penalty"
+    return {"ok": True, "missing": missing, "phase": phase}
+
+
 def api_cron_inactive_projects():
     """Tashqi cron (har kuni ertalab) chaqiradi — INACTIVITY_DAYS+ kun harakatsiz
     (hali bitmagan, hali ogohlantirilmagan) loyihalar uchun bir martalik guruh
@@ -5693,9 +5943,11 @@ def api_cron_inactive_projects():
             continue
         conn.execute("UPDATE projects SET inactivity_notified=1 WHERE id=?", (p["id"],))
         notified.append(p["name"])
+        resp = p.get("responsible") or ""
+        mas_ul = _telegram_mention(resp) if resp else "—"
         send_telegram(
             f"🚨 <b>Loyiha harakatsiz qolyapti!</b>\n📁 {p['name']}\n"
-            f"👤 Mas'ul: {p.get('responsible') or '—'}\n"
+            f"👤 Mas'ul: {mas_ul}\n"
             f"⏳ Oxirgi harakat: {p.get('inactiveDays')}+ kun oldin\n\n"
             "Iltimos, holatini tekshiring."
         )
@@ -6038,9 +6290,17 @@ def api_telegram_webhook(update):
     try:
         _save_last_webhook(update)
         msg = (update or {}).get("message") or (update or {}).get("edited_message") or {}
+        uname = ((msg.get("from") or {}).get("username") or "").lower()
+        chat = msg.get("chat") or {}
+        # CEO botga shaxsiy yozganda — chat_id'ni avtomatik ulab qo'yamiz
+        # (keyinchalik ertangi kun reja xabarlarini shu yerga yuborish uchun).
+        if chat.get("type") == "private" and uname and uname not in TELEGRAM_ATTEND:
+            conn = get_db()
+            _set_ceo_chat_id(conn, chat.get("id"))
+            conn.commit()
+            conn.close()
         if not msg.get("video_note"):
             return {"ok": True}
-        uname = ((msg.get("from") or {}).get("username") or "").lower()
         person = TELEGRAM_ATTEND.get(uname)
         if not person:
             return {"ok": True}
@@ -6218,6 +6478,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_cron_deadline_check())
         if path == "/api/cron/morning-digest":
             return self._json(api_cron_morning_digest())
+        if path == "/api/cron/backstage-check":
+            return self._json(api_cron_backstage_check())
+        if path == "/api/cron/brief-check":
+            return self._json(api_cron_brief_check())
         if not path.startswith("/api/"):
             return self._serve_static(path)
 
@@ -6325,6 +6589,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_budget(user))
         if path == "/api/shoots":
             return self._forbid() if role not in APPROVER_ROLES else self._json(api_shoots(user, show_all))
+        if path == "/api/brief/today":
+            return self._json(api_brief_today(user))
         if path == "/api/playbooks":
             return self._json(api_playbooks(user))
         if path == "/api/scenarist":
@@ -6502,6 +6768,12 @@ class Handler(BaseHTTPRequestHandler):
             sid = self._int(seg[2])
             res = api_shoot_videos(user, sid, b) if sid else None
             return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "shoots" and seg[3] == "backstage":
+            sid = self._int(seg[2])
+            res = api_shoot_backstage_ready(user, sid) if sid else None
+            return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
+        if path == "/api/brief/submit":
+            return self._json(api_brief_submit(user, b))
         if path == "/api/scenarist":
             if not is_scenarist(user):
                 return self._forbid()

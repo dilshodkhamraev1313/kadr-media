@@ -478,10 +478,12 @@ function taskVideoItem(v) {
 }
 
 async function viewToday() {
-  const [t, att, dc, fa] = await Promise.all([
+  const [t, att, dc, fa, brief] = await Promise.all([
     api('/api/my-tasks'), api('/api/attendance').catch(() => ({})), api('/api/daily').catch(() => ({})),
     api('/api/file-archive/today').catch(() => ({})),
+    api('/api/brief/today').catch(() => ({})),
   ]);
+  DATA.brief = brief;
   DATA.myTasks = t;
   const tk = t.tasks || {};
   // Kuchli Bugun — montaj vazifalari: kechikkan/muddati yaqin eng tepada
@@ -510,6 +512,9 @@ async function viewToday() {
   }
   if (fa && !fa.error && !fa.marked) {
     rem.push(`<div class="today-rem"><span>📁 Bugungi syomka fayllari hali belgilanmagan</span><button class="mini-btn green" id="t_filearchive">📁 Fayllar joylandi</button></div>`);
+  }
+  if (brief && !brief.error && !brief.submitted) {
+    rem.push(`<div class="today-rem"><span>📋 Ertangi kun ish rejangizni hali yozmadingiz — soat ${esc(brief.deadline || '20:00')}gacha yuboring</span><button class="mini-btn blue" id="t_brief">📋 Reja yozish</button></div>`);
   }
   if (rem.length) html += `<div class="panel today-rems">${rem.join('')}</div>`;
 
@@ -542,9 +547,28 @@ async function viewToday() {
   if (cl) cl.addEventListener('click', () => { VIEW = 'daily'; render(); });
   const ob2 = $('#t_ombor');
   if (ob2) ob2.addEventListener('click', () => { VIEW = 'ombor'; render(); });
+  const bb = $('#t_brief');
+  if (bb) bb.addEventListener('click', () => openBriefModal(brief));
   $('#content').querySelectorAll('[data-vact]').forEach((b) => b.addEventListener('click', (e) => {
     e.stopPropagation(); videoActionUI(b.dataset.id, b.dataset.vact);
   }));
+}
+
+function openBriefModal(brief) {
+  const forDate = (brief && brief.forDate) ? fmtDate(brief.forDate) : 'ertaga';
+  openModal(`📋 Ertangi kun (${forDate}) rejasi`, `
+    <div class="field"><label>Nima qilmoqchisiz?</label>
+      <textarea id="bf_text" rows="5" placeholder="masalan: 10:00 — Namuna Mebel syomkasi, 14:00 — 3 ta reels montaj...">${esc((brief && brief.text) || '')}</textarea></div>
+    <div class="modal-actions"><button class="btn-save" id="bf_save">📋 Yuborish</button></div>`,
+  () => {
+    $('#bf_save').addEventListener('click', async () => {
+      const text = $('#bf_text').value.trim();
+      if (!text) { toast('Reja matnini yozing'); return; }
+      const res = await api('/api/brief/submit', { method: 'POST', body: JSON.stringify({ text }) });
+      if (res && res.error) { toast(res.error); return; }
+      closeModal(); toast('📋 Reja yuborildi'); render();
+    });
+  });
 }
 
 // ---------- OMBOR (rol qo'llanmalari + onboarding) ----------
@@ -1513,6 +1537,9 @@ function openMediaDayModal(iso) {
 function shootCard(s) {
   const cancelled = (s.status || 'active') === 'bekor_qilindi';
   const st = SHOOT_TYPE_LABEL[s.shoot_type] || s.shoot_type;
+  const bsBadge = (!cancelled && !s.backstage_ready)
+    ? `<span class="badge risk">🎬 Backstage kutilmoqda</span>`
+    : (!cancelled && s.backstage_ready ? `<span class="badge">✅ Backstage tayyor</span>` : '');
   return `
     <div class="video-card clickable shoot-card${cancelled ? ' shoot-cancelled' : ''}" data-sid="${s.id}">
       <div class="pc-top"><div class="pc-name">📁 ${esc(s.project || '—')}</div>
@@ -1521,6 +1548,7 @@ function shootCard(s) {
         <span class="link-chip">🎥 ${esc(st)}</span>
         ${s.operator ? `<span class="link-chip">👤 ${esc(s.operator)}</span>` : ''}
         ${(s.operator && !cancelled) ? `<span class="money-chip">💰 ${money(s.operator_pay)}</span>` : ''}
+        ${bsBadge}
       </div>
       ${s.note ? `<div class="pc-problem soft">📝 ${esc(s.note)}</div>` : ''}
       <div class="pc-foot"><div class="muted">📅 ${fmtDate(s.sdate)}${s.start_time ? ' · ⏱ ' + esc(s.start_time) + (s.end_time ? '–' + esc(s.end_time) : '') : ''} · 👮 ${esc(s.created_by || '')}</div></div>
@@ -1607,6 +1635,11 @@ function openShootDetailModal(s) {
   const actions = cancelled
     ? `<button class="mini-btn red" id="sh_del">🗑 O'chirish</button>`
     : `<button class="mini-btn gray" id="sh_cancel">🚫 Bekor qilish</button><button class="mini-btn red" id="sh_del">🗑 O'chirish</button>`;
+  const canBackstage = !cancelled && (ME.role === 'ceo' || ME.name === 'Gulmira');
+  const backstageBlock = cancelled ? '' : `
+    <div class="mrow"><span>🎬 Backstage</span><b>${s.backstage_ready ? `✅ Tayyor (${esc(s.backstage_by || '')})` : '⏳ Kutilmoqda'}</b></div>`;
+  const backstageBtn = (canBackstage && !s.backstage_ready)
+    ? `<button class="btn-save" id="sh_backstage" style="margin:2px 0 12px">✅ Backstage tayyor</button>` : '';
   openModal(`Syomka · ${esc(s.project || '')}`, `
     ${cancelled ? `<div class="pill st-red" style="display:inline-block;margin-bottom:10px">🚫 Bekor qilindi</div>` : ''}
     <div class="money-rows" style="margin-bottom:12px">
@@ -1617,11 +1650,19 @@ function openShootDetailModal(s) {
       <div class="mrow"><span>📅 Sana</span><b>${fmtDate(s.sdate)}</b></div>
       ${s.start_time ? `<div class="mrow"><span>⏱ Vaqt</span><b>${esc(s.start_time)}${s.end_time ? '–' + esc(s.end_time) : ''}</b></div>` : ''}
       <div class="mrow"><span>👮 Belgiladi</span><b>${esc(s.created_by || '—')}</b></div>
+      ${backstageBlock}
     </div>
     ${s.note ? `<div class="pc-problem soft" style="margin-bottom:12px">📝 ${esc(s.note)}</div>` : ''}
     ${extBlock}
+    ${backstageBtn}
     <div class="modal-actions">${actions}</div>`,
   () => {
+    const bs = $('#sh_backstage');
+    if (bs) bs.addEventListener('click', async () => {
+      const res = await api(`/api/shoots/${s.id}/backstage`, { method: 'POST', body: '{}' });
+      if (res && res.error) { toast(res.error); return; }
+      closeModal(); toast('✅ Backstage tayyor deb belgilandi'); render();
+    });
     const vc = $('#sh_vcount');
     if (vc) {
       const vpay = () => {
