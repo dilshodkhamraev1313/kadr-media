@@ -4290,7 +4290,7 @@ def _backstage_penalty(conn, name, ym):
 
 BRIEF_DEADLINE = "20:00"        # bugun shu vaqtgacha ertangi kun rejasi yuborilishi kerak
 BRIEF_REMINDER_TIME = "18:00"   # shu vaqtda hali yozmaganlarga eslatma
-BRIEF_START_DATE = "2026-08-21"  # talab shu sanadan boshlab qo'llaniladi (retroaktiv emas)
+BRIEF_START_DATE = "2026-08-20"  # talab shu sanadan boshlab qo'llaniladi (retroaktiv emas)
 
 
 def _brief_missing_days(conn, name, today):
