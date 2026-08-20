@@ -6284,6 +6284,19 @@ def api_webhook_info():
         return {"error": str(e)}
 
 
+def api_debug_bot_username():
+    """VAQTINCHALIK: bot @username'ini olish (Telegram getMe)."""
+    if not TELEGRAM_BOT_TOKEN:
+        return {"error": "TELEGRAM_BOT_TOKEN yo'q"}
+    try:
+        import urllib.request
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe"
+        with urllib.request.urlopen(url, timeout=10) as r:
+            return json.loads(r.read().decode())
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def api_telegram_webhook(update):
     """Telegram botdan keladigan yangilanishlar. 'ish voxti' topikdagi kruzhok (video_note)
     ma'lum foydalanuvchidan kelsa — o'sha kishi ishga keldi deb belgilanadi."""
@@ -6499,6 +6512,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role != "ceo" else self._json(api_last_webhook())
         if path == "/api/telegram/webhook-info":
             return self._forbid() if role != "ceo" else self._json(api_webhook_info())
+        if path == "/api/debug/bot-username":
+            return self._forbid() if role != "ceo" else self._json(api_debug_bot_username())
         if path == "/api/team":
             return self._json(api_team())
         if path == "/api/clients":
