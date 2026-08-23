@@ -4302,6 +4302,13 @@ def _brief_missing_days(conn, name, today):
     ym = today.strftime("%Y-%m")
     otpusk = _otpusk_dates_set(conn, name, ym)
     now_time = uz_now().strftime("%H:%M")
+    # Bitta so'rov bilan shu oy uchun barcha yuborilgan brieflarni olamiz (kun-boshiga
+    # alohida so'rov yubormaslik uchun — kichik CPU limitli serverda muhim optimallashtirish).
+    submitted = {}
+    for r in conn.execute(
+            "SELECT for_date, submitted_at FROM daily_briefs WHERE person=? AND for_date LIKE ?",
+            (name, ym[:4] + "%")).fetchall():
+        submitted[r["for_date"]] = r["submitted_at"]
     missed = []
     d = datetime.date(today.year, today.month, 1)
     while d <= today:
@@ -4309,14 +4316,8 @@ def _brief_missing_days(conn, name, today):
         if d.weekday() != 6 and iso >= BRIEF_START_DATE and iso not in otpusk:
             if d < today or now_time >= BRIEF_DEADLINE:
                 for_date = (d + datetime.timedelta(days=1)).isoformat()
-                row = conn.execute(
-                    "SELECT submitted_at FROM daily_briefs WHERE person=? AND for_date=?",
-                    (name, for_date)).fetchone()
-                ok = False
-                if row and row["submitted_at"]:
-                    sub = str(row["submitted_at"])
-                    if sub[:10] == iso and sub[11:16] <= BRIEF_DEADLINE:
-                        ok = True
+                sub = submitted.get(for_date)
+                ok = bool(sub and str(sub)[:10] == iso and str(sub)[11:16] <= BRIEF_DEADLINE)
                 if not ok:
                     missed.append(iso)
         d += datetime.timedelta(days=1)
@@ -6271,23 +6272,6 @@ def api_last_webhook():
         return {"empty": True}
 
 
-def api_debug_payroll_diag():
-    """VAQTINCHALIK: har bir SALARY kishisi uchun compute_salary'ni alohida sinaydi,
-    kim va nima sababdan xato berayotganini topish uchun."""
-    rate = get_usd_rate()
-    conn = get_db()
-    out = {}
-    for name in SALARY:
-        try:
-            sal = compute_salary(conn, name, rate)
-            out[name] = {"ok": True, "total": sal["total"] if sal else None}
-        except Exception as e:
-            import traceback
-            out[name] = {"ok": False, "error": str(e), "trace": traceback.format_exc()}
-    conn.close()
-    return out
-
-
 def api_webhook_info():
     """Telegram getWebhookInfo — webhook sog'ligi, xatolar, kutayotgan xabarlar."""
     if not TELEGRAM_BOT_TOKEN:
@@ -6518,8 +6502,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role != "ceo" else self._json(api_last_webhook())
         if path == "/api/telegram/webhook-info":
             return self._forbid() if role != "ceo" else self._json(api_webhook_info())
-        if path == "/api/debug/payroll-diag":
-            return self._forbid() if role != "ceo" else self._json(api_debug_payroll_diag())
         if path == "/api/team":
             return self._json(api_team())
         if path == "/api/clients":
