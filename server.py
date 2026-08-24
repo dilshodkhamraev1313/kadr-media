@@ -154,7 +154,7 @@ DEFAULT_PLAYBOOKS = {
 }
 # Kadr Media (ichki syomka) — studio TUSHUMIga pul hisoblanmaydi (faqat xona/vaqt band + operator puli)
 STUDIO_NO_INCOME_TYPES = ("kadr_media",)
-STUDIO_OPERATORS = ("Said", "Umid", "Shodiya")
+STUDIO_OPERATORS = ("Umid", "Shodiya")
 
 # Kelib tushgan pullar shaffofligi — kim qabul qildi + qanday usul.
 INCOME_RECEIVERS = ("Dilshod Khamraev", "Gulmira")
@@ -163,7 +163,7 @@ METHOD_LABEL = {"naqt": "Naqt", "plastik": "Plastik"}
 
 # Ssenaristlar va har tasdiqlangan ssenariy uchun haq (so'm).
 # Ssenarist o'z kabinetidan tasdiqlangan ssenariyni kiritadi — pul avtomatik hisoblanadi.
-SCENARIST_PAY = {"Xonzoda": 100000, "Umida": 50000}
+SCENARIST_PAY = {"Xonzoda": 100000}
 
 # Umida SMM qiladigan loyihalar. SMM to'liq daromadi shu loyihalar bajarilishiga bog'liq
 # (hammasi bajarilsa — to'liq; qismi bajarilsa — foizi). Umida oy davomida belgilaydi.
@@ -182,7 +182,7 @@ LEADERSHIP_USD_HALF = 25  # deadline o'tib ketgan bo'lsa
 STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun (har bron)
 
 # Kunlik sarhisob yopish majburiyati shu 4 kishida.
-DAILY_CLOSE_USERS = ("Said", "Gulmira", "Xonzoda", "Umida", "Shodiya")
+DAILY_CLOSE_USERS = ("Gulmira", "Xonzoda", "Shodiya")
 WORKDAYS_PER_MONTH = 25  # intizom bo'linadigan ish kunlari (yakshanba dam)
 STORIES_PROJECT_USD = 100  # har biriktirilgan "Stories" loyihasi uchun OYLIK maksimal ($/25 kun = kunlik ulush)
 
@@ -228,11 +228,10 @@ DEFAULT_CHECKLIST = {
 }
 
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
-ATTENDANCE_USERS = ("Gulmira", "Said", "Xonzoda", "Umid", "Umida", "Sardor", "Shodiya")
+ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya")
 TELEGRAM_ATTEND = {
-    "baxt_mira": "Gulmira", "said_israilov": "Said", "pilotflight6": "Xonzoda",
+    "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
-    "umiyanassu": "Umida",
 }
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
@@ -254,8 +253,10 @@ OTPUSK_COOLDOWN_MONTHS = 1        # otpuskdan otpuskgacha eng kam oraliq (har oy
 INACTIVITY_DAYS = 3               # shuncha kun harakatsiz loyiha "stale" deb belgilanadi
 
 # Har xodim rahbarlik qiladigan loyihalar (nomi projects jadvalidagi bilan mos).
+# ESLATMA: Said ketgani sababli "Namuna mebel", "Nova school",
+# "Nodirbek Primqulov (arab tili)" loyihalari hozircha rahbarsiz qoldi — CEO
+# bularni kimga biriktirishni hal qilishi kerak.
 LEADERSHIP = {
-    "Said": ["Namuna mebel", "Nova school", "Nodirbek Primqulov (arab tili)"],
     "Xonzoda": ["Amarkets (Bekzod Treding)", "Fidda kumush taqinchoqlar"],
     "Gulmira": ["Umida-targetolog", "Kadr studio"],
     "Shodiya": ["Estetik Korreya Mastura"],
@@ -271,15 +272,9 @@ SALARY = {
                 "som": {"Fiksa": 2000000, "Intizom": 500000, "Operatsion boshqaruv": 500000},
                 "lead": True, "close_link": "Operatsion boshqaruv", "kassa_penalty": True,
                 "backstage_penalty": True},
-    "Said": {"title": "Operator + loyiha rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
-             "usd": {"Sifat nazorati": 100}, "lead": True, "operator": True,
-             "close_link": "Sifat nazorati"},
     "Xonzoda": {"title": "Ssenarist + koordinator", "som": {"Fiksa": 2000000, "Intizom": 500000},
                 "usd": {"Koordinatorlik": 100}, "lead": True, "scenarist": True,
                 "close_link": "Koordinatorlik"},
-    "Umida": {"title": "SMM + ssenarist + montajchi", "som": {"Intizom": 500000},
-              "usd": {"Stories": 100, "SMM": 100}, "scenarist": True, "montaj": True,
-              "close_link": ["Stories", "SMM"]},
     "Sardor": {"title": "Montajchi + Video arxiv mas'uli", "som": {"Fiksa": 500000, "Intizom": 500000},
                "montaj": True, "file_archive_daily": FILE_ARCHIVE_DAILY_RATE},
     "Umid": {"title": "Montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
@@ -496,6 +491,11 @@ TEAM = [
     ("Nodirbek Primqulov Arab tili",             "nodirbek", "mijoz2607", "client", "Mijoz", "#FFD60A", "Nodirbek Primqulov Arab tili"),
     ("Zebo Rixsibayevna (Nova School asoschisi)","zebo",     "mijoz2608", "client", "Mijoz", "#5E5CE6", "Zebo Rixsibayevna (Nova School asoschisi)"),
 ]
+
+# Jamoadan ketgan, tizimda MUZLATILGAN xodimlar — login qila olmaydi, hech qanday
+# eslatma/ogohlantirish/vazifa/daromad ularga tegishli bo'lmaydi. Tarixiy ma'lumotlari
+# (o'tgan oylardagi to'lovlar, arxiv) o'chirilmaydi — faqat bundan keyingi faollik to'xtaydi.
+FROZEN_USERS = ("Said", "Umida")
 
 
 def make_salt():
@@ -807,6 +807,8 @@ def init_db():
     add_column_if_missing(conn, "projects", "prev_reset_at", "TEXT DEFAULT ''")
     # Loyiha 3+ kun harakatsiz qolsa — bir martalik Telegram ogohlantirish (spam qilmaslik uchun flag)
     add_column_if_missing(conn, "projects", "inactivity_notified", "INTEGER DEFAULT 0")
+    # Jamoadan ketgan xodimni login qila olmaydigan qilib "muzlatish" uchun.
+    add_column_if_missing(conn, "users", "active", "INTEGER DEFAULT 1")
     _seed_checklist(conn)
     _seed_playbooks(conn)
     _backfill_studio_ledger(conn)
@@ -865,7 +867,22 @@ def init_db():
 
     ensure_accounts(conn)
     ensure_project_plans(conn)
+    freeze_departed_users(conn)
     conn.close()
+
+
+def freeze_departed_users(conn):
+    """FROZEN_USERS'dagi xodimlarni login qila olmaydigan qilib belgilaydi va
+    ochiq sessiyalarini bekor qiladi (idempotent — har server ishga tushganda
+    xavfsiz qayta ishlaydi)."""
+    if not FROZEN_USERS:
+        return
+    ph = ",".join(["?"] * len(FROZEN_USERS))
+    conn.execute(f"UPDATE users SET active=0 WHERE name IN ({ph})", list(FROZEN_USERS))
+    conn.execute(
+        f"DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE name IN ({ph}))",
+        list(FROZEN_USERS))
+    conn.commit()
 
 
 def ensure_project_plans(conn):
@@ -1369,6 +1386,8 @@ def user_from_token(token):
         (token,),
     ).fetchone()
     conn.close()
+    if row and not row["active"]:
+        return None
     return dict(row) if row else None
 
 
@@ -1377,7 +1396,7 @@ def api_login(b):
     password = b.get("password") or ""
     conn = get_db()
     row = conn.execute("SELECT * FROM users WHERE lower(username) = ?", (username,)).fetchone()
-    if not row or not row["password_hash"] or hash_pw(password, row["salt"]) != row["password_hash"]:
+    if not row or not row["password_hash"] or hash_pw(password, row["salt"]) != row["password_hash"] or not row["active"]:
         conn.close()
         return None
     token = secrets.token_hex(24)
