@@ -230,12 +230,10 @@ DEFAULT_CHECKLIST = {
 
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
 ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar")
-# ESLATMA: Samandarning Telegram @username'i hali kiritilmagan (pastda "?" bilan
-# belgilangan) — CEO aytgach, shu yerga qo'yiladi. Shungacha uning "ish vaqti"
-# guruhiga tashlagan kruzhogi orqali davomat avtomatik belgilanmaydi.
 TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
+    "pardaboyev_samandar": "Samandar",
 }
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
