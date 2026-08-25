@@ -6285,34 +6285,6 @@ def _save_last_webhook(update):
         pass
 
 
-def api_debug_said_august():
-    """VAQTINCHALIK: Said tizimdan chiqarilgan, lekin avgust uchun necha pul
-    ishlaganini bilish uchun eski konfiguratsiyasi bilan qayta hisoblaydi."""
-    cfg = {"title": "Operator + loyiha rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
-           "usd": {"Sifat nazorati": 100}, "lead": True, "operator": True,
-           "close_link": "Sifat nazorati"}
-    old_salary = dict(SALARY)
-    old_attendance = ATTENDANCE_USERS
-    old_daily = DAILY_CLOSE_USERS
-    old_leadership = dict(LEADERSHIP)
-    globals()["SALARY"] = {**old_salary, "Said": cfg}
-    globals()["ATTENDANCE_USERS"] = old_attendance + ("Said",)
-    globals()["DAILY_CLOSE_USERS"] = old_daily + ("Said",)
-    globals()["LEADERSHIP"] = {**old_leadership, "Said": ["Namuna mebel", "Nova school", "Nodirbek Primqulov (arab tili)"]}
-    try:
-        conn = get_db()
-        rate = get_usd_rate()
-        sal = compute_salary(conn, "Said", rate)
-        paid = _paid_to(conn, "Said", uz_now().strftime("%Y-%m"))
-        conn.close()
-        return sal
-    finally:
-        globals()["SALARY"] = old_salary
-        globals()["ATTENDANCE_USERS"] = old_attendance
-        globals()["DAILY_CLOSE_USERS"] = old_daily
-        globals()["LEADERSHIP"] = old_leadership
-
-
 def api_last_webhook():
     conn = get_db()
     row = conn.execute("SELECT svalue FROM settings WHERE skey='last_webhook'").fetchone()
@@ -6551,8 +6523,6 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/me":
             return self._json(public_user(user))
-        if path == "/api/debug/said-august":
-            return self._forbid() if role != "ceo" else self._json(api_debug_said_august())
         if path == "/api/telegram/last":
             return self._forbid() if role != "ceo" else self._json(api_last_webhook())
         if path == "/api/telegram/webhook-info":
