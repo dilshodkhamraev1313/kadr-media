@@ -6286,12 +6286,13 @@ def _save_last_webhook(update):
 
 
 def api_debug_db_check():
-    """VAQTINCHALIK: DATABASE_URL pooler orqali ulanganmi tekshiradi (qiymatning
-    o'zi qaytarilmaydi, faqat host qismidagi '-pooler' bor-yo'qligi)."""
+    """VAQTINCHALIK: DATABASE_URL tuzilishini ko'rsatadi (parol *** bilan
+    yashiriladi) — pooler'ga o'tkazish uchun to'liq host kerak."""
     import re
+    masked = re.sub(r"(://[^:]+:)[^@]+(@)", r"\1***\2", DATABASE_URL)
     m = re.search(r"@([^/]+)", DATABASE_URL)
     host = m.group(1) if m else ""
-    return {"isPg": IS_PG, "usesPooler": "-pooler" in host, "hostSuffix": host[-30:] if host else ""}
+    return {"isPg": IS_PG, "usesPooler": "-pooler" in host, "maskedUrl": masked}
 
 
 def api_last_webhook():
