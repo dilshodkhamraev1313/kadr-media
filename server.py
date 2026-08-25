@@ -6285,6 +6285,15 @@ def _save_last_webhook(update):
         pass
 
 
+def api_debug_db_check():
+    """VAQTINCHALIK: DATABASE_URL pooler orqali ulanganmi tekshiradi (qiymatning
+    o'zi qaytarilmaydi, faqat host qismidagi '-pooler' bor-yo'qligi)."""
+    import re
+    m = re.search(r"@([^/]+)", DATABASE_URL)
+    host = m.group(1) if m else ""
+    return {"isPg": IS_PG, "usesPooler": "-pooler" in host, "hostSuffix": host[-30:] if host else ""}
+
+
 def api_last_webhook():
     conn = get_db()
     row = conn.execute("SELECT svalue FROM settings WHERE skey='last_webhook'").fetchone()
@@ -6523,6 +6532,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/me":
             return self._json(public_user(user))
+        if path == "/api/debug/db-check":
+            return self._forbid() if role != "ceo" else self._json(api_debug_db_check())
         if path == "/api/telegram/last":
             return self._forbid() if role != "ceo" else self._json(api_last_webhook())
         if path == "/api/telegram/webhook-info":
