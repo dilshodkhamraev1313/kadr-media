@@ -1364,22 +1364,24 @@ def api_telegram_digest():
 # ============================================================
 #  AUTH (login / parol)
 # ============================================================
-def _is_budget_user(name):
+def _is_budget_user(name, conn=None):
     """Foydalanuvchi biror budjet kategoriyasiga mas'ul qilib biriktirilganmi."""
-    conn = get_db()
+    close = conn is None
+    conn = conn or get_db()
     row = conn.execute("SELECT 1 FROM budgets WHERE responsible=? LIMIT 1", (name,)).fetchone()
-    conn.close()
+    if close:
+        conn.close()
     return bool(row)
 
 
-def public_user(u):
+def public_user(u, conn=None):
     if not u:
         return None
     d = dict(u)
     d.pop("salt", None)
     d.pop("password_hash", None)
     d["hasPassword"] = True
-    d["budgetUser"] = _is_budget_user(d.get("name"))
+    d["budgetUser"] = _is_budget_user(d.get("name"), conn)
     return d
 
 
@@ -1470,8 +1472,9 @@ def api_team():
     """Login uchun emas — boshqaruvda ishlatish uchun jamoa ro'yxati (parolsiz)."""
     conn = get_db()
     rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+    result = [public_user(dict(r), conn) for r in rows]
     conn.close()
-    return [public_user(dict(r)) for r in rows]
+    return result
 
 
 # ============================================================
@@ -6285,16 +6288,6 @@ def _save_last_webhook(update):
         pass
 
 
-def api_debug_db_check():
-    """VAQTINCHALIK: DATABASE_URL tuzilishini ko'rsatadi (parol *** bilan
-    yashiriladi) — pooler'ga o'tkazish uchun to'liq host kerak."""
-    import re
-    masked = re.sub(r"(://[^:]+:)[^@]+(@)", r"\1***\2", DATABASE_URL)
-    m = re.search(r"@([^/]+)", DATABASE_URL)
-    host = m.group(1) if m else ""
-    return {"isPg": IS_PG, "usesPooler": "-pooler" in host, "maskedUrl": masked}
-
-
 def api_last_webhook():
     conn = get_db()
     row = conn.execute("SELECT svalue FROM settings WHERE skey='last_webhook'").fetchone()
@@ -6533,8 +6526,6 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/me":
             return self._json(public_user(user))
-        if path == "/api/debug/db-check":
-            return self._forbid() if role != "ceo" else self._json(api_debug_db_check())
         if path == "/api/telegram/last":
             return self._forbid() if role != "ceo" else self._json(api_last_webhook())
         if path == "/api/telegram/webhook-info":
