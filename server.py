@@ -6285,6 +6285,40 @@ def _save_last_webhook(update):
         pass
 
 
+def api_debug_said_detail():
+    """VAQTINCHALIK: Said uchun avgust davomat tafsiloti (qaysi kun kech/vaqtida/
+    kelmagan) + endi Samandarga o'tgan 3 loyihadagi rahbarlik puli qancha bo'lar edi."""
+    conn = get_db()
+    today = uz_today()
+    d = _month_attendance_days(conn, "Said", today)
+    rate = get_usd_rate()
+    names = ["Namuna Mebel loyihasi", "Nova School", "Arab tili o’qtuvchi"]
+    ph = ",".join(["?"] * len(names))
+    projects = [dict(r) for r in conn.execute(
+        f"SELECT * FROM projects WHERE name IN ({ph})", names).fetchall()]
+    total, details = 0, []
+    for p in projects:
+        self_post = bool(p.get("self_post"))
+        plan = p.get("plan") or 0
+        done_cols = [c for c in DONE_COLS if not (self_post and c == "done_joylash")]
+        if plan > 0 and done_cols:
+            done_total = sum(max((p.get(c) or 0) - (p.get("prev_" + c) or 0), 0) for c in done_cols)
+            denom = plan * len(done_cols)
+            pct = min(done_total / denom, 1.0) if denom else 0.0
+        else:
+            stages = [s for s in LEAD_STAGES if not (self_post and s == "joylash")]
+            pct = 1.0 if all((p.get(st) or "") == "tayyor" for st in stages) else 0.5
+        base_usd = p.get("lead_usd") or LEADERSHIP_USD_FULL
+        usd = int(round(base_usd * pct))
+        total += usd * rate
+        details.append({"project": p["name"], "usd": usd, "pct": int(round(pct * 100)), "rate": base_usd})
+    conn.close()
+    return {
+        "attendance": {"on_time": d["on_time"], "late": d["late"], "absent": d["absent"], "otpusk": d["otpusk"]},
+        "leadershipWouldBe": total, "leadershipDetail": details,
+    }
+
+
 def api_last_webhook():
     conn = get_db()
     row = conn.execute("SELECT svalue FROM settings WHERE skey='last_webhook'").fetchone()
@@ -6523,6 +6557,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/me":
             return self._json(public_user(user))
+        if path == "/api/debug/said-detail":
+            return self._forbid() if role != "ceo" else self._json(api_debug_said_detail())
         if path == "/api/telegram/last":
             return self._forbid() if role != "ceo" else self._json(api_last_webhook())
         if path == "/api/telegram/webhook-info":
