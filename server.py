@@ -154,7 +154,7 @@ DEFAULT_PLAYBOOKS = {
 }
 # Kadr Media (ichki syomka) — studio TUSHUMIga pul hisoblanmaydi (faqat xona/vaqt band + operator puli)
 STUDIO_NO_INCOME_TYPES = ("kadr_media",)
-STUDIO_OPERATORS = ("Umid", "Shodiya")
+STUDIO_OPERATORS = ("Samandar", "Umid", "Shodiya")
 
 # Kelib tushgan pullar shaffofligi — kim qabul qildi + qanday usul.
 INCOME_RECEIVERS = ("Dilshod Khamraev", "Gulmira")
@@ -182,7 +182,7 @@ LEADERSHIP_USD_HALF = 25  # deadline o'tib ketgan bo'lsa
 STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun (har bron)
 
 # Kunlik sarhisob yopish majburiyati shu 4 kishida.
-DAILY_CLOSE_USERS = ("Gulmira", "Xonzoda", "Shodiya")
+DAILY_CLOSE_USERS = ("Gulmira", "Xonzoda", "Shodiya", "Samandar")
 WORKDAYS_PER_MONTH = 25  # intizom bo'linadigan ish kunlari (yakshanba dam)
 STORIES_PROJECT_USD = 100  # har biriktirilgan "Stories" loyihasi uchun OYLIK maksimal ($/25 kun = kunlik ulush)
 
@@ -195,8 +195,9 @@ FILE_ARCHIVE_DAILY_RATE = 20000
 # Kun yopish cheklisti — har kishi uchun tayyor vazifalar (loyihalarigacha).
 # Dashboardda tahrirlanadi; bular faqat boshlang'ich (seed) qiymatlar.
 DEFAULT_CHECKLIST = {
-    "Said": [
+    "Samandar": [
         "Namuna Mebel — syomka/loyiha nazorati",
+        "Nova School — loyiha nazorati",
         "Nodirbek (arab tili) — loyiha nazorati",
         "Sifat nazorati — montaj videolarni tekshirdim",
         "Bugungi syomkalar bajarildi",
@@ -228,7 +229,10 @@ DEFAULT_CHECKLIST = {
 }
 
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
-ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya")
+ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar")
+# ESLATMA: Samandarning Telegram @username'i hali kiritilmagan (pastda "?" bilan
+# belgilangan) — CEO aytgach, shu yerga qo'yiladi. Shungacha uning "ish vaqti"
+# guruhiga tashlagan kruzhogi orqali davomat avtomatik belgilanmaydi.
 TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
@@ -253,13 +257,13 @@ OTPUSK_COOLDOWN_MONTHS = 1        # otpuskdan otpuskgacha eng kam oraliq (har oy
 INACTIVITY_DAYS = 3               # shuncha kun harakatsiz loyiha "stale" deb belgilanadi
 
 # Har xodim rahbarlik qiladigan loyihalar (nomi projects jadvalidagi bilan mos).
-# ESLATMA: Said ketgani sababli "Namuna mebel", "Nova school",
-# "Nodirbek Primqulov (arab tili)" loyihalari hozircha rahbarsiz qoldi — CEO
-# bularni kimga biriktirishni hal qilishi kerak.
+# Samandar Saidning o'rniga shu 3 loyihaga rahbar bo'ldi (rahbarlik puli har
+# loyihaning o'z "lead_usd" maydonidan olinadi: Nodirbek/Namuna=$50, Nova=$30).
 LEADERSHIP = {
     "Xonzoda": ["Amarkets (Bekzod Treding)", "Fidda kumush taqinchoqlar"],
     "Gulmira": ["Umida-targetolog", "Kadr studio"],
     "Shodiya": ["Estetik Korreya Mastura"],
+    "Samandar": ["Namuna mebel", "Nova school", "Nodirbek Primqulov (arab tili)"],
 }
 
 # Har xodim maoshi tarkibi:
@@ -275,6 +279,9 @@ SALARY = {
     "Xonzoda": {"title": "Ssenarist + koordinator", "som": {"Fiksa": 2000000, "Intizom": 500000},
                 "usd": {"Koordinatorlik": 100}, "lead": True, "scenarist": True,
                 "close_link": "Koordinatorlik"},
+    "Samandar": {"title": "Operator + loyiha rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
+                 "usd": {"Sifat nazorati": 100}, "lead": True, "operator": True,
+                 "close_link": "Sifat nazorati"},
     "Sardor": {"title": "Montajchi + Video arxiv mas'uli", "som": {"Fiksa": 500000, "Intizom": 500000},
                "montaj": True, "file_archive_daily": FILE_ARCHIVE_DAILY_RATE},
     "Umid": {"title": "Montajchi + operator", "som": {"Fiksa": 500000, "Intizom": 500000},
@@ -454,7 +461,7 @@ APPROVER_ROLES = ("ceo", "coordinator", "lead")
 ADMIN_ROLES = ("ceo", "coordinator")
 # Sifat nazorati — videoni tasdiqlash/qabul qilish FAQAT Said (+ CEO zaxira).
 # Loyiha rahbarlari videoni faqat biriktiradi, tasdiqlay olmaydi.
-QC_APPROVER = "Said"
+QC_APPROVER = "Samandar"
 
 
 def is_qc_approver(user):
@@ -467,6 +474,7 @@ TEAM = [
     ("Said",             "said",    "said2026", "lead",        "Loyiha rahbari · Syomka", "#FF9F0A", None),
     ("Gulmira",          "gulmira", "gulm2026", "lead",        "Loyiha rahbari",          "#30D158", None),
     ("Robiya",           "robiya",  "robi2026", "lead",        "Loyiha rahbari",          "#FF375F", None),
+    ("Samandar",         "samandar","sama2026", "lead",        "Operator + loyiha rahbari · Syomka", "#FF9F0A", None),
     # Montajchilar
     ("Sardor",           "sardor",  "sard2026", "editor",      "Montajchi",               "#64D2FF", None),
     ("Talg'at",          "talgat",  "talg2026", "editor",      "Montajchi",               "#FFD60A", None),
