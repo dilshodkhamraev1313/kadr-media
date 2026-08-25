@@ -273,10 +273,10 @@ const NAV_ITEMS = [
   { view: 'projects',  icon: '▣', label: 'Loyihalar',     roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'scripts',   icon: '✎', label: 'Ssenariylar',   roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'videos',    icon: '►', label: 'Montaj',        roles: ['ceo', 'coordinator', 'lead'] },
-  { view: 'qc',        icon: '🔎', label: 'Sifat nazorati', roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Said'] },
+  { view: 'qc',        icon: '🔎', label: 'Sifat nazorati', roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Samandar'] },
   { view: 'shoots',    icon: '📹', label: 'Kadr Media',     roles: ['ceo', 'coordinator', 'lead'] },
-  { view: 'studio',    icon: '🎥', label: 'Kadr Studio',   roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Gulmira', 'Xonzoda', 'Said'] },
-  { view: 'myscripts', icon: '✍️', label: 'Ssenariylarim', roles: ['coordinator', 'editor', 'lead'], names: ['Xonzoda', 'Umida'] },
+  { view: 'studio',    icon: '🎥', label: 'Kadr Studio',   roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Gulmira', 'Xonzoda', 'Samandar'] },
+  { view: 'myscripts', icon: '✍️', label: 'Ssenariylarim', roles: ['coordinator', 'editor', 'lead'], names: ['Xonzoda'] },
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
   { view: 'cashflow',  icon: '💵', label: 'Pul oqimi',     roles: ['ceo'] },
@@ -287,8 +287,8 @@ const NAV_ITEMS = [
   { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
-  { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Gulmira', 'Said', 'Xonzoda', 'Umida', 'Sardor', 'Umid', 'Shodiya'] },
-  { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Said', 'Gulmira', 'Xonzoda', 'Umida', 'Shodiya'] },
+  { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Gulmira', 'Samandar', 'Xonzoda', 'Sardor', 'Umid', 'Shodiya'] },
+  { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Samandar', 'Gulmira', 'Xonzoda', 'Shodiya'] },
   { view: 'stats',     icon: '📈', label: 'Oylik statistika', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'reyting',   icon: '🏆', label: 'Reyting',        roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'shootstat', icon: '⏱', label: 'Syomka soatlari', roles: ['ceo', 'coordinator', 'lead'] },
@@ -906,8 +906,8 @@ function bindVideoCards() {
 function videoActions(v) {
   const role = ME.role;
   const isApprover = ['ceo', 'coordinator', 'lead'].includes(role);
-  // Sifat nazorati (tasdiq/qabul) — faqat Said va CEO
-  const isQc = ME.name === 'Said' || role === 'ceo';
+  // Sifat nazorati (tasdiq/qabul) — faqat Samandar va CEO
+  const isQc = ME.name === 'Samandar' || role === 'ceo';
   const b = [];
   if ((v.editor === ME.name || ['ceo', 'coordinator'].includes(role)) && (v.status === 'biriktirildi' || v.status === 'qaytarildi'))
     b.push(`<button class="mini-btn blue" data-vact="montaj_done" data-id="${v.id}">✓ Montaj qildim</button>`);
@@ -1169,7 +1169,7 @@ function methodLabel(m) { return m === 'plastik' ? '💳 Plastik' : '💵 Naqt';
 function openStudioBookingModal(presetDate, edit) {
   const data = DATA.studio || {};
   const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
-  const operators = data.operators || ['Said', 'Umid', 'Shodiya'];
+  const operators = data.operators || ['Samandar', 'Umid', 'Shodiya'];
   const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
   const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000, tadbir: 80000 };
   const opRates = data.operatorRates || {};
@@ -1558,7 +1558,7 @@ function shootCard(s) {
 async function openShootModal(presetDate) {
   const data = DATA.shoots || {};
   if (!DATA.projects) DATA.projects = await api('/api/projects');
-  const operators = data.operators || ['Said', 'Umid', 'Shodiya'];
+  const operators = data.operators || ['Samandar', 'Umid', 'Shodiya'];
   const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
   const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
   const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000, tadbir: 80000 };
@@ -2258,7 +2258,7 @@ async function openAssignTaskModal() {
   const load = (date) => api('/api/tasks' + (date ? '?date=' + date : ''));
   const first = await load('');
   if (first.error) { toast(first.error); return; }
-  const people = first.people || ['Said', 'Gulmira', 'Xonzoda', 'Umida', 'Shodiya'];
+  const people = first.people || ['Samandar', 'Gulmira', 'Xonzoda', 'Shodiya'];
   const draw = (st) => {
     const listHtml = (st.people || []).map((p) => {
       const tasks = st.tasks[p] || [];
