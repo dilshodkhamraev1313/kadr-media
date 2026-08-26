@@ -6288,35 +6288,6 @@ def _save_last_webhook(update):
         pass
 
 
-def api_debug_shodiya_stories():
-    """VAQTINCHALIK: Shodiyaning Stories checklist punktlari va shu punktlar
-    bo'yicha belgilangan kunlarni tekshirish uchun."""
-    conn = get_db()
-    items = [dict(r) for r in conn.execute(
-        "SELECT * FROM checklist_items WHERE person='Shodiya' ORDER BY id").fetchall()]
-    for it in items:
-        done = [dict(r) for r in conn.execute(
-            "SELECT cdate, done, note FROM checklist_done WHERE item_id=? ORDER BY cdate", (it["id"],)).fetchall()]
-        it["done_rows"] = done
-    ym = uz_now().strftime("%Y-%m")
-    rate = get_usd_rate()
-    earn = _stories_project_earn(conn, "Shodiya", ym, rate)
-    archived_jul = conn.execute("SELECT ym FROM monthly_archive WHERE ym='2026-07'").fetchone()
-    conn.close()
-    return {"items": items, "currentEarn": earn, "julyArchived": bool(archived_jul)}
-
-
-def api_debug_fix_shodiya_stories():
-    """VAQTINCHALIK: eski umumiy 'Stories joylandi' punktidagi (id=20) done=1
-    kunlarni yangi 'Stories: Arab tili o'qtuvchi' punktiga (id=23) ko'chiradi."""
-    conn = get_db()
-    conn.execute("UPDATE checklist_done SET item_id=23 WHERE item_id=20 AND done=1")
-    conn.commit()
-    ym = uz_now().strftime("%Y-%m")
-    rate = get_usd_rate()
-    earn = _stories_project_earn(conn, "Shodiya", ym, rate)
-    conn.close()
-    return {"ok": True, "newEarn": earn}
 
 
 def api_last_webhook():
@@ -6557,8 +6528,6 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/me":
             return self._json(public_user(user))
-        if path == "/api/debug/shodiya-stories":
-            return self._forbid() if role != "ceo" else self._json(api_debug_shodiya_stories())
         if path == "/api/telegram/last":
             return self._forbid() if role != "ceo" else self._json(api_last_webhook())
         if path == "/api/telegram/webhook-info":
@@ -6730,8 +6699,6 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/logout":
             return self._json(api_logout(self.headers.get("X-Token", "")))
-        if path == "/api/debug/fix-shodiya-stories":
-            return self._forbid() if r != "ceo" else self._json(api_debug_fix_shodiya_stories())
         if path == "/api/change-password":
             return self._json(api_change_password(user, b))
         if path == "/api/avatar":
