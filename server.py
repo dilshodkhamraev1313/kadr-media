@@ -6312,6 +6312,25 @@ def _save_last_webhook(update):
 
 
 
+def api_debug_delete_payment():
+    """VAQTINCHALIK: AMARKETS'ga 27-avgustda xato kiritilgan 3.000.000 so'mlik
+    yozuvni aniq belgilar (loyiha+summa+sana) bo'yicha topib o'chiradi,
+    19-avgustdagi to'g'ri yozuvga tegmaydi."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id FROM client_payments WHERE project='AMARKETS treyding' AND pdate='2026-08-27' AND amount=3000000"
+    ).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Yozuv topilmadi — hech narsa o'chirilmadi"}
+    cpid = row["id"]
+    conn.execute("DELETE FROM income_ledger WHERE source_type='client' AND source_id=?", (cpid,))
+    conn.execute("DELETE FROM client_payments WHERE id=?", (cpid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "deleted": cpid}
+
+
 def api_last_webhook():
     conn = get_db()
     row = conn.execute("SELECT svalue FROM settings WHERE skey='last_webhook'").fetchone()
@@ -6550,6 +6569,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/me":
             return self._json(public_user(user))
+        if path == "/api/debug/delete-payment":
+            return self._forbid() if role != "ceo" else self._json(api_debug_delete_payment())
         if path == "/api/telegram/last":
             return self._forbid() if role != "ceo" else self._json(api_last_webhook())
         if path == "/api/telegram/webhook-info":
