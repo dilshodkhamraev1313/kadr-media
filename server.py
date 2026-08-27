@@ -2982,18 +2982,40 @@ def api_finance_image(user, iid):
     return {"data": row["data"]} if row else {"error": "Topilmadi"}
 
 
+def _has_payment_amount(b):
+    """Kiritilgan tanadagi summa maydonlaridan birortasi haqiqiy pul bormi
+    (naqt/plastik/dollar/amount) — 'yangi to'lov qo'shish' bilan 'bekor qilish'ni
+    ajratish uchun."""
+    for k in ("naqt", "plastik", "amount"):
+        try:
+            if max(int(b.get(k) or 0), 0) > 0:
+                return True
+        except (ValueError, TypeError):
+            pass
+    try:
+        if max(float(b.get("usd_amount") or 0), 0) > 0:
+            return True
+    except (ValueError, TypeError):
+        pass
+    return False
+
+
 def api_mark_client_payment(user, b):
-    """CEO loyiha uchun shu oy mijoz to'lovini belgilaydi/olib tashlaydi (toggle)."""
+    """CEO loyiha uchun shu oy mijoz to'lovini kiritadi. Summa berilgan bo'lsa —
+    ESKI to'lovlar TEGILMAYDI, YANGI to'lov ularning USTIGA qo'shiladi (bir necha
+    qisman to'lov bir oy ichida to'planishi mumkin). Summa berilmasa (bare
+    {project}) — shu oy uchun barcha to'lovlar bekor qilinadi (xato tuzatish)."""
     project = (b.get("project") or "").strip()
     if not project:
         return {"error": "Loyiha kerak"}, 400
     ym = (b.get("ym") or uz_now().strftime("%Y-%m")).strip()
     conn = get_db()
-    ex = conn.execute("SELECT id FROM client_payments WHERE project=? AND ym=?", (project, ym)).fetchone()
-    if ex:
-        # toggle OFF — to'lov yozuvi (client_payments) VA daftar (income_ledger) birga o'chadi (drift yo'q)
-        conn.execute("DELETE FROM income_ledger WHERE source_type='client' AND source_id=?", (ex["id"],))
-        conn.execute("DELETE FROM client_payments WHERE id=?", (ex["id"],))
+    if not _has_payment_amount(b):
+        # Bekor qilish — shu oy uchun kiritilgan barcha to'lovlarni o'chiradi
+        rows = conn.execute("SELECT id FROM client_payments WHERE project=? AND ym=?", (project, ym)).fetchall()
+        for ex in rows:
+            conn.execute("DELETE FROM income_ledger WHERE source_type='client' AND source_id=?", (ex["id"],))
+            conn.execute("DELETE FROM client_payments WHERE id=?", (ex["id"],))
         conn.commit()
         conn.close()
         return {"ok": True, "paid": False}
