@@ -2,8 +2,8 @@ name: Kassa yopilmadi eslatmasi
 
 on:
   schedule:
-    - cron: "0 16 * * *"
-    - cron: "0 17 * * *"
+    - cron: "14 16 * * *"
+    - cron: "58 17 * * *"
   workflow_dispatch: {}
 
 jobs:

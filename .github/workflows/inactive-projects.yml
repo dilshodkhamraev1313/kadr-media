@@ -2,7 +2,7 @@ name: Loyiha harakatsizligi ogohlantirishi
 
 on:
   schedule:
-    - cron: "0 4 * * *"
+    - cron: "36 4 * * *"
   workflow_dispatch: {}
 
 jobs:

@@ -2,7 +2,7 @@ name: Montaj muddati eslatmasi
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "27 * * * *"
   workflow_dispatch: {}
 
 jobs:
