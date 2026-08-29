@@ -237,6 +237,29 @@ TELEGRAM_ATTEND = {
 }
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
+
+# Xodim OYNING O'RTASIDA tizimga qo'shilsa (masalan yangi ishga olingan/rol
+# almashgan), undan OLDINGI kunlar "kelmagan/yopmagan" deb hisoblanmasin —
+# aks holda Fiksa/Intizom/kun-yopish KPI adolatsiz ravishda nolga tushib qoladi
+# (tizimda umuman bo'lmagan kunlar "missed" deb sanaladi). Bu kunlar hisobdan
+# butunlay chiqadi (na foyda, na zarar) — xuddi otpusk kabi.
+JOIN_DATE = {
+    "Samandar": "2026-08-25",  # Saidning o'rniga shu sanada qo'shildi
+}
+
+
+def _effective_month_start(name, today):
+    """Oy boshi — yoki xodim shu oyning o'rtasida qo'shilgan bo'lsa, o'sha kun."""
+    first = datetime.date(today.year, today.month, 1)
+    jd = JOIN_DATE.get(name)
+    if jd:
+        try:
+            j = datetime.date.fromisoformat(jd)
+            if j.year == today.year and j.month == today.month and j > first:
+                return j
+        except ValueError:
+            pass
+    return first
 INTIZOM_FULL = 500000        # to'liq intizom (25 kun × 20 000)
 
 # Kechikish jarimasi (maoshdan) — Nazorat markazi signallaridan avtomatik.
@@ -4360,7 +4383,7 @@ def _brief_missing_days(conn, name, today):
             (name, ym[:4] + "%")).fetchall():
         submitted[r["for_date"]] = r["submitted_at"]
     missed = []
-    d = datetime.date(today.year, today.month, 1)
+    d = _effective_month_start(name, today)
     while d <= today:
         iso = d.isoformat()
         if d.weekday() != 6 and iso >= BRIEF_START_DATE and iso not in otpusk:
@@ -5217,11 +5240,14 @@ def _closed_dates(conn, name, ym):
 
 
 def _missed_workdays(conn, name, today):
-    """Shu oyda bugundan OLDINGI ish kunlari (yakshanbadan tashqari) — yopilmaganlari."""
+    """Shu oyda bugundan OLDINGI ish kunlari (yakshanbadan tashqari) — yopilmaganlari.
+    Xodim oyning o'rtasida qo'shilgan bo'lsa, undan oldingi kunlar hisobga kirmaydi
+    (JOIN_DATE, [[_effective_month_start]])."""
     ym = today.strftime("%Y-%m")
     closed = _closed_dates(conn, name, ym)
+    start = _effective_month_start(name, today)
     missed = 0
-    for d in range(1, today.day):  # bugundan oldingi kunlar
+    for d in range(start.day, today.day):  # qo'shilgan kundan bugungacha (bugun kirmaydi)
         dt = datetime.date(today.year, today.month, d)
         if dt.weekday() != 6 and dt.isoformat() not in closed:  # 6 = yakshanba
             missed += 1
@@ -5234,7 +5260,9 @@ def _kpi_after_discipline(conn, name, full, today):
     Bugungi kun hali "yopish jarayonida" — kun oxirida yopilgach ertaga hisobga kiradi.
     Qaytaradi: (hisoblangan summa, yopilgan kunlar, oy ish kunlari)."""
     wd = _workdays_in_month(today.year, today.month)
-    passed = _workdays_before(today)
+    start = _effective_month_start(name, today)
+    passed = sum(1 for d in range(start.day, today.day)
+                 if datetime.date(today.year, today.month, d).weekday() != 6)
     missed = _missed_workdays(conn, name, today)
     closed = max(passed - missed, 0)
     daily = full / wd if wd else 0
@@ -6215,7 +6243,7 @@ def _month_attendance_days(conn, name, today):
     Fiksa/Intizomga ham zarar keltirmaydi), lekin alohida ham sanaladi."""
     ym = today.strftime("%Y-%m")
     otpusk = _otpusk_dates_set(conn, name, ym)
-    first = datetime.date(today.year, today.month, 1)
+    first = _effective_month_start(name, today)
     rows = {r["adate"]: dict(r) for r in conn.execute(
         "SELECT * FROM attendance WHERE person=? AND adate LIKE ?", (name, ym + "%")).fetchall()}
     on_time, late, absent, otp = [], [], [], []
@@ -6260,11 +6288,6 @@ def _workdays_in_month(yy, mm):
     har doim aniq, yaxlit son bo'ladi (masalan 500 000/25 = 20 000/kun),
     oyning necha kunligiga (28/30/31) qarab o'zgarib turmaydi."""
     return WORKDAYS_PER_MONTH
-
-
-def _workdays_before(today):
-    """Shu oyda BUGUNGACHA (bugun kirmaydi) o'tgan ish kunlari soni."""
-    return sum(1 for d in range(1, today.day) if datetime.date(today.year, today.month, d).weekday() != 6)
 
 
 def _record_attendance(conn, person, source):
