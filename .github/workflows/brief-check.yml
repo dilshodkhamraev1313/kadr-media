@@ -1,9 +1,9 @@
 name: Ertangi kun rejasi (brif) eslatmasi
 
 on:
-  schedule:
-    - cron: "18 13 * * *"
-    - cron: "23 15 * * *"
+  # schedule: # OLIB TASHLANDI 2026-08-29 - cron-job.org'ga ko'chirildi (GitHub Actions kechikish muammosi)
+  #   - cron: "18 13 * * *"
+  #   - cron: "23 15 * * *"
   workflow_dispatch: {}
 
 jobs:

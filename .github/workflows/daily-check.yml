@@ -1,8 +1,8 @@
 name: Kun sarhisobi yopilmadi eslatmasi
 
 on:
-  schedule:
-    - cron: "42 17 * * *"
+  # schedule: # OLIB TASHLANDI 2026-08-29 - cron-job.org'ga ko'chirildi (GitHub Actions kechikish muammosi)
+  #   - cron: "42 17 * * *"
   workflow_dispatch: {}
 
 jobs:

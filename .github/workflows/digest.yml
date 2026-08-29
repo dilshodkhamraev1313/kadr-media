@@ -1,8 +1,8 @@
 name: Kunlik Telegram hisobot
 
 on:
-  schedule:
-    - cron: "8 4 * * *"
+  # schedule: # OLIB TASHLANDI 2026-08-29 - cron-job.org'ga ko'chirildi (GitHub Actions kechikish muammosi)
+  #   - cron: "8 4 * * *"
   workflow_dispatch: {}
 
 jobs:
