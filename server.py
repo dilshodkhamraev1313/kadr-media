@@ -6335,6 +6335,20 @@ def _save_last_webhook(update):
 
 
 
+def api_debug_attendance_dump():
+    """VAQTINCHALIK: shu oy uchun attendance jadvalidagi barcha xom yozuvlarni
+    ko'rsatadi (diagnostika uchun)."""
+    conn = get_db()
+    ym = uz_today().strftime("%Y-%m")
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM attendance WHERE adate LIKE ? ORDER BY adate, checkin_time", (ym + "%",)).fetchall()]
+    audit = [dict(r) for r in conn.execute(
+        "SELECT * FROM audit WHERE actor LIKE '%amandar%' OR action LIKE '%eldi%' "
+        "ORDER BY id DESC LIMIT 30").fetchall()]
+    conn.close()
+    return {"attendance": rows, "audit": audit}
+
+
 def api_last_webhook():
     conn = get_db()
     row = conn.execute("SELECT svalue FROM settings WHERE skey='last_webhook'").fetchone()
@@ -6573,6 +6587,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/me":
             return self._json(public_user(user))
+        if path == "/api/debug/attendance-dump":
+            return self._forbid() if role != "ceo" else self._json(api_debug_attendance_dump())
         if path == "/api/telegram/last":
             return self._forbid() if role != "ceo" else self._json(api_last_webhook())
         if path == "/api/telegram/webhook-info":
