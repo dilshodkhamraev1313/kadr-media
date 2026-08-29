@@ -6335,6 +6335,28 @@ def _save_last_webhook(update):
 
 
 
+def api_debug_backfill_samandar_attendance():
+    """VAQTINCHALIK: CEO tasdiqladi — Samandar 25-28 avgust kunlari kruzhok
+    tashlagan (ko'zi bilan ko'rgan), lekin texnik sabab bilan (hali aniqlanmagan)
+    attendance jadvaliga yozilmagan. Shu 4 kunni qo'lda belgilaydi, shunda
+    Fiksa/Intizom avtomatik to'g'ri hisoblanadi."""
+    conn = get_db()
+    dates = ["2026-08-25", "2026-08-26", "2026-08-27", "2026-08-28"]
+    added = []
+    for d in dates:
+        ex = conn.execute(
+            "SELECT id FROM attendance WHERE person=? AND adate=?", ("Samandar", d)).fetchone()
+        if not ex:
+            conn.execute(
+                "INSERT INTO attendance (person, adate, checkin_time, on_time, source) "
+                "VALUES (?,?,?,?,?)",
+                ("Samandar", d, "09:00", 1, "ceo-manual-correction"))
+            added.append(d)
+    conn.commit()
+    conn.close()
+    return {"ok": True, "added": added}
+
+
 def api_last_webhook():
     conn = get_db()
     row = conn.execute("SELECT svalue FROM settings WHERE skey='last_webhook'").fetchone()
@@ -6573,6 +6595,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/me":
             return self._json(public_user(user))
+        if path == "/api/debug/backfill-samandar":
+            return self._forbid() if role != "ceo" else self._json(api_debug_backfill_samandar_attendance())
         if path == "/api/telegram/last":
             return self._forbid() if role != "ceo" else self._json(api_last_webhook())
         if path == "/api/telegram/webhook-info":
