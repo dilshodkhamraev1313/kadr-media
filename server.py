@@ -4306,15 +4306,13 @@ def _late_days_this_month(late_since, today):
     return max((today - start).days + 1, 0)
 
 
-def _workdays_elapsed_and_total(today):
-    """Joriy oyda: bugungacha (bugun kiradi) va butun oydagi ish kunlari soni
-    (yakshanbasiz) — pace (sur'at) hisob-kitobi uchun."""
+def _pace_days_elapsed_and_total(today):
+    """Joriy oyda: bugungacha (bugun kiradi) va butun oydagi KALENDAR kunlari
+    soni (yakshanba HAM kiradi — video postlanishi ish kuniga bog'liq emas,
+    haftaning istalgan kunida chiqishi mumkin) — pace hisob-kitobi uchun."""
     from calendar import monthrange
-    last_day = monthrange(today.year, today.month)[1]
-    total = sum(1 for d in range(1, last_day + 1)
-                if datetime.date(today.year, today.month, d).weekday() != 6)
-    elapsed = sum(1 for d in range(1, today.day + 1)
-                  if datetime.date(today.year, today.month, d).weekday() != 6)
+    total = monthrange(today.year, today.month)[1]
+    elapsed = today.day
     return elapsed, total
 
 
@@ -4346,7 +4344,7 @@ def _lateness_penalty(conn, name, today):
         items.append({"type": "project", "name": p["name"], "days": days, "amount": amt})
     # 1b) Pace-asosli kechikish — reja/kun sur'atiga qarab, oy oxirini kutmasdan
     if today.isoformat() >= PACE_START_DATE:
-        elapsed, total_wd = _workdays_elapsed_and_total(today)
+        elapsed, total_wd = _pace_days_elapsed_and_total(today)
         if total_wd:
             for p in all_projects:
                 if p.get("responsible") != name or p["fullyDone"]:
