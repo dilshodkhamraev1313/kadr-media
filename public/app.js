@@ -86,6 +86,7 @@ function deadlineChip(v) {
 let VIEW = '';
 let FILTER = 'all';
 let SEARCH = '';
+let PAYROLL_YM = ''; // Maosh sahifasida CEO tanlagan oy ('' = joriy oy)
 const DATA = {}; // cache: projects, scripts, videos, editors, team, clients, finance, audit, cabinet
 
 // ---------- Utils ----------
@@ -1829,13 +1830,15 @@ async function openTeamPayModal(person, rem, defaultDate, ymLabel) {
         ${canDel ? `<button class="mini-btn red pay-del" data-id="${p.id}">🗑</button>` : ''}
       </span></div>`).join('')
     || '<div class="muted" style="padding:6px 0">To\'lov tarixi yo\'q</div>';
+  const todayIso = new Date().toISOString().slice(0, 10);
   openModal(`💸 ${esc(person)} — to'lov kiritish`, `
     <p class="muted" style="margin-bottom:10px">Qolgan (${ymLabel ? esc(ymLabel) : 'bu oy'}): <b>${money(rem)}</b></p>
     <div class="field"><label>Berilgan summa (so'm)</label><input id="tp_amt" type="number" inputmode="numeric" value="${rem > 0 ? rem : ''}" /></div>
-    <div class="field"><label>Sana${defaultDate ? '' : ' (bo\'sh qoldirsa — bugun)'}</label><input id="tp_date" type="date" value="${defaultDate || ''}" /></div>
+    <div class="field"><label>${ymLabel ? `Qaysi oyning maoshi (${esc(ymLabel)})` : 'Sana (bo\'sh qoldirsa — bugun)'}</label><input id="tp_date" type="date" value="${defaultDate || ''}" /></div>
+    ${defaultDate ? `<div class="field"><label>Pul qachon qo'ldan chiqdi (naqd/kassa sanasi)</label><input id="tp_cash_date" type="date" value="${todayIso}" /></div>
+    <p class="muted" style="font-size:12px;margin:-2px 0 4px">💡 ${esc(ymLabel)} maoshi endi to'lansa ham, pul BUGUN kassadan chiqadi — shuning uchun bu ikki sana alohida: yuqoridagisi qaysi oyning maoshi ekanini, bu esa naqd qachon chiqqanini belgilaydi (joriy oy kassasidan ayiriladi).</p>` : ''}
     ${expenseMetaFields()}
     <div class="field"><label>Izoh (ixtiyoriy)</label><input id="tp_note" placeholder="masalan: avans / to'liq / o'tgan oy qolgani" /></div>
-    <p class="muted" style="font-size:12px;margin:-2px 0 4px">💡 O'tgan oyning qolgan maoshini to'layotgan bo'lsangiz — sanani o'sha kunga (yoki haqiqiy to'langan kunga) qo'yib, izohga oyni yozing.</p>
     <p class="muted" style="font-size:12px;margin:-2px 0 4px">💡 Gulmira hisobidan to'lansa — Kadr Studio hisobiga "jamoa maoshi" bo'lib yoziladi.</p>
     <div class="modal-actions"><button class="btn-save" id="tp_ok">✅ To'lovni saqlash</button></div>
     <div class="divider"></div>
@@ -1844,7 +1847,8 @@ async function openTeamPayModal(person, rem, defaultDate, ymLabel) {
     $('#tp_ok').addEventListener('click', async () => {
       const a = parseInt($('#tp_amt').value || '0', 10);
       if (a <= 0) { toast('Summani kiriting'); return; }
-      const r = await api('/api/payments', { method: 'POST', body: JSON.stringify({ editor: person, amount: a, pdate: $('#tp_date').value, note: $('#tp_note').value, ...readExpenseMeta() }) });
+      const cashDateEl = $('#tp_cash_date');
+      const r = await api('/api/payments', { method: 'POST', body: JSON.stringify({ editor: person, amount: a, pdate: $('#tp_date').value, cash_date: cashDateEl ? cashDateEl.value : null, note: $('#tp_note').value, ...readExpenseMeta() }) });
       if (r && r.error) { toast('⚠️ ' + r.error); return; }
       closeModal(); toast('💸 To\'lov kiritildi'); render();
     });
@@ -1877,7 +1881,8 @@ function openEditPaymentModal(id, amt, date, note, onDone) {
 }
 
 async function viewSalary() {
-  const d = await api('/api/payroll');
+  const q = PAYROLL_YM ? ('?ym=' + PAYROLL_YM) : '';
+  const d = await api('/api/payroll' + q);
   DATA.payroll = d;
   if (!d.isCeo) {
     const me = d.me;
@@ -1898,21 +1903,33 @@ async function viewSalary() {
     return;
   }
   const people = d.people.filter((p) => matchSearch(p.name));
+  const nowYm = new Date().toISOString().slice(0, 7);
+  const isPast = d.ym && d.ym !== nowYm;
   $('#content').innerHTML = `
+    <div class="panel" style="margin-bottom:16px">
+      <div class="field-row" style="align-items:end">
+        <div class="field" style="margin:0;max-width:200px"><label>Oy</label><input id="payroll_ym" type="month" value="${esc(d.ym)}" max="${nowYm}" /></div>
+        ${isPast ? `<button class="btn-ghost" id="payroll_ym_reset" style="max-width:160px">↩️ Joriy oyga qaytish</button>` : ''}
+      </div>
+      ${isPast ? `<p class="muted" style="margin-top:8px">⏳ <b>${esc(UZ_YM(d.ym))}</b> — o'tgan oy ko'rsatilmoqda. Bu oyga hali to'lov kiritish mumkin (masalan qolgan maosh).</p>` : ''}
+    </div>
     <div class="stats-grid">
       ${statTile('💵', money(d.grandTotal), 'Jami oylik jamoa xarajati', 'blue')}
       ${statTile('👥', d.people.length, 'Xodimlar', 'purple')}
       ${statTile('💱', '1$ = ' + money(d.rate), 'USD kursi', 'orange')}
     </div>
-    <div class="panel" style="margin-bottom:16px">
+    ${isPast ? '' : `<div class="panel" style="margin-bottom:16px">
       <div class="field-row" style="align-items:end">
         <div class="field" style="margin:0"><label>USD kursi (1$ = ... so'm)</label><input id="usd_rate" type="number" inputmode="numeric" value="${d.rate}" /></div>
         <button class="btn-save" id="usd_save" style="max-width:180px">💱 Kursni saqlash</button>
       </div>
       <p class="muted" style="margin-top:8px">Kursni o'zgartirsangiz — barcha dollarli to'lovlar shu yangi kurs bo'yicha qayta hisoblanadi.</p>
-    </div>
+    </div>`}
     <div class="cards-grid">${people.map(salaryCard).join('') || emptyState()}</div>`;
-  $('#usd_save').addEventListener('click', async () => {
+  $('#payroll_ym').addEventListener('change', (e) => { PAYROLL_YM = e.target.value; render(); });
+  if (isPast) $('#payroll_ym_reset').addEventListener('click', () => { PAYROLL_YM = ''; render(); });
+  const usdSave = $('#usd_save');
+  if (usdSave) usdSave.addEventListener('click', async () => {
     const rate = parseInt($('#usd_rate').value || '0', 10);
     if (rate <= 0) { toast('To\'g\'ri kurs kiriting'); return; }
     const res = await api('/api/settings/usd-rate', { method: 'POST', body: JSON.stringify({ rate }) });
@@ -1920,7 +1937,7 @@ async function viewSalary() {
     toast('💱 Kurs yangilandi — qayta hisoblandi'); render();
   });
   $$('.pay-team').forEach((b) => b.addEventListener('click', () =>
-    openTeamPayModal(b.dataset.person, parseInt(b.dataset.rem, 10) || 0)));
+    openTeamPayModal(b.dataset.person, parseInt(b.dataset.rem, 10) || 0, isPast ? (d.ym + '-28') : null, isPast ? UZ_YM(d.ym) : null)));
   $$('.waive-pen').forEach((b) => b.addEventListener('click', async () => {
     const r = await api('/api/penalty/waive', { method: 'POST', body: JSON.stringify({ person: b.dataset.person }) });
     if (r && r.error) { toast('⚠️ ' + r.error); return; }

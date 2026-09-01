@@ -817,6 +817,12 @@ def init_db():
     # jamoa maosh to'lovlari: qaysi hisobdan (Dilshod/Gulmira) + usul (naqt/plastik)
     add_column_if_missing(conn, "payments", "paid_from", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "payments", "method", "TEXT DEFAULT 'naqt'")
+    # cash_date: pul HAQIQATDA qo'ldan chiqqan kun — pdate (qaysi oyning maoshi
+    # sifatida hisoblanishi) dan farqli bo'lishi mumkin (masalan avgust maoshi
+    # sentabrda to'lansa: pdate=avgust, cash_date=sentabr). Kassa/pul oqimi
+    # hisob-kitobi cash_date bo'yicha, oylik "to'langan/qolgan" esa pdate bo'yicha.
+    add_column_if_missing(conn, "payments", "cash_date", "TEXT DEFAULT ''")
+    conn.execute("UPDATE payments SET cash_date=pdate WHERE cash_date IS NULL OR cash_date=''")
     # checklist_done: belgi (done) + qo'lda izoh (note — masalan nechta ssenariy)
     add_column_if_missing(conn, "checklist_done", "done", "INTEGER DEFAULT 1")
     add_column_if_missing(conn, "checklist_done", "note", "TEXT DEFAULT ''")
@@ -2308,8 +2314,12 @@ def api_create_payment(user, b):
     amount = int(b.get("amount") or 0)
     method, paid_from = _norm_pay_source(b, user)   # usul + qaysi hisobdan (Dilshod/Gulmira)
     pdate = b.get("pdate") or uz_today().isoformat()
-    sql = "INSERT INTO payments (editor, amount, paid_by, note, pdate, paid_from, method) VALUES (?,?,?,?,?,?,?)"
-    params = (editor, amount, user["name"], b.get("note") or "", pdate, paid_from, method)
+    # cash_date: pul haqiqatda qo'ldan chiqqan kun. Odatda pdate bilan bir xil;
+    # o'tgan oyning qolgan maoshi BUGUN to'lansa — cash_date=bugun, pdate=o'sha oy.
+    cash_date = b.get("cash_date") or pdate
+    sql = ("INSERT INTO payments (editor, amount, paid_by, note, pdate, paid_from, method, cash_date) "
+           "VALUES (?,?,?,?,?,?,?,?)")
+    params = (editor, amount, user["name"], b.get("note") or "", pdate, paid_from, method, cash_date)
     if IS_PG:
         pid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
     else:
@@ -2354,12 +2364,13 @@ def api_update_payment(user, pid, b):
     except (ValueError, TypeError):
         amount = row["amount"]
     pdate = b.get("pdate") or row["pdate"]
+    cash_date = b.get("cash_date") or row["cash_date"] or pdate
     method = b.get("method") if b.get("method") in ("naqt", "plastik") else row["method"]
     paid_from = b.get("paid_from") if b.get("paid_from") in ("Dilshod Khamraev", "Gulmira") else row["paid_from"]
     note = b.get("note") if "note" in b else row["note"]
     conn.execute(
-        "UPDATE payments SET amount=?, pdate=?, method=?, paid_from=?, note=? WHERE id=?",
-        (amount, pdate, method, paid_from, note, pid))
+        "UPDATE payments SET amount=?, pdate=?, cash_date=?, method=?, paid_from=?, note=? WHERE id=?",
+        (amount, pdate, cash_date, method, paid_from, note, pid))
     log_audit(conn, user["name"], "maosh to'lovini tuzatdi",
               f"#{pid} {row['editor']} {row['pdate']}->{pdate} · {row['amount']}->{amount}")
     _flag_stale_close(conn, pdate)
@@ -2487,6 +2498,13 @@ def api_cashflow(user):
     studio_exp = conn.execute(
         "SELECT COALESCE(SUM(amount),0) AS s FROM studio_expenses WHERE edate LIKE ?",
         (ym + "%",)).fetchone()["s"] or 0
+    # Haqiqiy naqd chiqimi — cash_date bo'yicha (qaysi oyning maoshi ekanidan
+    # qat'i nazar, pul QACHON qo'ldan chiqqan bo'lsa shu oyga tushadi). Masalan
+    # avgust maoshi sentabrda to'lansa — bu summa sentabr naqd holatiga kiradi,
+    # payrollPaid/payrollRemaining (yuqorida, pdate bo'yicha) esa avgustga tegishli.
+    cash_payroll_out = conn.execute(
+        "SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE cash_date LIKE ?",
+        (ym + "%",)).fetchone()["s"] or 0
     conn.close()
 
     income_received = media_received + studio_paid
@@ -2501,8 +2519,10 @@ def api_cashflow(user):
     media_net = media_expected - media_cost
     company_net = studio_net + media_net            # = income − studio_exp − payroll (2 marta emas)
 
-    # --- Naqd holat (cash-flow) ---
-    cash_out = studio_exp + payroll_paid            # ketgan pul (xarajat + to'langan maosh)
+    # --- Naqd holat (cash-flow) --- cash_payroll_out (cash_date) ishlatiladi,
+    # payroll_paid (pdate) emas — shunda eski oy maoshi bugun to'lansa ham
+    # naqd holat to'g'ri kamayadi.
+    cash_out = studio_exp + cash_payroll_out        # ketgan pul (xarajat + to'langan maosh)
     cash_now = income_received - cash_out           # hozir qo'lда
     to_collect = media_outstanding + studio_unpaid  # yig'ilishi kerak
     need_for_salary = max(payroll_remaining - cash_now, 0)  # maoshга yetishi uchun yig'ilishi shart
@@ -2533,6 +2553,7 @@ def api_cashflow(user):
         "companyNet": company_net,
         "rate": rate,
         # Naqd holat
+        "cashPayrollOut": cash_payroll_out,  # shu oy naqd chiqqan maosh (cash_date bo'yicha)
         "cashNow": cash_now,
         "toCollect": to_collect,
         "needForSalary": need_for_salary,
@@ -4699,13 +4720,18 @@ def _paid_to(conn, name, ym):
         (name, ym + "%")).fetchone()["s"] or 0
 
 
-def api_payroll(user):
+def api_payroll(user, ym=None):
+    """ym — faqat CEO uchun: o'tgan biror oyni tanlab ko'rish (masalan oy
+    o'tib ketgach ham o'sha oyga to'lov kiritish uchun). Boshqalar doim
+    joriy oyni ko'radi."""
     rate = get_usd_rate()
     conn = get_db()
     if user["role"] == "ceo":
-        people = [p for p in (compute_salary(conn, n, rate) for n in SALARY) if p]
+        ym = (ym or "").strip() or None
+        people = [p for p in (compute_salary(conn, n, rate, ym=ym) for n in SALARY) if p]
         conn.close()
         return {"rate": rate, "isCeo": True, "people": people,
+                "ym": ym or uz_now().strftime("%Y-%m"),
                 "grandTotal": sum(p["total"] for p in people)}
     me = compute_salary(conn, user["name"], rate)
     conn.close()
@@ -6676,7 +6702,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/payroll":
             if role != "ceo" and user["name"] not in SALARY:
                 return self._forbid()
-            return self._json(api_payroll(user))
+            ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
+            return self._json(api_payroll(user, ym))
         if path == "/api/payroll/my-history":
             return self._json(api_my_salary_history(user))
         if path == "/api/daily":
