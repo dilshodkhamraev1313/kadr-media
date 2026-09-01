@@ -269,6 +269,13 @@ LATE_QC_PER_DAY = 10000       # Said sifat nazoratini kechiktirgan har kun (1 ku
 QC_GRACE_DAYS = 1             # montaj qilingandan keyin sifat nazorati uchun muhlat
 PENALTY_CAP_PCT = 0.20        # jarima fiksaning shu ulushidan oshmasin (maoshni vayron qilmaslik)
 
+# Pace-asosli jarima: loyiha reja (plan) bo'yicha oy davomida QANDAY SUR'ATDA
+# borishi kerakligini kuzatadi (masalan 15 video/oy = kuniga ~0.6). Yagona
+# deadline'dan farqli, bu oy oxirini kutmasdan, ORTDA QOLISHNI DARHOL ko'radi.
+PACE_PENALTY_PER_UNIT = 20000  # reja sur'atidan ortda qolgan har video uchun
+PACE_GRACE_UNITS = 2           # shuncha videogacha ortda qolish jarimasiz
+PACE_START_DATE = "2026-09-02"  # bu jarima shu sanadan boshlab qo'llaniladi (retroaktiv emas)
+
 # Davomat (check-in) intizomi — kechikish jarimasi, mukammal davomat bonusi, otpusk.
 LATENESS_FREE_LIMIT = 3           # oyda shuncha marta kechikish jarimasiz
 LATENESS_PENALTY_PER_DAY = 20000  # 4-martadan boshlab har kechikkan kun uchun qo'shimcha jarima
@@ -832,6 +839,8 @@ def init_db():
     add_column_if_missing(conn, "scenarist_scripts", "client_paid", "INTEGER DEFAULT 0")
     # projects: mijoz o'zi joylaydigan loyihalar (joylash bosqichi yo'q)
     add_column_if_missing(conn, "projects", "self_post", "INTEGER DEFAULT 0")
+    # mijoz o'zi ssenariy beradigan loyihalar (ssenariy bosqichi/deadline/jarima yo'q)
+    add_column_if_missing(conn, "projects", "self_script", "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "projects", "lead_usd", "INTEGER DEFAULT 50")  # rahbarlik puli: 30$ yoki 50$
     # Har loyiha o'z sanasida alohida "yangilanadi" (10/20-sana mijozlar uchun).
     # Yangilashdan OLDINGI holat shu ustunlarga muzlatiladi (tarixiy, kulrang ko'rinish,
@@ -937,9 +946,12 @@ def ensure_project_plans(conn):
 def decorate(row):
     p = dict(row)
     self_post = bool(p.get("self_post"))
+    self_script = bool(p.get("self_script"))
     p["selfPost"] = self_post
-    # Mijoz o'zi joylaydigan loyihalarda "joylash" bosqichi hisobga olinmaydi
-    stages = [s for s in STAGES if not (self_post and s == "joylash")]
+    p["selfScript"] = self_script
+    # Mijoz o'zi joylaydigan loyihalarda "joylash", o'zi ssenariy beradiganlarda
+    # "ssenariy" bosqichi hisobga olinmaydi
+    stages = [s for s in STAGES if not (self_post and s == "joylash") and not (self_script and s == "ssenariy")]
     done = sum(1 for s in stages if p.get(s) == "tayyor")
     p["doneCount"] = done
     p["stageCount"] = len(stages)
@@ -968,7 +980,8 @@ def decorate(row):
     # prev_done_X — oxirgi "loyihani yangilash" chegarasi (muzlatilgan, kulrang).
     # cur_done_X = done_X − prev_done_X — JORIY davr uchun hisoblanadigan (rangli) qism.
     plan = p.get("plan") or 0
-    done_cols = [c for c in DONE_COLS if not (self_post and c == "done_joylash")]
+    done_cols = [c for c in DONE_COLS if not (self_post and c == "done_joylash")
+                 and not (self_script and c == "done_ssenariy")]
     cur_total = 0
     for c in done_cols:
         prev_v = p.get("prev_" + c) or 0
@@ -1133,15 +1146,15 @@ def api_create_project(b):
     conn = get_db()
     sql = """INSERT INTO projects
            (name,client,responsible,ssenariy,syomka,montaj,tasdiq,joylash,deadline,muammo,izoh,
-            plan,monthly_fee,done_ssenariy,done_syomka,done_montaj,done_tasdiq,done_joylash,self_post,lead_usd)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
+            plan,monthly_fee,done_ssenariy,done_syomka,done_montaj,done_tasdiq,done_joylash,self_post,self_script,lead_usd)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
     params = (
         b.get("name") or "Nomsiz loyiha", b.get("client") or "",
         b.get("responsible") or "", st(b.get("ssenariy")), st(b.get("syomka")),
         st(b.get("montaj")), st(b.get("tasdiq")), st(b.get("joylash")),
         b.get("deadline") or None, b.get("muammo") or "", b.get("izoh") or "",
         iv("plan"), iv("monthly_fee"), iv("done_ssenariy"), iv("done_syomka"), iv("done_montaj"), iv("done_tasdiq"), iv("done_joylash"),
-        1 if b.get("self_post") else 0, lead_usd,
+        1 if b.get("self_post") else 0, 1 if b.get("self_script") else 0, lead_usd,
     )
     if IS_PG:
         pid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
@@ -1198,6 +1211,7 @@ def api_update_project(pid, b):
         "done_montaj": iv("done_montaj"), "done_tasdiq": iv("done_tasdiq"),
         "done_joylash": iv("done_joylash"),
         "self_post": (1 if b.get("self_post") else 0) if "self_post" in b else (existing.get("self_post") or 0),
+        "self_script": (1 if b.get("self_script") else 0) if "self_script" in b else (existing.get("self_script") or 0),
         "lead_usd": (30 if int(b.get("lead_usd") or 50) == 30 else 50) if "lead_usd" in b else (existing.get("lead_usd") or 50),
     }
 
@@ -1222,13 +1236,13 @@ def api_update_project(pid, b):
         """UPDATE projects SET name=?,client=?,responsible=?,ssenariy=?,syomka=?,montaj=?,
            tasdiq=?,joylash=?,deadline=?,muammo=?,izoh=?,
            plan=?,monthly_fee=?,done_ssenariy=?,done_syomka=?,done_montaj=?,done_tasdiq=?,done_joylash=?,
-           self_post=?,lead_usd=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+           self_post=?,self_script=?,lead_usd=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
         (
             merged["name"], merged["client"], merged["responsible"], merged["ssenariy"],
             merged["syomka"], merged["montaj"], merged["tasdiq"], merged["joylash"],
             merged["deadline"], merged["muammo"], merged["izoh"],
             merged["plan"], merged["monthly_fee"], merged["done_ssenariy"], merged["done_syomka"],
-            merged["done_montaj"], merged["done_tasdiq"], merged["done_joylash"], merged["self_post"], merged["lead_usd"], pid,
+            merged["done_montaj"], merged["done_tasdiq"], merged["done_joylash"], merged["self_post"], merged["self_script"], merged["lead_usd"], pid,
         ),
     )
     conn.commit()
@@ -4210,8 +4224,10 @@ def _leadership_pay(conn, name, rate):
     total, details = 0, []
     for p in projects:
         self_post = bool(p.get("self_post"))
+        self_script = bool(p.get("self_script"))
         plan = p.get("plan") or 0
-        done_cols = [c for c in DONE_COLS if not (self_post and c == "done_joylash")]
+        done_cols = [c for c in DONE_COLS if not (self_post and c == "done_joylash")
+                     and not (self_script and c == "done_ssenariy")]
         if plan > 0 and done_cols:
             # JORIY davr uchun: umrbod jamlanuvchi son (done_X) minus oxirgi
             # muzlatish chegarasi (prev_done_X) — muzlatilgan qism qayta hisoblanmaydi.
@@ -4220,7 +4236,8 @@ def _leadership_pay(conn, name, rate):
             pct = min(done_total / denom, 1.0) if denom else 0.0
             by_plan = True
         else:
-            stages = [s for s in LEAD_STAGES if not (self_post and s == "joylash")]
+            stages = [s for s in LEAD_STAGES if not (self_post and s == "joylash")
+                      and not (self_script and s == "ssenariy")]
             pct = 1.0 if all((p.get(st) or "") == "tayyor" for st in stages) else 0.5
             by_plan = False
         base_usd = p.get("lead_usd") or LEADERSHIP_USD_FULL
@@ -4289,18 +4306,32 @@ def _late_days_this_month(late_since, today):
     return max((today - start).days + 1, 0)
 
 
+def _workdays_elapsed_and_total(today):
+    """Joriy oyda: bugungacha (bugun kiradi) va butun oydagi ish kunlari soni
+    (yakshanbasiz) — pace (sur'at) hisob-kitobi uchun."""
+    from calendar import monthrange
+    last_day = monthrange(today.year, today.month)[1]
+    total = sum(1 for d in range(1, last_day + 1)
+                if datetime.date(today.year, today.month, d).weekday() != 6)
+    elapsed = sum(1 for d in range(1, today.day + 1)
+                  if datetime.date(today.year, today.month, d).weekday() != 6)
+    return elapsed, total
+
+
 def _lateness_penalty(conn, name, today):
     """Kechikish jarimasi (FAQAT shu oyga tegishli kunlar uchun, so'mda): rahbar
     kechikkan loyihalari (kuniga LATE_PROJECT_PER_DAY) + Said sifat nazorati
-    kechikishi (1 kun muhlatdan keyin kuniga LATE_QC_PER_DAY). Fiksaning
-    PENALTY_CAP_PCT ulushida cheklangan. Loyiha/video o'tgan oydan beri
+    kechikishi (1 kun muhlatdan keyin kuniga LATE_QC_PER_DAY) + reja sur'atidan
+    ortda qolish (PACE_PENALTY_PER_UNIT/video, PACE_GRACE_UNITS bo'shliq bilan).
+    Fiksaning PENALTY_CAP_PCT ulushida cheklangan. Loyiha/video o'tgan oydan beri
     kechikkan bo'lsa ham, faqat joriy oy kunlari sanaladi (oldingi oy uchun
     jarima o'sha oyda allaqachon hisoblangan/arxivlangan).
     Montaj kechikishi bu yerda YO'Q (u alohida 0/yarim pul bilan jazolangan).
     Qaytaradi: (jarima>=0, {raw, cap, items})."""
     items, raw = [], 0
-    # 1) Kechikkan loyihalar — mas'ul rahbar
-    for p in api_projects():
+    all_projects = api_projects()
+    # 1) Kechikkan loyihalar — mas'ul rahbar (yagona umumiy deadline)
+    for p in all_projects:
         if p.get("responsible") != name or p["fullyDone"] or not p.get("overdue"):
             continue
         try:
@@ -4313,6 +4344,36 @@ def _lateness_penalty(conn, name, today):
         amt = days * LATE_PROJECT_PER_DAY
         raw += amt
         items.append({"type": "project", "name": p["name"], "days": days, "amount": amt})
+    # 1b) Pace-asosli kechikish — reja/kun sur'atiga qarab, oy oxirini kutmasdan
+    if today.isoformat() >= PACE_START_DATE:
+        elapsed, total_wd = _workdays_elapsed_and_total(today)
+        if total_wd:
+            for p in all_projects:
+                if p.get("responsible") != name or p["fullyDone"]:
+                    continue
+                plan = p.get("plan") or 0
+                if plan <= 0:
+                    continue
+                expected = plan * elapsed / total_wd
+                # Ssenariy sur'ati — faqat biz yozadigan loyihalarda (mijoz o'zi
+                # bermaydigan, self_script belgilanmagan loyihalarda)
+                if not p.get("selfScript"):
+                    cur_ssen = p.get("cur_done_ssenariy") or 0
+                    behind = int(expected) - cur_ssen - PACE_GRACE_UNITS
+                    if behind > 0:
+                        amt = behind * PACE_PENALTY_PER_UNIT
+                        raw += amt
+                        items.append({"type": "pace", "name": p["name"], "stage": "ssenariy",
+                                      "behind": behind, "amount": amt})
+                # Yakuniy bosqich sur'ati — butun jarayon (ssenariydan postgacha)
+                final_col = "cur_done_tasdiq" if p.get("selfPost") else "cur_done_joylash"
+                cur_final = p.get(final_col) or 0
+                behind2 = int(expected) - cur_final - PACE_GRACE_UNITS
+                if behind2 > 0:
+                    amt2 = behind2 * PACE_PENALTY_PER_UNIT
+                    raw += amt2
+                    items.append({"type": "pace", "name": p["name"], "stage": "final",
+                                  "behind": behind2, "amount": amt2})
     # 2) Sifat nazorati kechikishi — faqat Said (montaj qilingan, tekshirilmagan videolar)
     if name == "Said":
         rows = conn.execute("SELECT title, montaj_at FROM videos WHERE status='montaj_qilindi'").fetchall()

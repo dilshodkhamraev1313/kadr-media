@@ -1792,6 +1792,10 @@ function salaryCard(p) {
     }
     if (c.kind === 'penalty' && c.detail && c.detail.items && c.detail.items.length) {
       html += c.detail.items.map((d) => {
+        if (d.type === 'pace') {
+          const tp = d.stage === 'ssenariy' ? '✍️ Ssenariy ortda' : '⏱️ Reja ortda';
+          return `<div class="mrow sal-sub"><span>↳ ${tp}: ${esc(d.name)} · ${d.behind} video</span><b class="muted">−${money(d.amount)}</b></div>`;
+        }
         const tp = d.type === 'qc' ? '🔎 Sifat kech' : '📁 Loyiha kech';
         return `<div class="mrow sal-sub"><span>↳ ${tp}: ${esc(d.name)} · ${d.days} kun</span><b class="muted">−${money(d.amount)}</b></div>`;
       }).join('');
@@ -3475,6 +3479,8 @@ async function openProjectModal(project) {
     <div class="divider"></div>
     <label class="pf-check"><input type="checkbox" id="pf_selfpost" ${PDRAFT.self_post ? 'checked' : ''} />
       <span>🙅 Mijoz o'zi joylaydi — bu loyihada <b>joylash bosqichi yo'q</b> (biz Instagram'ga joylamaymiz)</span></label>
+    <label class="pf-check"><input type="checkbox" id="pf_selfscript" ${PDRAFT.self_script ? 'checked' : ''} />
+      <span>✍️ Mijoz o'zi ssenariy beradi — bu loyihada <b>ssenariy bosqichi/deadline yo'q</b> (biz yozmaymiz)</span></label>
     <div class="field"><label>⚠ Muammo</label><textarea id="pf_muammo">${esc(PDRAFT.muammo)}</textarea></div>
     <div class="field"><label>Izoh</label><textarea id="pf_izoh">${esc(PDRAFT.izoh)}</textarea></div>
     <div class="modal-actions">${project ? '<button class="btn-del" id="pf_del">O\'chirish</button>' : ''}<button class="btn-save" id="pf_save">${project ? 'Saqlash' : 'Qo\'shish'}</button></div>`,
@@ -3496,7 +3502,8 @@ async function saveProject() {
     done_ssenariy: parseInt($('#pf_done_ssenariy').value || '0', 10), done_syomka: parseInt($('#pf_done_syomka').value || '0', 10),
     done_montaj: parseInt($('#pf_done_montaj').value || '0', 10), done_tasdiq: parseInt($('#pf_done_tasdiq').value || '0', 10),
     done_joylash: parseInt($('#pf_done_joylash').value || '0', 10),
-    self_post: $('#pf_selfpost') && $('#pf_selfpost').checked };
+    self_post: $('#pf_selfpost') && $('#pf_selfpost').checked,
+    self_script: $('#pf_selfscript') && $('#pf_selfscript').checked };
   const fee = $('#pf_fee');
   if (fee) body.monthly_fee = parseInt(fee.value || '0', 10);
   const lu = $('#pf_leadusd');
