@@ -80,9 +80,11 @@ STUDIO_EDIT_USERS = ("Dilshod Khamraev", "Gulmira")
 SHOOT_TYPES = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video", "vebinar": "Vebinar", "tadbir": "Tadbir", "kadr_media": "Kadr Media (ichki)"}
 OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 200000, "tadbir": 80000, "kadr_media": 50000}
 # Operator syomka puli — SHAXSGA bog'liq override (shogird = past stavka).
-# Bu yerda yo'q operator OPERATOR_PAY (to'liq stavka) oladi. Umid hali shogird — yarim.
+# Bu yerda yo'q operator OPERATOR_PAY (to'liq stavka) oladi.
+# Umid 2026-09-02'dan boshlab Samandar bilan bir xil (to'liq) stavkaga o'tkazildi
+# (bu yerdan olib tashlandi) — eski (2026-09-02'dan oldingi) bron/syomkalar
+# eski (yarim) stavkada qoladi, faqat yangilari to'liq stavkada hisoblanadi.
 OPERATOR_RATES = {
-    "Umid": {"reels": 25000, "podcast": 50000, "youtube": 25000, "vebinar": 100000, "tadbir": 40000, "kadr_media": 25000},
     "Shodiya": {"reels": 25000, "podcast": 50000, "youtube": 25000, "vebinar": 100000, "tadbir": 40000, "kadr_media": 25000},  # zaxira operator (yarim)
 }
 # Studiodan TASHQARI (ofis/ko'cha) syomka — har video uchun operator puli.
