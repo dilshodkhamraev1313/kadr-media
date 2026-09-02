@@ -6453,6 +6453,16 @@ def _save_last_webhook(update):
 
 
 
+def api_debug_send_message(b):
+    """VAQTINCHALIK: CEO tasdiqlagan bitta martalik matnni guruhga yuboradi
+    (Umidning tabrik xabari, Oygulnikidan 1 soat keyin, qo'lda ishga tushiriladi)."""
+    text = (b or {}).get("text") or ""
+    if not text:
+        return {"error": "text kerak"}
+    send_telegram(text)
+    return {"ok": True}
+
+
 def api_last_webhook():
     conn = get_db()
     row = conn.execute("SELECT svalue FROM settings WHERE skey='last_webhook'").fetchone()
@@ -6874,6 +6884,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_reset_single_project(user, pid)) if pid else self._json({"error": "Topilmadi"}, 404)
         if path == "/api/archive":
             return self._json(api_archive_month(user, b))
+        if path == "/api/debug/send-message":
+            return self._forbid() if role != "ceo" else self._json(api_debug_send_message(b))
         if path == "/api/editors/recompute":
             return self._json(api_recompute_editor(user, (b.get("editor") or "").strip()))
         if path == "/api/videos/backfill":
