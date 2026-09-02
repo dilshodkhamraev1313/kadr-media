@@ -464,6 +464,31 @@ def rank_info(count):
     }
 
 
+def _rank_up_message(editor, new_idx):
+    """Montajchi yangi darajaga (lavozimga) o'tganda guruhga yuboriladigan
+    tabrik xabari — har safar avtomatik chaqiriladi (api_qc_action 'accept')."""
+    new_rank = RANKS[new_idx]
+    old_rank = RANKS[new_idx - 1]
+    threshold = new_idx * RANK_STEP
+    mention = _telegram_mention(editor)
+    lines = [
+        f"🎉{new_rank['icon']} <b>{editor.upper()} — YANGI DARAJA: {new_rank['label'].upper()}!</b>",
+        "",
+        f"{old_rank['icon']} {old_rank['label']} ({threshold}-video) → {new_rank['icon']} <b>{new_rank['label'].upper()}</b>",
+        "",
+        "[███████████████████] 100%",
+        f"{threshold}-video bosqichini bosib o'tdi! {old_rank['icon']} {old_rank['label']} → {new_rank['icon']} {new_rank['label']}",
+        "",
+        f"Tabriklaymiz, {mention}! Mehnatingiz jamoaning eng yaxshi natijalaridan biri. 👏🔥",
+    ]
+    if new_idx + 1 < len(RANKS):
+        nxt = RANKS[new_idx + 1]
+        lines.append(f"Navbatdagi daraja — {nxt['icon']} {nxt['label']}. Kim quvib yetadi? 😏")
+    else:
+        lines.append("Bu — eng yuqori daraja! Siz haqiqiy 🔱 chempionsiz! 😏")
+    return "\n".join(lines)
+
+
 def editor_pay(count, vtype):
     """Montajyor lavozimi (count bo'yicha) va video turiga qarab haq (so'm) + lavozim kaliti."""
     idx = rank_for_count(count)
@@ -2062,6 +2087,12 @@ def api_video_action(user, vid, b):
             f"✅ <b>Video QABUL QILINDI</b>\n{ex['title']}\n👤 {ex['editor']} · {rk_label}\n"
             f"💰 {VIDEO_TYPES.get(vt, vt)} — {amount:,} so'm hisoblandi{late_note}\n👮 Tasdiqladi: {user['name']}\n→ Joylashga".replace(",", " ")
         )
+        # Yangi daraja (lavozim) ochilganmi — bo'lsa, alohida tabrik xabari
+        new_points = prev_points + (PODCAST_RANK_WEIGHT if vt == "podcast" else 1)
+        old_idx = rank_for_count(eff_count(ex["editor"], prev_points))
+        new_idx = rank_for_count(eff_count(ex["editor"], new_points))
+        if new_idx > old_idx:
+            send_telegram(_rank_up_message(ex["editor"], new_idx))
     elif action == "return" and is_qc_approver(user):
         conn.execute(
             "UPDATE videos SET status='qaytarildi', approved_by=?, approved_at=?, note=? WHERE id=?",
