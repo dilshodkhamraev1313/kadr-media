@@ -4585,9 +4585,16 @@ def _lateness_alert(conn, name, today):
 
 
 def _perfect_attendance_bonus(conn, name, today):
-    """Butun oy (yakshanbadan tashqari, bugungacha) bironta ham kech/kelmagan
-    kun bo'lmasa — mukammal davomat bonusi (otpusk kunlari halaqit bermaydi)."""
+    """Butun OY (yakshanbadan tashqari) bironta ham kech/kelmagan kun bo'lmasa —
+    mukammal davomat bonusi (otpusk kunlari halaqit bermaydi). FAQAT oy
+    tugagach (yoki arxivlangan o'tgan oy uchun, unda `today` allaqachon oy
+    oxiriga tengligini compute_salary o'zi ta'minlaydi) — oy davomida hali
+    erta baholab, to'liq bonusni bermasin."""
     if name not in ATTENDANCE_USERS:
+        return 0
+    from calendar import monthrange
+    last_day = monthrange(today.year, today.month)[1]
+    if today.day < last_day:
         return 0
     d = _month_attendance_days(conn, name, today)
     if d["late"] or d["absent"]:
