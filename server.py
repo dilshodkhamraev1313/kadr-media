@@ -4248,10 +4248,12 @@ def _find_project(projects, cfg_name):
     return None
 
 
-def _leadership_pay(conn, name, rate):
+def _leadership_pay(conn, name, rate, ym=None):
     """Rahbarlik puli: rahbar MAS'UL (responsible) bo'lgan har loyiha uchun.
     Har loyihaning o'z stavkasi (lead_usd: 30$ yoki 50$) × reja bajarilishi foizi (cap 100%).
-    Reja kiritilmagan bo'lsa — 5-bosqich mantiqi ('tayyor' → to'liq, aks holda yarim)."""
+    Reja kiritilmagan bo'lsa — bosqichlar bajarilish ulushiga proportsional,
+    FAQAT o'sha bosqich shu OYDA tayyor bo'lgan bo'lsa (activity jurnali orqali)."""
+    ym = ym or uz_now().strftime("%Y-%m")
     projects = [dict(r) for r in conn.execute(
         "SELECT * FROM projects WHERE responsible=?", (name,)).fetchall()]
     total, details = 0, []
@@ -4270,13 +4272,22 @@ def _leadership_pay(conn, name, rate):
             by_plan = True
         else:
             # Reja yo'q (bir martalik loyiha) — bosqichlar bajarilish ULUSHIGA
-            # proportsional (0 bosqich tayyor = 0%, hammasi tayyor = 100%).
-            # ESKI mantiq ("tayyor" bo'lmasa ham avtomatik 50%) hech narsa
-            # qilinmagan (barchasi "kutilmoqda") loyihaga ham noto'g'ri pul
-            # berardi — endi haqiqiy bajarilishga qarab hisoblanadi.
+            # proportsional (0 bosqich tayyor = 0%, hammasi tayyor = 100%), VA
+            # har bosqich FAQAT haqiqatan "tayyor" bo'lgan OYIDA hisoblanadi
+            # (activity jurnali, created_at). Aks holda tugagan bir martalik
+            # loyiha uchun keyingi HAR OY qayta-qayta pul to'lanaverar edi.
             stages = [s for s in LEAD_STAGES if not (self_post and s == "joylash")
                       and not (self_script and s == "ssenariy")]
-            done_n = sum(1 for st in stages if (p.get(st) or "") == "tayyor")
+            done_n = 0
+            for st in stages:
+                if (p.get(st) or "") != "tayyor":
+                    continue
+                row = conn.execute(
+                    "SELECT 1 FROM activity WHERE project_id=? AND stage=? AND status='tayyor' "
+                    "AND created_at LIKE ? LIMIT 1",
+                    (p["id"], st, ym + "%")).fetchone()
+                if row:
+                    done_n += 1
             pct = (done_n / len(stages)) if stages else 0.0
             by_plan = False
         base_usd = p.get("lead_usd") or LEADERSHIP_USD_FULL
@@ -4762,7 +4773,7 @@ def compute_salary(conn, name, rate, ym=None):
         comps.append({"label": f"Video arxiv ({rate_fmt} so'm/kun · {days} kun bajarilgan)",
                       "amount": days * rate_som, "kind": "auto"})
     if cfg.get("lead"):
-        lp, det = _leadership_pay(conn, name, rate)
+        lp, det = _leadership_pay(conn, name, rate, ym)
         lbl = f"Rahbarlik ({len(det)} loyiha · reja bajarilishiga qarab)"
         comps.append({"label": lbl, "amount": lp, "kind": "lead", "detail": det})
     if cfg.get("operator"):
