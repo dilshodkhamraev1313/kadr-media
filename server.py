@@ -4731,12 +4731,20 @@ def compute_salary(conn, name, rate, ym=None):
     if not cfg:
         return None
     comps = []
+    real_today = uz_today()
     if ym:
         from calendar import monthrange
         yy, mm = (int(x) for x in ym.split("-"))
-        today = datetime.date(yy, mm, monthrange(yy, mm)[1])
+        if (yy, mm) < (real_today.year, real_today.month):
+            # HAQIQATDA o'tgan oy — oxirgi kuni holatida hisoblanadi (arxiv uchun).
+            today = datetime.date(yy, mm, monthrange(yy, mm)[1])
+        else:
+            # Joriy (hali tugamagan) oy — haqiqiy bugungi sana ishlatiladi,
+            # aks holda hali kelmagan kunlar ham "brif yozilmagan/kelmagan"
+            # deb sanalib, sun'iy ravishda katta jarima chiqadi.
+            today = real_today
     else:
-        today = uz_today()
+        today = real_today
         ym = today.strftime("%Y-%m")
     cl = cfg.get("close_link") or []          # kun yopishga bog'langan komponent(lar)
     close_links = [cl] if isinstance(cl, str) else list(cl)
@@ -6516,18 +6524,6 @@ def api_debug_send_message(b):
     return {"ok": True}
 
 
-def api_debug_brief_missing(b):
-    """VAQTINCHALIK: berilgan odamlar uchun shu oyda aynan qaysi kunlarda
-    brif (ertangi reja) yuborilmaganini ko'rsatadi (mavjud, sinalgan
-    _brief_missing_days funksiyasidan foydalanadi, yangi SQL yo'q)."""
-    names = (b or {}).get("names") or []
-    conn = get_db()
-    today = uz_today()
-    result = {nm: _brief_missing_days(conn, nm, today) for nm in names}
-    conn.close()
-    return result
-
-
 def api_last_webhook():
     conn = get_db()
     row = conn.execute("SELECT svalue FROM settings WHERE skey='last_webhook'").fetchone()
@@ -6951,8 +6947,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_archive_month(user, b))
         if path == "/api/debug/send-message":
             return self._forbid() if role != "ceo" else self._json(api_debug_send_message(b))
-        if path == "/api/debug/brief-missing":
-            return self._forbid() if role != "ceo" else self._json(api_debug_brief_missing(b))
         if path == "/api/editors/recompute":
             return self._json(api_recompute_editor(user, (b.get("editor") or "").strip()))
         if path == "/api/videos/backfill":
