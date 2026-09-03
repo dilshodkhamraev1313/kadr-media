@@ -716,7 +716,8 @@ async function viewProjects() {
 
 function projectCard(p) {
   const badges = [];
-  if (p.fullyDone) badges.push('<span class="badge done">✓ Tayyor</span>');
+  if (p.frozen) badges.push('<span class="badge risk">🧊 Muzlatilgan</span>');
+  else if (p.fullyDone) badges.push('<span class="badge done">✓ Tayyor</span>');
   else {
     if (p.overdue) badges.push('<span class="badge overdue">⏱ Kechikkan</span>');
     if (p.atRisk && !p.overdue) badges.push('<span class="badge risk">⚠ Xavf</span>');
@@ -726,7 +727,7 @@ function projectCard(p) {
   const dlCls = (!p.fullyDone && p.deadline && p.daysLeft < 0) ? 'late' : (!p.fullyDone && p.daysLeft <= 2) ? 'soon' : '';
   const clickable = ['ceo', 'coordinator', 'lead'].includes(ME.role);
   return `
-    <div class="project-card ${clickable ? 'clickable' : ''}" data-id="${p.id}">
+    <div class="project-card ${clickable ? 'clickable' : ''}" data-id="${p.id}" style="${p.frozen ? 'opacity:.6' : ''}">
       <div class="pc-top"><div class="pc-name">${esc(p.name)}</div><div class="pc-badges">${badges.join('')}</div></div>
       <div class="pc-client">📁 ${esc(p.client) || '—'}${ME.role === 'ceo' ? ` · 💵 ${p.monthly_fee ? money(p.monthly_fee) : 'to\'lov 0'}` : ''}</div>
       <div class="pc-stages">${STAGES.filter((s) => !(p.selfPost && s.key === 'joylash')).map((s) => `<div class="stage-dot ${p[s.key]}">${s.label}</div>`).join('')}${p.selfPost ? '<div class="stage-dot self-post" title="Mijoz o\'zi joylaydi">🙅 Joylash</div>' : ''}</div>
@@ -761,7 +762,8 @@ function projectCard(p) {
         </div>` : ''}
       <div class="pc-foot"><div class="pc-resp"><div class="mini-av" style="background:${colorFor(p.responsible)}">${initials(p.responsible)}</div><span>${esc(p.responsible) || '—'}</span></div>
         <div class="pc-deadline ${dlCls}">📅 ${dl}</div></div>
-      ${(ME.role === 'ceo' && !p.fullyDone) ? `<button class="mini-btn blue proj-reset" data-resetproj="${p.id}" data-name="${esc(p.name)}" style="margin-top:8px;width:100%">🔄 Shu loyihani yangilash (yangi davr)</button>` : ''}
+      ${(ME.role === 'ceo' && !p.fullyDone && !p.frozen) ? `<button class="mini-btn blue proj-reset" data-resetproj="${p.id}" data-name="${esc(p.name)}" style="margin-top:8px;width:100%">🔄 Shu loyihani yangilash (yangi davr)</button>` : ''}
+      ${(ME.role === 'ceo' && !p.fullyDone) ? `<button class="mini-btn ${p.frozen ? 'green' : 'gray'} proj-freeze" data-freezeproj="${p.id}" data-name="${esc(p.name)}" data-frozen="${p.frozen ? 1 : 0}" style="margin-top:8px;width:100%">${p.frozen ? '🔥 Muzlatishdan tiklash' : '🧊 Muzlatish (mijoz to\'xtatdi)'}</button>` : ''}
     </div>`;
 }
 function bindProjectCards() {
@@ -775,6 +777,17 @@ function bindProjectCards() {
     const r = await api(`/api/projects/${b.dataset.resetproj}/reset`, { method: 'POST', body: '{}' });
     if (r && r.error) { toast(r.error); return; }
     toast('🔄 Loyiha yangilandi'); render();
+  }));
+  document.querySelectorAll('.proj-freeze').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const isFrozen = b.dataset.frozen === '1';
+    const msg = isFrozen
+      ? `«${b.dataset.name}» loyihasini muzlatishdan tiklaysizmi?\n\nLoyiha toza holatdan davom etadi (muzlagan davr uchun jarima bo'lmaydi).`
+      : `«${b.dataset.name}» loyihasini muzlaysizmi?\n\nMuzlatilgan loyihada hech qanday pul, jarima yoki deadline hisoblanmaydi — mijoz ishni to'xtatgan holatlar uchun.`;
+    if (!confirm(msg)) return;
+    const r = await api(`/api/projects/${b.dataset.freezeproj}/freeze`, { method: 'POST', body: '{}' });
+    if (r && r.error) { toast(r.error); return; }
+    toast(isFrozen ? '🔥 Loyiha tiklandi' : '🧊 Loyiha muzlatildi'); render();
   }));
   document.querySelectorAll('.script-debt-pay').forEach((b) => b.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1786,6 +1799,7 @@ function salaryCard(p) {
     let html = `<div class="mrow ${cls}"><span>${esc(c.label)}</span><b>${val}</b></div>`;
     if (c.kind === 'lead' && c.detail && c.detail.length) {
       html += c.detail.map((d) => {
+        if (d.frozen) return `<div class="mrow sal-sub"><span>↳ ${esc(d.matched || d.project)} · 🧊 muzlatilgan</span><b class="muted">$0</b></div>`;
         const info = d.byPlan ? `reja ${d.pct}%` : (d.full ? 'to\'liq' : 'yarim');
         return `<div class="mrow sal-sub"><span>↳ ${esc(d.matched || d.project)} · ${info}</span><b class="muted">$${d.usd}</b></div>`;
       }).join('');

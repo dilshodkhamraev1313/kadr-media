@@ -879,6 +879,10 @@ def init_db():
     add_column_if_missing(conn, "projects", "self_script", "INTEGER DEFAULT 0")
     # shu loyihaning ssenariysini aynan kim yozishga mas'ul (10-sana jarimasi uchun)
     add_column_if_missing(conn, "projects", "ssenarist", "TEXT DEFAULT ''")
+    # Muzlatilgan loyiha — mijoz vaqtincha to'xtatgan: hech qanday pul/jarima/
+    # deadline hisoblanmaydi, tiklanganda toza holatdan davom etadi.
+    add_column_if_missing(conn, "projects", "frozen", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "projects", "frozen_at", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "projects", "lead_usd", "INTEGER DEFAULT 50")  # rahbarlik puli: 30$ yoki 50$
     # Har loyiha o'z sanasida alohida "yangilanadi" (10/20-sana mijozlar uchun).
     # Yangilashdan OLDINGI holat shu ustunlarga muzlatiladi (tarixiy, kulrang ko'rinish,
@@ -985,8 +989,10 @@ def decorate(row):
     p = dict(row)
     self_post = bool(p.get("self_post"))
     self_script = bool(p.get("self_script"))
+    frozen = bool(p.get("frozen"))
     p["selfPost"] = self_post
     p["selfScript"] = self_script
+    p["frozen"] = frozen
     # Mijoz o'zi joylaydigan loyihalarda "joylash", o'zi ssenariy beradiganlarda
     # "ssenariy" bosqichi hisobga olinmaydi
     stages = [s for s in STAGES if not (self_post and s == "joylash") and not (self_script and s == "ssenariy")]
@@ -998,7 +1004,7 @@ def decorate(row):
 
     days_left = None
     overdue = False
-    if p.get("deadline"):
+    if p.get("deadline") and not frozen:
         try:
             dl = datetime.date.fromisoformat(p["deadline"])
             days_left = (dl - uz_today()).days
@@ -1009,7 +1015,7 @@ def decorate(row):
     p["overdue"] = overdue
 
     has_problem = bool((p.get("muammo") or "").strip())
-    p["atRisk"] = (not p["fullyDone"]) and (
+    p["atRisk"] = (not frozen) and (not p["fullyDone"]) and (
         (days_left is not None and days_left <= 2 and p["progress"] < 60) or has_problem
     )
 
@@ -1089,7 +1095,7 @@ def api_projects():
         last_d = _parse_dt(act.get(p["name"]))
         inactive_days = (today - last_d.date()).days if last_d else None
         p["inactiveDays"] = inactive_days
-        p["isStale"] = (not p["fullyDone"]) and inactive_days is not None and inactive_days >= INACTIVITY_DAYS
+        p["isStale"] = (not p["frozen"]) and (not p["fullyDone"]) and inactive_days is not None and inactive_days >= INACTIVITY_DAYS
         out.append(p)
     return out
 
@@ -1165,6 +1171,34 @@ def api_reset_single_project(user, pid):
         return {"error": "Bu loyiha tugagan — yangilash shart emas"}, 400
     _freeze_and_reset_project(conn, pid, row)
     log_audit(conn, user["name"], "loyihani yangiladi (davr)", f"#{pid} {row['name']}")
+    conn.commit()
+    row2 = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+    conn.close()
+    return decorate(dict(row2))
+
+
+def api_toggle_freeze(user, pid):
+    """CEO — loyihani MUZLATADI yoki TIKLAYDI. Muzlatilgan loyihada hech qanday
+    pul (rahbarlik), jarima (kechikish/pace/ssenariy) yoki deadline (overdue/
+    atRisk/isStale) hisoblanmaydi — mijoz vaqtincha to'xtatgan holatlar uchun
+    (masalan '2 oydan keyin davom etamiz'). Tiklanganda loyiha TOZA holatdan
+    davom etadi (_freeze_and_reset_project — muzlagan davr uchun jarima/kam
+    ish qilingandek hisoblanmasin)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    row = dict(row)
+    if row.get("frozen"):
+        _freeze_and_reset_project(conn, pid, row)
+        conn.execute("UPDATE projects SET frozen=0, frozen_at='' WHERE id=?", (pid,))
+        log_audit(conn, user["name"], "loyihani tikladi (muzlatishdan)", row["name"])
+    else:
+        conn.execute("UPDATE projects SET frozen=1, frozen_at=? WHERE id=?", (now_local(), pid))
+        log_audit(conn, user["name"], "loyihani muzlatdi", row["name"])
     conn.commit()
     row2 = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
     conn.close()
@@ -1903,7 +1937,7 @@ def api_control_center(user):
         "SELECT project_name, MAX(created_at) AS last FROM activity GROUP BY project_name").fetchall()}
     overdue_proj, risk_proj, silent_proj = [], [], []
     for p in projects:
-        if p["fullyDone"]:
+        if p["fullyDone"] or p.get("frozen"):
             continue
         nxt = next((s for s in STAGES if (p.get(s) or "") != "tayyor"), None)
         base = {"name": p["name"], "responsible": p.get("responsible") or "—",
@@ -4271,6 +4305,12 @@ def _leadership_pay(conn, name, rate, ym=None):
         "SELECT * FROM projects WHERE responsible=?", (name,)).fetchall()]
     total, details = 0, []
     for p in projects:
+        if p.get("frozen"):
+            # Muzlatilgan — hech qanday pul hisoblanmaydi, faqat ko'rinish uchun
+            details.append({"project": p["name"], "matched": p["name"], "usd": 0,
+                            "pct": 0, "byPlan": False, "full": False, "rate": p.get("lead_usd") or 0,
+                            "frozen": True})
+            continue
         self_post = bool(p.get("self_post"))
         self_script = bool(p.get("self_script"))
         plan = p.get("plan") or 0
@@ -4393,7 +4433,7 @@ def _lateness_penalty(conn, name, today):
     all_projects = api_projects()
     # 1) Kechikkan loyihalar — mas'ul rahbar (yagona umumiy deadline)
     for p in all_projects:
-        if p.get("responsible") != name or p["fullyDone"] or not p.get("overdue"):
+        if p.get("responsible") != name or p["fullyDone"] or p.get("frozen") or not p.get("overdue"):
             continue
         try:
             deadline_date = datetime.date.fromisoformat(p["deadline"])
@@ -4410,7 +4450,7 @@ def _lateness_penalty(conn, name, today):
         elapsed, total_wd = _pace_days_elapsed_and_total(today)
         if total_wd:
             for p in all_projects:
-                if p.get("responsible") != name or p["fullyDone"]:
+                if p.get("responsible") != name or p["fullyDone"] or p.get("frozen"):
                     continue
                 plan = p.get("plan") or 0
                 if plan <= 0:
@@ -4434,7 +4474,7 @@ def _lateness_penalty(conn, name, today):
     if today.isoformat() >= SSENARIY_DEADLINE_START and today.day > SSENARIY_DEADLINE_DAY:
         days_late = today.day - SSENARIY_DEADLINE_DAY
         for p in all_projects:
-            if p.get("fullyDone") or p.get("selfScript"):
+            if p.get("fullyDone") or p.get("selfScript") or p.get("frozen"):
                 continue
             plan = p.get("plan") or 0
             if plan <= 0:
@@ -6944,6 +6984,9 @@ class Handler(BaseHTTPRequestHandler):
         if len(seg) == 4 and seg[1] == "projects" and seg[3] == "reset":
             pid = self._int(seg[2])
             return self._json(api_reset_single_project(user, pid)) if pid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "projects" and seg[3] == "freeze":
+            pid = self._int(seg[2])
+            return self._json(api_toggle_freeze(user, pid)) if pid else self._json({"error": "Topilmadi"}, 404)
         if path == "/api/archive":
             return self._json(api_archive_month(user, b))
         if path == "/api/debug/send-message":
