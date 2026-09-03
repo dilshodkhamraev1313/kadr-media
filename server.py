@@ -4269,9 +4269,15 @@ def _leadership_pay(conn, name, rate):
             pct = min(done_total / denom, 1.0) if denom else 0.0
             by_plan = True
         else:
+            # Reja yo'q (bir martalik loyiha) — bosqichlar bajarilish ULUSHIGA
+            # proportsional (0 bosqich tayyor = 0%, hammasi tayyor = 100%).
+            # ESKI mantiq ("tayyor" bo'lmasa ham avtomatik 50%) hech narsa
+            # qilinmagan (barchasi "kutilmoqda") loyihaga ham noto'g'ri pul
+            # berardi — endi haqiqiy bajarilishga qarab hisoblanadi.
             stages = [s for s in LEAD_STAGES if not (self_post and s == "joylash")
                       and not (self_script and s == "ssenariy")]
-            pct = 1.0 if all((p.get(st) or "") == "tayyor" for st in stages) else 0.5
+            done_n = sum(1 for st in stages if (p.get(st) or "") == "tayyor")
+            pct = (done_n / len(stages)) if stages else 0.0
             by_plan = False
         base_usd = p.get("lead_usd") or LEADERSHIP_USD_FULL
         usd = int(round(base_usd * pct))
