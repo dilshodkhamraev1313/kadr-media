@@ -6524,6 +6524,17 @@ def api_debug_send_message(b):
     return {"ok": True}
 
 
+def api_debug_brief_missing(b):
+    """VAQTINCHALIK: berilgan odamlar uchun shu oyda aynan qaysi kunlarda
+    brif yuborilmaganini korsatadi."""
+    names = (b or {}).get("names") or []
+    conn = get_db()
+    today = uz_today()
+    result = {nm: _brief_missing_days(conn, nm, today) for nm in names}
+    conn.close()
+    return result
+
+
 def api_last_webhook():
     conn = get_db()
     row = conn.execute("SELECT svalue FROM settings WHERE skey='last_webhook'").fetchone()
@@ -6947,6 +6958,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_archive_month(user, b))
         if path == "/api/debug/send-message":
             return self._forbid() if role != "ceo" else self._json(api_debug_send_message(b))
+        if path == "/api/debug/brief-missing":
+            return self._forbid() if role != "ceo" else self._json(api_debug_brief_missing(b))
         if path == "/api/editors/recompute":
             return self._json(api_recompute_editor(user, (b.get("editor") or "").strip()))
         if path == "/api/videos/backfill":
