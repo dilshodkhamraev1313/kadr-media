@@ -278,6 +278,15 @@ PACE_PENALTY_PER_UNIT = 20000  # reja sur'atidan ortda qolgan har video uchun
 PACE_GRACE_UNITS = 2           # shuncha videogacha ortda qolish jarimasiz
 PACE_START_DATE = "2026-09-02"  # bu jarima shu sanadan boshlab qo'llaniladi (retroaktiv emas)
 
+# Ssenariy uchun ALOHIDA qat'iy chegara (sur'at emas — aniq sana): shu oyning
+# 10-sanasigacha o'sha oy uchun rejalashtirilgan ssenariylar TO'LIQ tayyor
+# bo'lishi kerak (self_script=true loyihalarda qo'llanilmaydi — mijoz o'zi
+# beradi). O'tib ketsa, HAR KUN uchun — rahbar VA ssenaristning IKKALASIGA
+# ALOHIDA (bo'lib emas, ikkalasiga to'liq) jarima yoziladi.
+SSENARIY_DEADLINE_DAY = 10
+SSENARIY_PENALTY_PER_DAY = 10000
+SSENARIY_DEADLINE_START = "2026-09-01"  # bu qoida shu oydan boshlab qo'llaniladi
+
 # Davomat (check-in) intizomi — kechikish jarimasi, mukammal davomat bonusi, otpusk.
 LATENESS_FREE_LIMIT = 3           # oyda shuncha marta kechikish jarimasiz
 LATENESS_PENALTY_PER_DAY = 20000  # 4-martadan boshlab har kechikkan kun uchun qo'shimcha jarima
@@ -868,6 +877,8 @@ def init_db():
     add_column_if_missing(conn, "projects", "self_post", "INTEGER DEFAULT 0")
     # mijoz o'zi ssenariy beradigan loyihalar (ssenariy bosqichi/deadline/jarima yo'q)
     add_column_if_missing(conn, "projects", "self_script", "INTEGER DEFAULT 0")
+    # shu loyihaning ssenariysini aynan kim yozishga mas'ul (10-sana jarimasi uchun)
+    add_column_if_missing(conn, "projects", "ssenarist", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "projects", "lead_usd", "INTEGER DEFAULT 50")  # rahbarlik puli: 30$ yoki 50$
     # Har loyiha o'z sanasida alohida "yangilanadi" (10/20-sana mijozlar uchun).
     # Yangilashdan OLDINGI holat shu ustunlarga muzlatiladi (tarixiy, kulrang ko'rinish,
@@ -1173,15 +1184,15 @@ def api_create_project(b):
     conn = get_db()
     sql = """INSERT INTO projects
            (name,client,responsible,ssenariy,syomka,montaj,tasdiq,joylash,deadline,muammo,izoh,
-            plan,monthly_fee,done_ssenariy,done_syomka,done_montaj,done_tasdiq,done_joylash,self_post,self_script,lead_usd)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
+            plan,monthly_fee,done_ssenariy,done_syomka,done_montaj,done_tasdiq,done_joylash,self_post,self_script,ssenarist,lead_usd)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
     params = (
         b.get("name") or "Nomsiz loyiha", b.get("client") or "",
         b.get("responsible") or "", st(b.get("ssenariy")), st(b.get("syomka")),
         st(b.get("montaj")), st(b.get("tasdiq")), st(b.get("joylash")),
         b.get("deadline") or None, b.get("muammo") or "", b.get("izoh") or "",
         iv("plan"), iv("monthly_fee"), iv("done_ssenariy"), iv("done_syomka"), iv("done_montaj"), iv("done_tasdiq"), iv("done_joylash"),
-        1 if b.get("self_post") else 0, 1 if b.get("self_script") else 0, lead_usd,
+        1 if b.get("self_post") else 0, 1 if b.get("self_script") else 0, b.get("ssenarist") or "", lead_usd,
     )
     if IS_PG:
         pid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
@@ -1239,6 +1250,7 @@ def api_update_project(pid, b):
         "done_joylash": iv("done_joylash"),
         "self_post": (1 if b.get("self_post") else 0) if "self_post" in b else (existing.get("self_post") or 0),
         "self_script": (1 if b.get("self_script") else 0) if "self_script" in b else (existing.get("self_script") or 0),
+        "ssenarist": b.get("ssenarist", existing.get("ssenarist") or ""),
         "lead_usd": (30 if int(b.get("lead_usd") or 50) == 30 else 50) if "lead_usd" in b else (existing.get("lead_usd") or 50),
     }
 
@@ -1263,13 +1275,13 @@ def api_update_project(pid, b):
         """UPDATE projects SET name=?,client=?,responsible=?,ssenariy=?,syomka=?,montaj=?,
            tasdiq=?,joylash=?,deadline=?,muammo=?,izoh=?,
            plan=?,monthly_fee=?,done_ssenariy=?,done_syomka=?,done_montaj=?,done_tasdiq=?,done_joylash=?,
-           self_post=?,self_script=?,lead_usd=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+           self_post=?,self_script=?,ssenarist=?,lead_usd=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
         (
             merged["name"], merged["client"], merged["responsible"], merged["ssenariy"],
             merged["syomka"], merged["montaj"], merged["tasdiq"], merged["joylash"],
             merged["deadline"], merged["muammo"], merged["izoh"],
             merged["plan"], merged["monthly_fee"], merged["done_ssenariy"], merged["done_syomka"],
-            merged["done_montaj"], merged["done_tasdiq"], merged["done_joylash"], merged["self_post"], merged["self_script"], merged["lead_usd"], pid,
+            merged["done_montaj"], merged["done_tasdiq"], merged["done_joylash"], merged["self_post"], merged["self_script"], merged["ssenarist"], merged["lead_usd"], pid,
         ),
     )
     conn.commit()
@@ -1452,6 +1464,7 @@ def public_user(u, conn=None):
     d.pop("password_hash", None)
     d["hasPassword"] = True
     d["budgetUser"] = _is_budget_user(d.get("name"), conn)
+    d["isScenarist"] = d.get("name") in SCENARIST_PAY
     return d
 
 
@@ -4403,16 +4416,8 @@ def _lateness_penalty(conn, name, today):
                 if plan <= 0:
                     continue
                 expected = plan * elapsed / total_wd
-                # Ssenariy sur'ati — faqat biz yozadigan loyihalarda (mijoz o'zi
-                # bermaydigan, self_script belgilanmagan loyihalarda)
-                if not p.get("selfScript"):
-                    cur_ssen = p.get("cur_done_ssenariy") or 0
-                    behind = int(expected) - cur_ssen - PACE_GRACE_UNITS
-                    if behind > 0:
-                        amt = behind * PACE_PENALTY_PER_UNIT
-                        raw += amt
-                        items.append({"type": "pace", "name": p["name"], "stage": "ssenariy",
-                                      "behind": behind, "amount": amt})
+                # Ssenariy — ALOHIDA 10-sana qoidasi bilan (pastda, 1c), bu yerda
+                # tekshirilmaydi (ikki xil ssenariy-jarima bir loyihaga tushmasin).
                 # Yakuniy bosqich sur'ati — butun jarayon (ssenariydan postgacha)
                 final_col = "cur_done_tasdiq" if p.get("selfPost") else "cur_done_joylash"
                 cur_final = p.get(final_col) or 0
@@ -4422,6 +4427,30 @@ def _lateness_penalty(conn, name, today):
                     raw += amt2
                     items.append({"type": "pace", "name": p["name"], "stage": "final",
                                   "behind": behind2, "amount": amt2})
+    # 1c) Ssenariy — 10-sana qat'iy chegarasi. Shu kundan keyin ham shu oy
+    # uchun reja bo'yicha ssenariy TO'LIQ tayyor bo'lmasa, har kun uchun —
+    # rahbar VA ssenaristning IKKALASIGA ALOHIDA (ikkisi ham to'liq, bo'lib
+    # emas) jarima. self_script (mijoz o'zi beradi) loyihalarda qo'llanmaydi.
+    if today.isoformat() >= SSENARIY_DEADLINE_START and today.day > SSENARIY_DEADLINE_DAY:
+        days_late = today.day - SSENARIY_DEADLINE_DAY
+        for p in all_projects:
+            if p.get("fullyDone") or p.get("selfScript"):
+                continue
+            plan = p.get("plan") or 0
+            if plan <= 0:
+                continue
+            cur_ssen = p.get("cur_done_ssenariy") or 0
+            if cur_ssen >= plan:
+                continue
+            amt = days_late * SSENARIY_PENALTY_PER_DAY
+            if p.get("responsible") == name:
+                raw += amt
+                items.append({"type": "ssenariy_deadline", "role": "rahbar", "name": p["name"],
+                              "days": days_late, "amount": amt})
+            if p.get("ssenarist") == name:
+                raw += amt
+                items.append({"type": "ssenariy_deadline", "role": "ssenarist", "name": p["name"],
+                              "days": days_late, "amount": amt})
     # 2) Sifat nazorati kechikishi — faqat Said (montaj qilingan, tekshirilmagan videolar)
     if name == "Said":
         rows = conn.execute("SELECT title, montaj_at FROM videos WHERE status='montaj_qilindi'").fetchall()

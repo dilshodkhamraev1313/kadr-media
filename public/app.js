@@ -1793,8 +1793,11 @@ function salaryCard(p) {
     if (c.kind === 'penalty' && c.detail && c.detail.items && c.detail.items.length) {
       html += c.detail.items.map((d) => {
         if (d.type === 'pace') {
-          const tp = d.stage === 'ssenariy' ? '✍️ Ssenariy ortda' : '⏱️ Reja ortda';
-          return `<div class="mrow sal-sub"><span>↳ ${tp}: ${esc(d.name)} · ${d.behind} video</span><b class="muted">−${money(d.amount)}</b></div>`;
+          return `<div class="mrow sal-sub"><span>↳ ⏱️ Reja ortda: ${esc(d.name)} · ${d.behind} video</span><b class="muted">−${money(d.amount)}</b></div>`;
+        }
+        if (d.type === 'ssenariy_deadline') {
+          const role = d.role === 'rahbar' ? '👤 rahbar' : '✍️ ssenarist';
+          return `<div class="mrow sal-sub"><span>↳ ✍️ Ssenariy 10-sanagacha tayyor emas (${role}): ${esc(d.name)} · ${d.days} kun</span><b class="muted">−${money(d.amount)}</b></div>`;
         }
         const tp = d.type === 'qc' ? '🔎 Sifat kech' : '📁 Loyiha kech';
         return `<div class="mrow sal-sub"><span>↳ ${tp}: ${esc(d.name)} · ${d.days} kun</span><b class="muted">−${money(d.amount)}</b></div>`;
@@ -3459,6 +3462,7 @@ async function openProjectModal(project) {
       <div class="field"><label>Mijoz</label><select id="pf_client"><option value="">—</option>${DATA.clients.map((c) => `<option ${PDRAFT.client === c.name ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
       <div class="field"><label>Javobgar</label><select id="pf_resp"><option value="">—</option>${leads.map((u) => `<option ${PDRAFT.responsible === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></div>
     </div>
+    <div class="field"><label>✍️ Ssenarist (10-sana qoidasi shu odamga ham tegishli bo'ladi)</label><select id="pf_ssenarist"><option value="">—</option>${DATA.team.filter((u) => u.isScenarist).map((u) => `<option ${PDRAFT.ssenarist === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></div>
     <div class="field"><label>Deadline</label><input id="pf_deadline" type="date" value="${PDRAFT.deadline || ''}" /></div>
     ${ME.role === 'ceo' ? `<div class="field-row">
       <div class="field"><label>💵 Oylik to'lov (so'm) — Media daromadi</label><input id="pf_fee" type="number" min="0" value="${PDRAFT.monthly_fee || 0}" placeholder="masalan: 10800000 (barter bo'lsa 0)" /></div>
@@ -3496,6 +3500,7 @@ async function openProjectModal(project) {
 }
 async function saveProject() {
   const body = { name: $('#pf_name').value.trim() || 'Nomsiz', client: $('#pf_client').value, responsible: $('#pf_resp').value,
+    ssenarist: $('#pf_ssenarist') ? $('#pf_ssenarist').value : '',
     deadline: $('#pf_deadline').value || null, muammo: $('#pf_muammo').value.trim(), izoh: $('#pf_izoh').value.trim(),
     ssenariy: PDRAFT.ssenariy, syomka: PDRAFT.syomka, montaj: PDRAFT.montaj, tasdiq: PDRAFT.tasdiq, joylash: PDRAFT.joylash,
     plan: parseInt($('#pf_plan').value || '0', 10),
