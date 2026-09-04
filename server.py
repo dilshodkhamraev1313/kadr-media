@@ -4591,7 +4591,7 @@ def _backstage_penalty(conn, name, ym):
     return n * BACKSTAGE_PENALTY_PER_SHOOT, n
 
 
-BRIEF_DEADLINE = "20:00"        # bugun shu vaqtgacha ertangi kun rejasi yuborilishi kerak
+BRIEF_DEADLINE = "22:00"        # bugun shu vaqtgacha ertangi kun rejasi yuborilishi kerak
 BRIEF_REMINDER_TIME = "18:00"   # shu vaqtda hali yozmaganlarga eslatma
 BRIEF_START_DATE = "2026-08-20"  # talab shu sanadan boshlab qo'llaniladi (retroaktiv emas)
 
