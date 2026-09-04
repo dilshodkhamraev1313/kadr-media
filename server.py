@@ -6191,35 +6191,37 @@ def api_cron_backstage_check():
     now = uz_now()
     now_time = now.strftime("%H:%M")
     conn = get_db()
-    rows = [dict(r) for r in conn.execute(
-        "SELECT * FROM shoots WHERE sdate=? AND (status IS NULL OR status<>'bekor_qilindi') "
-        "AND (backstage_ready IS NULL OR backstage_ready=0)", (today_iso,)).fetchall()]
     warned, penalized = [], []
-    for r in rows:
-        if today_iso < BACKSTAGE_START_DATE:
-            continue
-        if not r.get("backstage_warned"):
-            st = _shoot_start_dt(today_iso, r.get("start_time") or "")
-            if st and now >= st + datetime.timedelta(minutes=BACKSTAGE_WARN_MINUTES):
-                op_mention = (_telegram_mention(r["operator"]) + " ") if r.get("operator") else ""
-                send_telegram(
-                    f"🎬 <b>{r['project']}</b> uchun backstage hali tayyor emas!\n"
-                    f"{op_mention}{_telegram_mention(BACKSTAGE_PERSON)} — backstage tayyorlab, "
-                    f"dashboardda «Backstage tayyor» tugmasini bosing. Soat {BACKSTAGE_DEADLINE}gacha "
-                    f"bosilmasa jarima yoziladi."
-                )
-                conn.execute("UPDATE shoots SET backstage_warned=1 WHERE id=?", (r["id"],))
-                warned.append(r["id"])
-        if not r.get("backstage_penalized") and now_time >= BACKSTAGE_DEADLINE:
-            conn.execute("UPDATE shoots SET backstage_penalized=1 WHERE id=?", (r["id"],))
-            op_txt = ""
-            if r.get("operator"):
-                op_txt = f"\n{_telegram_mention(r['operator'])} — bu syomka uchun operator puli hisoblanmaydi."
-            send_telegram(
-                f"⚫️ <b>{r['project']}</b> — backstage tayyorlanmadi!\n"
-                f"{_telegram_mention(BACKSTAGE_PERSON)} — −{som(BACKSTAGE_PENALTY_PER_SHOOT)} jarima yozildi.{op_txt}"
-            )
-            penalized.append(r["id"])
+    if today_iso >= BACKSTAGE_START_DATE:
+        for table, date_col, label_col in (("shoots", "sdate", "project"),
+                                            ("studio_bookings", "bdate", "client_name")):
+            rows = [dict(r) for r in conn.execute(
+                f"SELECT * FROM {table} WHERE {date_col}=? AND (status IS NULL OR status<>'bekor_qilindi') "
+                f"AND (backstage_ready IS NULL OR backstage_ready=0)", (today_iso,)).fetchall()]
+            for r in rows:
+                label = r.get(label_col) or "Syomka"
+                if not r.get("backstage_warned"):
+                    st = _shoot_start_dt(today_iso, r.get("start_time") or "")
+                    if st and now >= st + datetime.timedelta(minutes=BACKSTAGE_WARN_MINUTES):
+                        op_mention = (_telegram_mention(r["operator"]) + " ") if r.get("operator") else ""
+                        send_telegram(
+                            f"🎬 <b>{label}</b> uchun backstage hali tayyor emas!\n"
+                            f"{op_mention}{_telegram_mention(BACKSTAGE_PERSON)} — backstage tayyorlab, "
+                            f"dashboardda «Backstage tayyor» tugmasini bosing. Soat {BACKSTAGE_DEADLINE}gacha "
+                            f"bosilmasa jarima yoziladi."
+                        )
+                        conn.execute(f"UPDATE {table} SET backstage_warned=1 WHERE id=?", (r["id"],))
+                        warned.append(r["id"])
+                if not r.get("backstage_penalized") and now_time >= BACKSTAGE_DEADLINE:
+                    conn.execute(f"UPDATE {table} SET backstage_penalized=1 WHERE id=?", (r["id"],))
+                    op_txt = ""
+                    if r.get("operator"):
+                        op_txt = f"\n{_telegram_mention(r['operator'])} — bu syomka uchun operator puli hisoblanmaydi."
+                    send_telegram(
+                        f"⚫️ <b>{label}</b> — backstage tayyorlanmadi!\n"
+                        f"{_telegram_mention(BACKSTAGE_PERSON)} — −{som(BACKSTAGE_PENALTY_PER_SHOOT)} jarima yozildi.{op_txt}"
+                    )
+                    penalized.append(r["id"])
     conn.commit()
     conn.close()
     return {"ok": True, "warned": warned, "penalized": penalized}
