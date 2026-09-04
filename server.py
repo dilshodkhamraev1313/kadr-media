@@ -854,6 +854,13 @@ def init_db():
     add_column_if_missing(conn, "shoots", "backstage_at", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "shoots", "backstage_warned", "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "shoots", "backstage_penalized", "INTEGER DEFAULT 0")
+    # Kadr Studio bronlarida ham backstage kuzatuvi uchun ustunlar (1-bosqich:
+    # faqat ustun, hali kod mantig'i yo'q - xavfsizlik uchun alohida qadam).
+    add_column_if_missing(conn, "studio_bookings", "backstage_ready", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "studio_bookings", "backstage_by", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "studio_bookings", "backstage_at", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "studio_bookings", "backstage_warned", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "studio_bookings", "backstage_penalized", "INTEGER DEFAULT 0")
     # xarajatlar: qayerdan pul chiqdi — usul (naqt/plastik) + kim to'ladi (Dilshod/Gulmira)
     add_column_if_missing(conn, "studio_expenses", "method", "TEXT DEFAULT 'naqt'")
     add_column_if_missing(conn, "studio_expenses", "paid_by", "TEXT DEFAULT ''")
