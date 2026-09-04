@@ -6598,18 +6598,6 @@ def api_debug_send_message(b):
 
 
 
-def api_debug_briefs_raw(b):
-    """VAQTINCHALIK: berilgan odamning shu oydagi barcha daily_briefs
-    yozuvlarini (for_date, submitted_at) xom holda korsatadi."""
-    name = (b or {}).get("name") or ""
-    ym = uz_today().strftime("%Y-%m")
-    conn = get_db()
-    rows = [dict(r) for r in conn.execute(
-        "SELECT for_date, submitted_at FROM daily_briefs WHERE person=? AND for_date LIKE ? ORDER BY for_date",
-        (name, ym[:4] + "%")).fetchall()]
-    conn.close()
-    return {"name": name, "rows": rows}
-
 
 def api_last_webhook():
     conn = get_db()
@@ -6688,6 +6676,7 @@ def _attend_month(conn, name, today):
     intizom_days = _ontime_days(conn, name, today)
     att_pen, _ = _attendance_penalty(conn, name, today)
     warn_color, warn_text = _lateness_alert(conn, name, today)
+    brief_missed = _brief_missing_days(conn, name, today) if name in ATTENDANCE_USERS else []
     return {
         "name": name, "onTimeDays": on_time, "lateDays": late, "absentDays": absent,
         "otpuskDays": otpusk, "pct": pct,
@@ -6696,6 +6685,7 @@ def _attend_month(conn, name, today):
         "intizom": min(intizom_days * INTIZOM_PER_DAY, INTIZOM_FULL),
         "attendancePenalty": att_pen,
         "warnColor": warn_color, "warnText": warn_text,
+        "briefMissedDates": brief_missed,
     }
 
 
@@ -7037,8 +7027,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_archive_month(user, b))
         if path == "/api/debug/send-message":
             return self._forbid() if role != "ceo" else self._json(api_debug_send_message(b))
-        if path == "/api/debug/briefs-raw":
-            return self._forbid() if role != "ceo" else self._json(api_debug_briefs_raw(b))
         if path == "/api/editors/recompute":
             return self._json(api_recompute_editor(user, (b.get("editor") or "").strip()))
         if path == "/api/videos/backfill":
