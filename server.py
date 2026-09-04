@@ -4281,7 +4281,7 @@ def api_set_usd_rate(user, b):
 def _op_earn(conn, name, ym=None):
     ym = ym or uz_now().strftime("%Y-%m")
     like = ym + "%"
-    a = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM studio_bookings WHERE operator=? AND bdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (name, like)).fetchone()["s"] or 0
+    a = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM studio_bookings WHERE operator=? AND bdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi') AND (backstage_penalized IS NULL OR backstage_penalized=0)", (name, like)).fetchone()["s"] or 0
     b = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM shoots WHERE operator=? AND sdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi') AND (backstage_penalized IS NULL OR backstage_penalized=0)", (name, like)).fetchone()["s"] or 0
     return a + b
 
