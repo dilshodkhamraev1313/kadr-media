@@ -6598,6 +6598,19 @@ def api_debug_send_message(b):
 
 
 
+def api_debug_briefs_raw(b):
+    """VAQTINCHALIK: berilgan odamning shu oydagi barcha daily_briefs
+    yozuvlarini (for_date, submitted_at) xom holda korsatadi."""
+    name = (b or {}).get("name") or ""
+    ym = uz_today().strftime("%Y-%m")
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT for_date, submitted_at FROM daily_briefs WHERE person=? AND for_date LIKE ? ORDER BY for_date",
+        (name, ym[:4] + "%")).fetchall()]
+    conn.close()
+    return {"name": name, "rows": rows}
+
+
 def api_last_webhook():
     conn = get_db()
     row = conn.execute("SELECT svalue FROM settings WHERE skey='last_webhook'").fetchone()
@@ -7024,6 +7037,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_archive_month(user, b))
         if path == "/api/debug/send-message":
             return self._forbid() if role != "ceo" else self._json(api_debug_send_message(b))
+        if path == "/api/debug/briefs-raw":
+            return self._forbid() if role != "ceo" else self._json(api_debug_briefs_raw(b))
         if path == "/api/editors/recompute":
             return self._json(api_recompute_editor(user, (b.get("editor") or "").strip()))
         if path == "/api/videos/backfill":
