@@ -4577,12 +4577,17 @@ BACKSTAGE_START_DATE = "2026-08-21"   # jarima shu sanadan boshlab qo'llaniladi 
 
 
 def _backstage_penalty(conn, name, ym):
-    """Gulmiraga — shu oyda backstage tayyorlanmay jarimaga tortilgan har syomka uchun −50 000."""
+    """Gulmiraga — shu oyda backstage tayyorlanmay jarimaga tortilgan har syomka
+    (Kadr Media + Kadr Studio) uchun −50 000."""
     if name != BACKSTAGE_PERSON:
         return 0, 0
-    n = conn.execute(
+    n1 = conn.execute(
         "SELECT COUNT(*) AS n FROM shoots WHERE backstage_penalized=1 AND sdate LIKE ?",
         (ym + "%",)).fetchone()["n"] or 0
+    n2 = conn.execute(
+        "SELECT COUNT(*) AS n FROM studio_bookings WHERE backstage_penalized=1 AND bdate LIKE ?",
+        (ym + "%",)).fetchone()["n"] or 0
+    n = n1 + n2
     return n * BACKSTAGE_PENALTY_PER_SHOOT, n
 
 
