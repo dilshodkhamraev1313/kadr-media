@@ -6677,6 +6677,9 @@ def _attend_month(conn, name, today):
     att_pen, _ = _attendance_penalty(conn, name, today)
     warn_color, warn_text = _lateness_alert(conn, name, today)
     brief_missed = _brief_missing_days(conn, name, today) if name in ATTENDANCE_USERS else []
+    brief_raw = [dict(r) for r in conn.execute(
+        "SELECT for_date, submitted_at FROM daily_briefs WHERE person=? AND for_date LIKE ? ORDER BY for_date",
+        (name, ym[:4] + "%")).fetchall()] if name in ATTENDANCE_USERS else []
     return {
         "name": name, "onTimeDays": on_time, "lateDays": late, "absentDays": absent,
         "otpuskDays": otpusk, "pct": pct,
@@ -6686,6 +6689,7 @@ def _attend_month(conn, name, today):
         "attendancePenalty": att_pen,
         "warnColor": warn_color, "warnText": warn_text,
         "briefMissedDates": brief_missed,
+        "briefRaw": brief_raw,
     }
 
 
