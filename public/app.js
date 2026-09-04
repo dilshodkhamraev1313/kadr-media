@@ -1272,6 +1272,9 @@ function openStudioDetailModal(b) {
   const total = b.amount || 0; const paid = b.paid_amount || 0; const rem = Math.max(total - paid, 0);
   const st = (data.shootTypes && data.shootTypes[b.shoot_type]) || SHOOT_TYPE_LABEL[b.shoot_type] || '—';
   const canEdit = studioCanEdit();
+  const canBackstage = !cancelled && (ME.role === 'ceo' || ME.name === 'Gulmira');
+  const backstageBtn = (canBackstage && !b.backstage_ready)
+    ? `<button class="btn-save" id="sb_backstage" style="margin:2px 0 12px">✅ Backstage tayyor</button>` : '';
   let actions = '';
   if (canEdit && cancelled) {
     actions = `<button class="mini-btn blue" id="sb_editbtn">✏️ Tahrirlash</button>
@@ -1295,7 +1298,9 @@ function openStudioDetailModal(b) {
       <div class="mrow"><span style="color:var(--green)">To'langan</span><b style="color:var(--green)">${money(paid)}</b></div>
       <div class="mrow"><span style="color:var(--orange)">Qolgan</span><b style="color:var(--orange)">${money(rem)}</b></div>
       <div class="mrow"><span>👮 Bron qildi</span><b>${esc(b.created_by || '—')}</b></div>
+      ${!cancelled ? `<div class="mrow"><span>🎬 Backstage</span><b>${b.backstage_ready ? `✅ Tayyor (${esc(b.backstage_by || '')})` : '⏳ Kutilmoqda'}</b></div>` : ''}
     </div>
+    ${backstageBtn}
     ${(b.ledger && b.ledger.length) ? `<div class="sec-label" style="margin:4px 0 6px">💳 To'lovlar (shaffof daftar)</div>
       <div class="ldg-list">${b.ledger.map((p) => `<div class="ldg-row">
         <span>${money(p.amount)} · <b>${esc(p.received_by || '')}</b> · ${p.method === 'plastik' ? '💳 Plastik' : '💵 Naqt'} <span class="muted">· ${fmtDate(p.pdate)}</span></span>
@@ -1311,6 +1316,12 @@ function openStudioDetailModal(b) {
     }));
     const ed = $('#sb_editbtn');
     if (ed) ed.addEventListener('click', () => openStudioBookingModal(null, b));
+    const bs = $('#sb_backstage');
+    if (bs) bs.addEventListener('click', async () => {
+      const res = await api(`/api/studio/${b.id}/backstage`, { method: 'POST', body: '{}' });
+      if (res && res.error) { toast('⚠️ ' + res.error); return; }
+      closeModal(); toast('✅ Backstage tayyor deb belgilandi'); render();
+    });
     const pay = $('#sb_paybtn');
     if (pay) pay.addEventListener('click', () => openStudioPayModal(b, rem));
     const cn = $('#sb_cancelbtn');

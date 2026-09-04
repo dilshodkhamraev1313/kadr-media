@@ -854,6 +854,12 @@ def init_db():
     add_column_if_missing(conn, "shoots", "backstage_at", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "shoots", "backstage_warned", "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "shoots", "backstage_penalized", "INTEGER DEFAULT 0")
+    # Kadr Studio bronlarida ham backstage kuzatuvi (Gulmira shu yerda ko'proq ishlaydi)
+    add_column_if_missing(conn, "studio_bookings", "backstage_ready", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "studio_bookings", "backstage_by", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "studio_bookings", "backstage_at", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "studio_bookings", "backstage_warned", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "studio_bookings", "backstage_penalized", "INTEGER DEFAULT 0")
     # xarajatlar: qayerdan pul chiqdi — usul (naqt/plastik) + kim to'ladi (Dilshod/Gulmira)
     add_column_if_missing(conn, "studio_expenses", "method", "TEXT DEFAULT 'naqt'")
     add_column_if_missing(conn, "studio_expenses", "paid_by", "TEXT DEFAULT ''")
@@ -4128,6 +4134,25 @@ def api_shoot_backstage_ready(user, sid):
     return row
 
 
+def api_studio_backstage_ready(user, sid):
+    """Gulmira (yoki CEO) — Kadr Studio broni uchun backstage tayyorlangani
+    belgilaydi. Xuddi shoots'dagi kabi, faqat studio_bookings jadvali uchun."""
+    if user["role"] != "ceo" and user["name"] != BACKSTAGE_PERSON:
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM studio_bookings WHERE id=?", (sid,)).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    conn.execute("UPDATE studio_bookings SET backstage_ready=1, backstage_by=?, backstage_at=? WHERE id=?",
+                 (user["name"], now_local(), sid))
+    log_audit(conn, user["name"], "backstage tayyor deb belgiladi (studio)", f"#{sid} {dict(ex).get('client_name')}")
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM studio_bookings WHERE id=?", (sid,)).fetchone())
+    conn.close()
+    return row
+
+
 def api_delete_shoot(user, sid):
     conn = get_db()
     conn.execute("DELETE FROM shoots WHERE id=?", (sid,))
@@ -4255,7 +4280,7 @@ def api_set_usd_rate(user, b):
 def _op_earn(conn, name, ym=None):
     ym = ym or uz_now().strftime("%Y-%m")
     like = ym + "%"
-    a = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM studio_bookings WHERE operator=? AND bdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (name, like)).fetchone()["s"] or 0
+    a = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM studio_bookings WHERE operator=? AND bdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi') AND (backstage_penalized IS NULL OR backstage_penalized=0)", (name, like)).fetchone()["s"] or 0
     b = conn.execute("SELECT COALESCE(SUM(operator_pay),0) AS s FROM shoots WHERE operator=? AND sdate LIKE ? AND (status IS NULL OR status<>'bekor_qilindi') AND (backstage_penalized IS NULL OR backstage_penalized=0)", (name, like)).fetchone()["s"] or 0
     return a + b
 
@@ -4551,12 +4576,17 @@ BACKSTAGE_START_DATE = "2026-08-21"   # jarima shu sanadan boshlab qo'llaniladi 
 
 
 def _backstage_penalty(conn, name, ym):
-    """Gulmiraga — shu oyda backstage tayyorlanmay jarimaga tortilgan har syomka uchun −50 000."""
+    """Gulmiraga — shu oyda backstage tayyorlanmay jarimaga tortilgan har syomka
+    (Kadr Media + Kadr Studio) uchun −50 000."""
     if name != BACKSTAGE_PERSON:
         return 0, 0
-    n = conn.execute(
+    n1 = conn.execute(
         "SELECT COUNT(*) AS n FROM shoots WHERE backstage_penalized=1 AND sdate LIKE ?",
         (ym + "%",)).fetchone()["n"] or 0
+    n2 = conn.execute(
+        "SELECT COUNT(*) AS n FROM studio_bookings WHERE backstage_penalized=1 AND bdate LIKE ?",
+        (ym + "%",)).fetchone()["n"] or 0
+    n = n1 + n2
     return n * BACKSTAGE_PENALTY_PER_SHOOT, n
 
 
@@ -6160,35 +6190,39 @@ def api_cron_backstage_check():
     now = uz_now()
     now_time = now.strftime("%H:%M")
     conn = get_db()
-    rows = [dict(r) for r in conn.execute(
-        "SELECT * FROM shoots WHERE sdate=? AND (status IS NULL OR status<>'bekor_qilindi') "
-        "AND (backstage_ready IS NULL OR backstage_ready=0)", (today_iso,)).fetchall()]
     warned, penalized = [], []
-    for r in rows:
-        if today_iso < BACKSTAGE_START_DATE:
-            continue
-        if not r.get("backstage_warned"):
-            st = _shoot_start_dt(today_iso, r.get("start_time") or "")
-            if st and now >= st + datetime.timedelta(minutes=BACKSTAGE_WARN_MINUTES):
-                op_mention = (_telegram_mention(r["operator"]) + " ") if r.get("operator") else ""
-                send_telegram(
-                    f"🎬 <b>{r['project']}</b> uchun backstage hali tayyor emas!\n"
-                    f"{op_mention}{_telegram_mention(BACKSTAGE_PERSON)} — backstage tayyorlab, "
-                    f"dashboardda «Backstage tayyor» tugmasini bosing. Soat {BACKSTAGE_DEADLINE}gacha "
-                    f"bosilmasa jarima yoziladi."
-                )
-                conn.execute("UPDATE shoots SET backstage_warned=1 WHERE id=?", (r["id"],))
-                warned.append(r["id"])
-        if not r.get("backstage_penalized") and now_time >= BACKSTAGE_DEADLINE:
-            conn.execute("UPDATE shoots SET backstage_penalized=1 WHERE id=?", (r["id"],))
-            op_txt = ""
-            if r.get("operator"):
-                op_txt = f"\n{_telegram_mention(r['operator'])} — bu syomka uchun operator puli hisoblanmaydi."
-            send_telegram(
-                f"⚫️ <b>{r['project']}</b> — backstage tayyorlanmadi!\n"
-                f"{_telegram_mention(BACKSTAGE_PERSON)} — −{som(BACKSTAGE_PENALTY_PER_SHOOT)} jarima yozildi.{op_txt}"
-            )
-            penalized.append(r["id"])
+    if today_iso >= BACKSTAGE_START_DATE:
+        # Kadr Media (shoots) va Kadr Studio (studio_bookings) — ikkalasida ham
+        # xuddi shu tekshiruv (Gulmira ikkalasini ham boshqaradi).
+        for table, date_col, label_col in (("shoots", "sdate", "project"),
+                                            ("studio_bookings", "bdate", "client_name")):
+            rows = [dict(r) for r in conn.execute(
+                f"SELECT * FROM {table} WHERE {date_col}=? AND (status IS NULL OR status<>'bekor_qilindi') "
+                f"AND (backstage_ready IS NULL OR backstage_ready=0)", (today_iso,)).fetchall()]
+            for r in rows:
+                label = r.get(label_col) or "Syomka"
+                if not r.get("backstage_warned"):
+                    st = _shoot_start_dt(today_iso, r.get("start_time") or "")
+                    if st and now >= st + datetime.timedelta(minutes=BACKSTAGE_WARN_MINUTES):
+                        op_mention = (_telegram_mention(r["operator"]) + " ") if r.get("operator") else ""
+                        send_telegram(
+                            f"🎬 <b>{label}</b> uchun backstage hali tayyor emas!\n"
+                            f"{op_mention}{_telegram_mention(BACKSTAGE_PERSON)} — backstage tayyorlab, "
+                            f"dashboardda «Backstage tayyor» tugmasini bosing. Soat {BACKSTAGE_DEADLINE}gacha "
+                            f"bosilmasa jarima yoziladi."
+                        )
+                        conn.execute(f"UPDATE {table} SET backstage_warned=1 WHERE id=?", (r["id"],))
+                        warned.append(r["id"])
+                if not r.get("backstage_penalized") and now_time >= BACKSTAGE_DEADLINE:
+                    conn.execute(f"UPDATE {table} SET backstage_penalized=1 WHERE id=?", (r["id"],))
+                    op_txt = ""
+                    if r.get("operator"):
+                        op_txt = f"\n{_telegram_mention(r['operator'])} — bu syomka uchun operator puli hisoblanmaydi."
+                    send_telegram(
+                        f"⚫️ <b>{label}</b> — backstage tayyorlanmadi!\n"
+                        f"{_telegram_mention(BACKSTAGE_PERSON)} — −{som(BACKSTAGE_PENALTY_PER_SHOOT)} jarima yozildi.{op_txt}"
+                    )
+                    penalized.append(r["id"])
     conn.commit()
     conn.close()
     return {"ok": True, "warned": warned, "penalized": penalized}
@@ -7085,6 +7119,10 @@ class Handler(BaseHTTPRequestHandler):
         if len(seg) == 4 and seg[1] == "shoots" and seg[3] == "backstage":
             sid = self._int(seg[2])
             res = api_shoot_backstage_ready(user, sid) if sid else None
+            return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "studio" and seg[3] == "backstage":
+            sid = self._int(seg[2])
+            res = api_studio_backstage_ready(user, sid) if sid else None
             return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
         if path == "/api/brief/submit":
             return self._json(api_brief_submit(user, b))
