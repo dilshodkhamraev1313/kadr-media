@@ -4135,6 +4135,25 @@ def api_shoot_backstage_ready(user, sid):
     return row
 
 
+def api_studio_backstage_ready(user, sid):
+    """Gulmira (yoki CEO) — Kadr Studio broni uchun backstage tayyorlangani
+    belgilaydi (2-bosqich: shoots bilan bir xil, faqat studio_bookings uchun)."""
+    if user["role"] != "ceo" and user["name"] != BACKSTAGE_PERSON:
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM studio_bookings WHERE id=?", (sid,)).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    conn.execute("UPDATE studio_bookings SET backstage_ready=1, backstage_by=?, backstage_at=? WHERE id=?",
+                 (user["name"], now_local(), sid))
+    log_audit(conn, user["name"], "backstage tayyor deb belgiladi (studio)", f"#{sid} {dict(ex).get('client_name')}")
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM studio_bookings WHERE id=?", (sid,)).fetchone())
+    conn.close()
+    return row
+
+
 def api_delete_shoot(user, sid):
     conn = get_db()
     conn.execute("DELETE FROM shoots WHERE id=?", (sid,))
@@ -7092,6 +7111,10 @@ class Handler(BaseHTTPRequestHandler):
         if len(seg) == 4 and seg[1] == "shoots" and seg[3] == "backstage":
             sid = self._int(seg[2])
             res = api_shoot_backstage_ready(user, sid) if sid else None
+            return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "studio" and seg[3] == "backstage":
+            sid = self._int(seg[2])
+            res = api_studio_backstage_ready(user, sid) if sid else None
             return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
         if path == "/api/brief/submit":
             return self._json(api_brief_submit(user, b))
