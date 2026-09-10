@@ -2869,7 +2869,7 @@ def _cash_sums(conn, day):
     like = day + "%"
     income = conn.execute("SELECT COALESCE(SUM(amount),0) s FROM income_ledger WHERE CAST(pdate AS TEXT) LIKE ?", (like,)).fetchone()["s"] or 0
     e_studio = conn.execute("SELECT COALESCE(SUM(amount),0) s FROM studio_expenses WHERE CAST(edate AS TEXT) LIKE ?", (like,)).fetchone()["s"] or 0
-    e_pay = conn.execute("SELECT COALESCE(SUM(amount),0) s FROM payments WHERE CAST(pdate AS TEXT) LIKE ?", (like,)).fetchone()["s"] or 0
+    e_pay = conn.execute("SELECT COALESCE(SUM(amount),0) s FROM payments WHERE CAST(cash_date AS TEXT) LIKE ?", (like,)).fetchone()["s"] or 0
     e_cash = conn.execute("SELECT COALESCE(SUM(amount),0) s FROM cash_expense WHERE CAST(edate AS TEXT) LIKE ?", (like,)).fetchone()["s"] or 0
     return income, e_studio + e_pay + e_cash, {"studio": e_studio, "salary": e_pay, "cash": e_cash}
 
