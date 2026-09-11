@@ -861,6 +861,12 @@ def init_db():
     add_column_if_missing(conn, "studio_bookings", "backstage_at", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "studio_bookings", "backstage_warned", "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "studio_bookings", "backstage_penalized", "INTEGER DEFAULT 0")
+    # servis nazorati: mijozga choy/qahva/suv/shirinlik berilganmi (faqat Kadr Studio bronlari)
+    add_column_if_missing(conn, "studio_bookings", "service_ready", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "studio_bookings", "service_by", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "studio_bookings", "service_at", "TEXT DEFAULT ''")
+    add_column_if_missing(conn, "studio_bookings", "service_warned", "INTEGER DEFAULT 0")
+    add_column_if_missing(conn, "studio_bookings", "service_penalized", "INTEGER DEFAULT 0")
     # xarajatlar: qayerdan pul chiqdi — usul (naqt/plastik) + kim to'ladi (Dilshod/Gulmira)
     add_column_if_missing(conn, "studio_expenses", "method", "TEXT DEFAULT 'naqt'")
     add_column_if_missing(conn, "studio_expenses", "paid_by", "TEXT DEFAULT ''")
@@ -4154,6 +4160,26 @@ def api_studio_backstage_ready(user, sid):
     return row
 
 
+def api_studio_service_ready(user, sid):
+    """Gulmira (yoki CEO) — Kadr Studio broni uchun mijozga servis (choy/qahva/suv/
+    shirinlik) berilganini belgilaydi. SERVICE_DEADLINE'gacha bosilmasa, jarima
+    avtomatik yoziladi (cron, backstage bilan bir xil andoza)."""
+    if user["role"] != "ceo" and user["name"] != SERVICE_PERSON:
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    ex = conn.execute("SELECT * FROM studio_bookings WHERE id=?", (sid,)).fetchone()
+    if not ex:
+        conn.close()
+        return None
+    conn.execute("UPDATE studio_bookings SET service_ready=1, service_by=?, service_at=? WHERE id=?",
+                 (user["name"], now_local(), sid))
+    log_audit(conn, user["name"], "servis berildi deb belgiladi (studio)", f"#{sid} {dict(ex).get('client_name')}")
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM studio_bookings WHERE id=?", (sid,)).fetchone())
+    conn.close()
+    return row
+
+
 def api_delete_shoot(user, sid):
     conn = get_db()
     conn.execute("DELETE FROM shoots WHERE id=?", (sid,))
@@ -4591,6 +4617,24 @@ def _backstage_penalty(conn, name, ym):
     return n * BACKSTAGE_PENALTY_PER_SHOOT, n
 
 
+SERVICE_PERSON = "Gulmira"
+SERVICE_PENALTY_PER_SHOOT = 50000   # servis (choy/qahva/suv/shirinlik) berilmagan har bron uchun Gulmiraga
+SERVICE_WARN_MINUTES = 30           # bron boshlanganidan shuncha daqiqadan keyin ogohlantirish
+SERVICE_DEADLINE = "20:00"          # shu vaqtgacha ham tayyor bo'lmasa — jarima
+SERVICE_START_DATE = "2026-09-11"   # jarima shu sanadan boshlab qo'llaniladi (retroaktiv emas)
+
+
+def _service_penalty(conn, name, ym):
+    """Gulmiraga — shu oyda mijozga servis (choy/qahva/suv/shirinlik) berilmay
+    jarimaga tortilgan har Kadr Studio broni uchun −50 000."""
+    if name != SERVICE_PERSON:
+        return 0, 0
+    n = conn.execute(
+        "SELECT COUNT(*) AS n FROM studio_bookings WHERE service_penalized=1 AND bdate LIKE ?",
+        (ym + "%",)).fetchone()["n"] or 0
+    return n * SERVICE_PENALTY_PER_SHOOT, n
+
+
 BRIEF_DEADLINE = "22:00"        # bugun shu vaqtgacha ertangi kun rejasi yuborilishi kerak
 BRIEF_REMINDER_TIME = "18:00"   # shu vaqtda hali yozmaganlarga eslatma
 BRIEF_START_DATE = "2026-08-20"  # talab shu sanadan boshlab qo'llaniladi (retroaktiv emas)
@@ -4931,6 +4975,12 @@ def compute_salary(conn, name, rate, ym=None):
         if bs_pen > 0:
             comps.append({"label": f"Backstage tayyorlanmadi ({bs_n} ta syomka, {BACKSTAGE_DEADLINE}gacha)",
                           "amount": -bs_pen, "kind": "penalty"})
+    # Servis (choy/qahva/suv/shirinlik) vaqtida berilmagani uchun jarima (faqat Gulmira)
+    if cfg.get("backstage_penalty"):
+        sv_pen, sv_n = _service_penalty(conn, name, ym)
+        if sv_pen > 0:
+            comps.append({"label": f"Servis berilmadi ({sv_n} ta bron, {SERVICE_DEADLINE}gacha)",
+                          "amount": -sv_pen, "kind": "penalty"})
     total = sum(c["amount"] for c in comps)
     paid = _paid_to(conn, name, ym)
     return {"name": name, "title": cfg.get("title", ""), "components": comps,
@@ -6227,6 +6277,48 @@ def api_cron_backstage_check():
     return {"ok": True, "warned": warned, "penalized": penalized}
 
 
+def api_cron_service_check():
+    """Tez-tez (masalan har 10-15 daqiqada) tashqi cron chaqiradi (faqat Kadr
+    Studio bronlari uchun):
+    - Bron boshlanganidan SERVICE_WARN_MINUTES o'tib, servis (choy/qahva/suv/
+      shirinlik) hali berilmagan bo'lsa — Gulmira va Dilshodni @ bilan belgilab
+      bir martalik ogohlantirish.
+    - SERVICE_DEADLINE (20:00)da hali ham berilmagan bo'lsa — bir martalik
+      jarima: Gulmiraga −50 000."""
+    today = uz_today()
+    today_iso = today.isoformat()
+    now = uz_now()
+    now_time = now.strftime("%H:%M")
+    conn = get_db()
+    warned, penalized = [], []
+    if today_iso >= SERVICE_START_DATE:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM studio_bookings WHERE bdate=? AND (status IS NULL OR status<>'bekor_qilindi') "
+            "AND (service_ready IS NULL OR service_ready=0)", (today_iso,)).fetchall()]
+        for r in rows:
+            label = r.get("client_name") or "Bron"
+            if not r.get("service_warned"):
+                st = _shoot_start_dt(today_iso, r.get("start_time") or "")
+                if st and now >= st + datetime.timedelta(minutes=SERVICE_WARN_MINUTES):
+                    send_telegram(
+                        f"☕️ <b>{label}</b> uchun mijozga servis (choy/qahva/suv/shirinlik) hali berilmadi!\n"
+                        f"{_telegram_mention(SERVICE_PERSON)} — dashboardda «Servis berildi» tugmasini bosing. "
+                        f"Soat {SERVICE_DEADLINE}gacha bosilmasa jarima yoziladi."
+                    )
+                    conn.execute("UPDATE studio_bookings SET service_warned=1 WHERE id=?", (r["id"],))
+                    warned.append(r["id"])
+            if not r.get("service_penalized") and now_time >= SERVICE_DEADLINE:
+                conn.execute("UPDATE studio_bookings SET service_penalized=1 WHERE id=?", (r["id"],))
+                send_telegram(
+                    f"⚫️ <b>{label}</b> — mijozga servis berilmadi!\n"
+                    f"{_telegram_mention(SERVICE_PERSON)} — −{som(SERVICE_PENALTY_PER_SHOOT)} jarima yozildi."
+                )
+                penalized.append(r["id"])
+    conn.commit()
+    conn.close()
+    return {"ok": True, "warned": warned, "penalized": penalized}
+
+
 def api_cron_brief_check():
     """18:00da (BRIEF_REMINDER_TIME) VA 20:05da (BRIEF_DEADLINE'dan keyin) tashqi
     cron chaqiradi: ertangi kun rejasini hali yubormaganlarga @ bilan eslatma/ogohlantirish."""
@@ -6828,6 +6920,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_cron_morning_digest())
         if path == "/api/cron/backstage-check":
             return self._json(api_cron_backstage_check())
+        if path == "/api/cron/service-check":
+            return self._json(api_cron_service_check())
         if path == "/api/cron/brief-check":
             return self._json(api_cron_brief_check())
         if not path.startswith("/api/"):
@@ -7129,6 +7223,10 @@ class Handler(BaseHTTPRequestHandler):
         if len(seg) == 4 and seg[1] == "studio" and seg[3] == "backstage":
             sid = self._int(seg[2])
             res = api_studio_backstage_ready(user, sid) if sid else None
+            return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "studio" and seg[3] == "service":
+            sid = self._int(seg[2])
+            res = api_studio_service_ready(user, sid) if sid else None
             return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
         if path == "/api/brief/submit":
             return self._json(api_brief_submit(user, b))
