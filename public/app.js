@@ -3162,10 +3162,18 @@ async function viewCashflow() {
   }));
 }
 
-function openClientPayModal(project, fee, rate) {
+async function openClientPayModal(project, fee, rate) {
   let curr = 'som';
+  const hist = await api(`/api/cashflow/payments?project=${encodeURIComponent(project)}`);
+  const payments = (hist && hist.payments) || [];
+  const histHtml = payments.length ? `
+    <div class="sec-label" style="margin:4px 0 6px">🧾 Bu oy kiritilgan to'lovlar</div>
+    <div class="ldg-list" style="margin-bottom:12px">${payments.map((p) => `<div class="ldg-row">
+      <span>${money(p.amount)} · <b>${esc(p.created_by || '')}</b> <span class="muted">· ${fmtDate(p.pdate)}${p.note ? ' · ' + esc(p.note) : ''}</span></span>
+      <button class="mini-btn red cp-del" data-cpid="${p.id}">🗑</button></div>`).join('')}</div>` : '';
   openModal(`💵 ${esc(project)} — to'lov qabul qilindi`, `
     <p class="muted" style="margin-bottom:10px">Oylik summa: <b>${money(fee)}</b></p>
+    ${histHtml}
     <div class="seg" style="margin-bottom:10px"><button id="cp_som" class="on-k">🇺🇿 So'm</button><button id="cp_usd">💵 Dollar</button></div>
     <div id="cp_som_fields">
       <p class="muted" style="margin-bottom:8px">Naqt va plastikka bo'lib ham kiritishingiz mumkin.</p>
@@ -3181,6 +3189,12 @@ function openClientPayModal(project, fee, rate) {
     </div>
     <div class="modal-actions"><button class="btn-save" id="cp_ok">✅ To'landi deb belgilash</button></div>`, () => {
     bindPaySplit();
+    $$('.cp-del').forEach((x) => x.addEventListener('click', async () => {
+      if (!confirm('Bu to\'lov yozuvini o\'chirasizmi? (xato kiritilgan bo\'lsa)')) return;
+      const r = await api(`/api/client-payments/${x.dataset.cpid}`, { method: 'DELETE' });
+      if (r && r.error) { toast('⚠️ ' + r.error); return; }
+      closeModal(); toast('🗑 To\'lov o\'chirildi'); render();
+    }));
     const bs = $('#cp_som'), bu = $('#cp_usd'), sf = $('#cp_som_fields'), uf = $('#cp_usd_fields');
     bs.addEventListener('click', () => { curr = 'som'; bs.className = 'on-k'; bu.className = ''; sf.classList.remove('hidden'); uf.classList.add('hidden'); });
     bu.addEventListener('click', () => { curr = 'usd'; bu.className = 'on-k'; bs.className = ''; sf.classList.add('hidden'); uf.classList.remove('hidden'); });

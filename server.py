@@ -3210,6 +3210,42 @@ def api_mark_client_payment(user, b):
     return {"ok": True, "paid": True, "amount": int(total)}
 
 
+def api_client_payments(user, project):
+    """CEO — shu loyihaga shu oy kiritilgan to'lovlar ro'yxati (xato kiritilganini
+    topib, alohida o'chirish uchun)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    project = (project or "").strip()
+    if not project:
+        return {"error": "Loyiha kerak"}, 400
+    ym = uz_now().strftime("%Y-%m")
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT id, amount, pdate, note, created_by FROM client_payments "
+        "WHERE project=? AND ym=? ORDER BY id DESC", (project, ym)).fetchall()]
+    conn.close()
+    return {"payments": rows}
+
+
+def api_delete_client_payment(user, cpid):
+    """CEO — xato kiritilgan loyiha (mijoz) to'lovini o'chiradi: client_payments
+    qatori va unga bog'liq income_ledger yozuvlari ham o'chadi."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT project, amount, pdate FROM client_payments WHERE id=?", (cpid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    conn.execute("DELETE FROM income_ledger WHERE source_type='client' AND source_id=?", (cpid,))
+    conn.execute("DELETE FROM client_payments WHERE id=?", (cpid,))
+    _flag_stale_close(conn, row["pdate"])
+    log_audit(conn, user["name"], "loyiha to'lovini o'chirdi", f"#{cpid} {row['project']} −{row['amount']}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 def api_pay_script_debt(user, b):
     """CEO — loyihaning hali to'lanmagan ssenariy qarzini (mijoz to'laganda)
     yopadi: barcha 'client_paid=0' ssenariylarni bitta to'lov sifatida kompaniya
@@ -5055,6 +5091,32 @@ def api_waive_penalty(user, b):
     conn.commit()
     conn.close()
     return {"ok": True, "person": person, "waived": waived}
+
+
+def api_admin_unpenalize_backstage(user, date_str):
+    """CEO — shu sanadagi backstage jarimalarini (Gulmiraning -50 000/syomka
+    + shu syomkalar operatorining hisoblanmagan puli) bekor qiladi: shoots va
+    studio_bookings jadvallarida backstage_penalized=1 bo'lgan qatorlarni
+    tozalaydi (operator_pay avtomatik qayta hisobga kiradi, chunki payroll
+    hisobi backstage_penalized=0 bo'lgan qatorlarnigina sanaydi)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    date_str = (date_str or "").strip()
+    if not date_str:
+        return {"error": "Sana kerak"}, 400
+    conn = get_db()
+    n1 = conn.execute(
+        "SELECT COUNT(*) AS n FROM shoots WHERE sdate=? AND backstage_penalized=1", (date_str,)
+    ).fetchone()["n"] or 0
+    n2 = conn.execute(
+        "SELECT COUNT(*) AS n FROM studio_bookings WHERE bdate=? AND backstage_penalized=1", (date_str,)
+    ).fetchone()["n"] or 0
+    conn.execute("UPDATE shoots SET backstage_penalized=0 WHERE sdate=? AND backstage_penalized=1", (date_str,))
+    conn.execute("UPDATE studio_bookings SET backstage_penalized=0 WHERE bdate=? AND backstage_penalized=1", (date_str,))
+    log_audit(conn, user["name"], "backstage jarimasini bekor qildi", f"{date_str} ({n1 + n2} ta)")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "date": date_str, "shoots": n1, "studio_bookings": n2}
 
 
 # ------------------------------------------------------------
@@ -6994,6 +7056,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role != "ceo" else self._json(api_finance())
         if path == "/api/cashflow":
             return self._forbid() if role != "ceo" else self._json(api_cashflow(user))
+        if path == "/api/cashflow/payments":
+            if role != "ceo":
+                return self._forbid()
+            project = (parse_qs(urlparse(self.path).query).get("project") or [""])[0]
+            return self._json(api_client_payments(user, project))
         if path == "/api/advisor":
             return self._forbid() if role != "ceo" else self._json(api_advisor(user))
         if path == "/api/cash/today":
@@ -7042,6 +7109,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
             return self._json(api_payroll(user, ym))
+        if path == "/api/admin/backstage-unpenalize":
+            if role != "ceo":
+                return self._forbid()
+            date_str = (parse_qs(urlparse(self.path).query).get("date") or [""])[0]
+            return self._json(api_admin_unpenalize_backstage(user, date_str))
         if path == "/api/payroll/my-history":
             return self._json(api_my_salary_history(user))
         if path == "/api/daily":
@@ -7365,6 +7437,9 @@ class Handler(BaseHTTPRequestHandler):
         if len(seg) == 3 and seg[1] == "payments":
             pid = self._int(seg[2])
             return self._json(api_delete_payment(user, pid)) if pid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 3 and seg[1] == "client-payments":
+            cpid = self._int(seg[2])
+            return self._json(api_delete_client_payment(user, cpid)) if cpid else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 4 and seg[1] == "studio" and seg[2] == "expenses":
             if not can_edit_studio(user):
                 return self._forbid()
