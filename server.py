@@ -3771,18 +3771,18 @@ def _multipart_encode(fields, file_field, filename, file_bytes, content_type):
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
 
-def _ai_transcribe_audio(audio_bytes, filename="call.m4a"):
+def _ai_transcribe_audio(audio_bytes, filename="call.m4a", content_type="audio/mp4"):
     """Audio baytlarni matnga aylantiradi (OpenAI Whisper, o'zbekcha).
     Kalit yo'q yoki xato bo'lsa None qaytaradi."""
     if not OPENAI_API_KEY or not audio_bytes:
         return None
     try:
-        body, content_type = _multipart_encode(
+        body, mp_content_type = _multipart_encode(
             {"model": OPENAI_TRANSCRIBE_MODEL, "language": "uz"},
-            "file", filename, audio_bytes, "audio/mpeg")
+            "file", filename, audio_bytes, content_type)
         req = urllib.request.Request(
             "https://api.openai.com/v1/audio/transcriptions", data=body,
-            headers={"Authorization": "Bearer " + OPENAI_API_KEY, "Content-Type": content_type})
+            headers={"Authorization": "Bearer " + OPENAI_API_KEY, "Content-Type": mp_content_type})
         with urllib.request.urlopen(req, timeout=120) as r:
             resp = json.loads(r.read().decode())
         return resp.get("text") or ""
@@ -3818,6 +3818,24 @@ def _ai_analyze_call(transcript):
         return None
 
 
+def _audio_upload_meta(data_url):
+    """`data:audio/<subtype>;base64,...` prefiksidan haqiqiy audio turini
+    ajratib, OpenAI transkripsiya API uchun mos (filename, content_type)
+    qaytaradi. Prefiks yo'q/notanish bo'lsa xavfsiz standartga qaytadi —
+    hech qachon exception ko'tarmaydi."""
+    subtype = ""
+    try:
+        header = data_url.split(",", 1)[0]      # "data:audio/webm;base64"
+        mime = header.split(";", 1)[0]          # "data:audio/webm"
+        subtype = mime.split("audio/", 1)[1].strip().lower()
+        subtype = "".join(ch for ch in subtype if ch.isalnum())
+    except Exception:
+        subtype = ""
+    if not subtype:
+        return "call.m4a", "audio/mp4"
+    return f"call.{subtype}", f"audio/{subtype}"
+
+
 def api_lead_call_upload(user, lid, b):
     if not can_crm(user):
         return {"error": "Ruxsat yo'q"}, 403
@@ -3826,6 +3844,7 @@ def api_lead_call_upload(user, lid, b):
     data_url = b.get("audio") or ""
     if not data_url.startswith("data:audio"):
         return {"error": "Audio fayl kerak"}, 400
+    filename, content_type = _audio_upload_meta(data_url)
     conn = get_db()
     row = conn.execute("SELECT assigned_to FROM leads WHERE id=?", (lid,)).fetchone()
     if not row:
@@ -3844,7 +3863,7 @@ def api_lead_call_upload(user, lid, b):
         return {"error": "Audio fayl juda katta (25MB dan oshmasin) — siqib qayta yuklang"}, 400
 
     def _process():
-        transcript = _ai_transcribe_audio(audio_bytes)
+        transcript = _ai_transcribe_audio(audio_bytes, filename=filename, content_type=content_type)
         if not transcript:
             return
         analysis = _ai_analyze_call(transcript)
