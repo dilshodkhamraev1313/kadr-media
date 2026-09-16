@@ -3667,6 +3667,96 @@ def api_delete_lead(user, lid):
     return {"ok": True}
 
 
+def api_create_lead_note(user, lid, b):
+    if not can_crm(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    text = (b.get("text") or "").strip()
+    if not text:
+        return {"error": "Matn kerak"}, 400
+    conn = get_db()
+    row = conn.execute("SELECT assigned_to FROM leads WHERE id=?", (lid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if user["role"] != "ceo" and row["assigned_to"] != user["name"]:
+        conn.close()
+        return {"error": "Ruxsat yo'q"}, 403
+    conn.execute(
+        "INSERT INTO lead_notes (lead_id, kind, text, created_by, created_at) VALUES (?,?,?,?,?)",
+        (lid, "note", text, user["name"], now_local()))
+    conn.commit()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM lead_notes WHERE lead_id=? ORDER BY id DESC", (lid,)).fetchall()]
+    conn.close()
+    return {"notes": rows}
+
+
+def api_create_lead_followup(user, lid, b):
+    if not can_crm(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    due_at = (b.get("due_at") or "").strip()
+    if not due_at:
+        return {"error": "Sana/vaqt kerak"}, 400
+    conn = get_db()
+    row = conn.execute("SELECT assigned_to FROM leads WHERE id=?", (lid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if user["role"] != "ceo" and row["assigned_to"] != user["name"]:
+        conn.close()
+        return {"error": "Ruxsat yo'q"}, 403
+    conn.execute(
+        "INSERT INTO lead_followups (lead_id, due_at, note, created_by, created_at) VALUES (?,?,?,?,?)",
+        (lid, due_at, (b.get("note") or "").strip(), user["name"], now_local()))
+    conn.commit()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM lead_followups WHERE lead_id=? ORDER BY due_at", (lid,)).fetchall()]
+    conn.close()
+    return {"followups": rows}
+
+
+def api_done_lead_followup(user, fid):
+    if not can_crm(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute(
+        "SELECT lead_followups.id AS fid, leads.assigned_to AS lead_assigned FROM lead_followups "
+        "JOIN leads ON leads.id = lead_followups.lead_id WHERE lead_followups.id=?", (fid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if user["role"] != "ceo" and row["lead_assigned"] != user["name"]:
+        conn.close()
+        return {"error": "Ruxsat yo'q"}, 403
+    conn.execute("UPDATE lead_followups SET done=1, done_at=? WHERE id=?", (now_local(), fid))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_cron_crm_followup_check():
+    """Tashqi cron (cron-job.org) tez-tez chaqiradi: muddati kelgan follow-up'lar
+    uchun Telegram "LID" topic'ga bir martalik eslatma yuboradi."""
+    now = now_local()
+    thread_id = int(CRM_TOPIC_ID) if CRM_TOPIC_ID.isdigit() else None
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT lead_followups.id AS fid, lead_followups.note AS fnote, leads.name AS lead_name "
+        "FROM lead_followups JOIN leads ON leads.id = lead_followups.lead_id "
+        "WHERE lead_followups.done=0 AND lead_followups.warned=0 AND lead_followups.due_at<=?",
+        (now,)).fetchall()]
+    warned = []
+    for r in rows:
+        send_telegram(
+            f"⏰ <b>{r['lead_name']}</b> — follow-up vaqti keldi!\n{r.get('fnote') or ''}",
+            thread_id=thread_id)
+        conn.execute("UPDATE lead_followups SET warned=1 WHERE id=?", (r["fid"],))
+        warned.append(r["fid"])
+    conn.commit()
+    conn.close()
+    return {"ok": True, "warned": warned}
+
+
 def api_create_studio_booking(user, b):
     room = b.get("room") if b.get("room") in STUDIO_ROOMS else "white"
     start = b.get("start_time") or "10:00"
@@ -7187,6 +7277,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_cron_service_check())
         if path == "/api/cron/brief-check":
             return self._json(api_cron_brief_check())
+        if path == "/api/cron/crm-followup-check":
+            return self._json(api_cron_crm_followup_check())
         if not path.startswith("/api/"):
             return self._serve_static(path)
 
@@ -7432,6 +7524,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_create_project(b), 201)
         if path == "/api/crm/leads":
             return self._json(api_create_lead(user, b))
+        if len(seg) == 5 and seg[1] == "crm" and seg[2] == "leads" and seg[4] == "notes":
+            lid = self._int(seg[3])
+            return self._json(api_create_lead_note(user, lid, b)) if lid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 5 and seg[1] == "crm" and seg[2] == "leads" and seg[4] == "followups":
+            lid = self._int(seg[3])
+            return self._json(api_create_lead_followup(user, lid, b)) if lid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 7 and seg[1] == "crm" and seg[2] == "leads" and seg[4] == "followups" and seg[6] == "done":
+            fid = self._int(seg[5])
+            return self._json(api_done_lead_followup(user, fid)) if fid else self._json({"error": "Topilmadi"}, 404)
         if path == "/api/scripts":
             if r == "client":
                 return self._forbid()
