@@ -550,7 +550,7 @@ TEAM = [
     ("Xonzoda",          "xonzoda", "xonz2026", "coordinator", "Loyiha koordinatori",    "#BF5AF2", None),
     ("Said",             "said",    "said2026", "lead",        "Loyiha rahbari · Syomka", "#FF9F0A", None),
     ("Gulmira",          "gulmira", "gulm2026", "lead",        "Loyiha rahbari",          "#30D158", None),
-    ("Robiya",           "robiya",  "robi2026", "lead",        "Loyiha rahbari",          "#FF375F", None),
+    ("Robiya",           "robiya",  "robi2026", "editor",      "Montajchi",               "#FF375F", None),
     ("Samandar",         "samandar","sama2026", "lead",        "Operator + loyiha rahbari · Syomka", "#FF9F0A", None),
     # Montajchilar
     ("Sardor",           "sardor",  "sard2026", "editor",      "Montajchi",               "#64D2FF", None),
