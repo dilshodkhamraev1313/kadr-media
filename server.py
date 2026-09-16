@@ -14,6 +14,8 @@ import threading
 import urllib.request
 import hashlib
 import secrets
+import base64
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -34,6 +36,8 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 # AI moliyachi — rasmdan (chek/karta skrini) summani o'qish. Kalit bo'lmasa jim (sanoq+math ishlaydi).
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini").strip()
+OPENAI_TRANSCRIBE_MODEL = "whisper-1"
+CRM_TOPIC_ID = os.environ.get("CRM_TOPIC_ID", "").strip()  # Telegram "LID" topic — cron-job.org sozlangach to'ldiriladi
 
 # Toshkent vaqti — O'zbekiston UTC+5, yozgi vaqt yo'q.
 UZ_TZ = datetime.timezone(datetime.timedelta(hours=5))
@@ -168,6 +172,22 @@ DEFAULT_PLAYBOOKS = {
 # Kadr Media (ichki syomka) — studio TUSHUMIga pul hisoblanmaydi (faqat xona/vaqt band + operator puli)
 STUDIO_NO_INCOME_TYPES = ("kadr_media",)
 STUDIO_OPERATORS = ("Samandar", "Umid", "Shodiya")
+# Sotuv operatorlari — CRM (lid) bo'limiga kirish huquqi. Kelajakda ko'payadi.
+CRM_USERS = ("Nodira",)
+LEAD_STAGES = {
+    "yangi":      "🆕 Yangi",
+    "boglanildi": "📞 Bog'lanildi",
+    "qiziqdi":    "🔥 Qiziqdi",
+    "taklif":     "📨 Taklif yuborildi",
+    "mijoz":      "✅ Mijoz bo'ldi",
+    "rad":        "❌ Rad etildi",
+}
+LEAD_SOURCES = {
+    "reklama": "Instagram/Telegram reklama",
+    "tavsiya": "Tavsiya",
+    "sovuq":   "Sovuq qidiruv",
+    "boshqa":  "Sayt/boshqa",
+}
 
 # Kelib tushgan pullar shaffofligi — kim qabul qildi + qanday usul.
 INCOME_RECEIVERS = ("Dilshod Khamraev", "Gulmira")
@@ -604,9 +624,10 @@ def uz_today():
     return uz_now().date()
 
 
-def send_telegram(text, chat_id=None):
+def send_telegram(text, chat_id=None, thread_id=None):
     """Telegram'ga xabar yuboradi (fon oqimida, xatolar yutiladi).
-    chat_id berilmasa — jamoa guruhiga, berilsa — o'sha shaxsga (masalan CEOga)."""
+    chat_id berilmasa — jamoa guruhiga, berilsa — o'sha shaxsga (masalan CEOga).
+    thread_id — guruh ichidagi aniq topic'ga (masalan CRM "LID" topic)."""
     target = chat_id or TELEGRAM_CHAT_ID
     if not TELEGRAM_BOT_TOKEN or not target:
         return
@@ -614,14 +635,17 @@ def send_telegram(text, chat_id=None):
     def _send():
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            payload = json.dumps({
+            payload = {
                 "chat_id": target,
                 "text": text,
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
-            }).encode("utf-8")
+            }
+            if thread_id:
+                payload["message_thread_id"] = thread_id
             req = urllib.request.Request(
-                url, data=payload, headers={"Content-Type": "application/json"}
+                url, data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
             )
             urllib.request.urlopen(req, timeout=10)
         except Exception:
@@ -830,6 +854,19 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS income_ledger (
         id {pk}, source_type TEXT, source_id INTEGER, source_label TEXT, amount INTEGER DEFAULT 0,
         received_by TEXT, method TEXT, pdate TEXT, note TEXT DEFAULT '', created_by TEXT, created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS leads (
+        id {pk}, name TEXT NOT NULL, phone TEXT DEFAULT '', source TEXT DEFAULT 'boshqa',
+        stage TEXT DEFAULT 'yangi', value_estimate INTEGER DEFAULT 0,
+        assigned_to TEXT DEFAULT '', lost_reason TEXT DEFAULT '',
+        converted_project TEXT DEFAULT '', created_by TEXT DEFAULT '',
+        created_at {ts}, updated_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS lead_notes (
+        id {pk}, lead_id INTEGER NOT NULL, kind TEXT DEFAULT 'note', text TEXT DEFAULT '',
+        created_by TEXT DEFAULT '', created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS lead_followups (
+        id {pk}, lead_id INTEGER NOT NULL, due_at TEXT NOT NULL, note TEXT DEFAULT '',
+        done INTEGER DEFAULT 0, done_at TEXT DEFAULT '', warned INTEGER DEFAULT 0,
+        created_by TEXT DEFAULT '', created_at {ts})""")
 
     # users jadvaliga login ustunlarini qo'shish (idempotent)
     add_column_if_missing(conn, "users", "username", "TEXT")
@@ -3315,6 +3352,11 @@ def can_edit_studio(user):
     return bool(user) and user["name"] in STUDIO_EDIT_USERS
 
 
+def can_crm(user):
+    """CRM (lid) bo'limiga kirish — faqat CEO va sotuv operatorlari (CRM_USERS)."""
+    return bool(user) and (user["role"] == "ceo" or user["name"] in CRM_USERS)
+
+
 def _op_pay(operator, shoot_type):
     """Operator belgilangan bo'lsa — syomka turi va OPERATORGA qarab operator puli.
     Shaxsiy stavka (OPERATOR_RATES, masalan shogird Umid) bo'lsa o'sha, aks holda to'liq."""
@@ -4374,7 +4416,8 @@ def _montaj_earn(conn, name, ym=None):
     return conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM videos WHERE editor=? AND approved_at LIKE ? AND status IN ('qabul_qilindi','joylandi')", (name, ym + "%")).fetchone()["s"] or 0
 
 
-LEAD_STAGES = ("ssenariy", "syomka", "montaj", "tasdiq", "joylash")
+# PROJECT_STAGES — loyiha bosqichlari (eski LEAD_STAGES, CRM uchun LEAD_STAGES dict qo'shildi)
+PROJECT_STAGES = ("ssenariy", "syomka", "montaj", "tasdiq", "joylash")
 
 
 def _norm_name(s):
@@ -4433,7 +4476,7 @@ def _leadership_pay(conn, name, rate, ym=None):
             # har bosqich FAQAT haqiqatan "tayyor" bo'lgan OYIDA hisoblanadi
             # (activity jurnali, created_at). Aks holda tugagan bir martalik
             # loyiha uchun keyingi HAR OY qayta-qayta pul to'lanaverar edi.
-            stages = [s for s in LEAD_STAGES if not (self_post and s == "joylash")
+            stages = [s for s in PROJECT_STAGES if not (self_post and s == "joylash")
                       and not (self_script and s == "ssenariy")]
             done_n = 0
             for st in stages:
