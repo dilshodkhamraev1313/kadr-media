@@ -3757,6 +3757,111 @@ def api_cron_crm_followup_check():
     return {"ok": True, "warned": warned}
 
 
+def _multipart_encode(fields, file_field, filename, file_bytes, content_type):
+    """stdlib bilan multipart/form-data body quradi (OpenAI audio API JSON
+    emas, fayl form-data kutadi — vision API'dan farqli)."""
+    boundary = uuid.uuid4().hex
+    parts = []
+    for k, v in fields.items():
+        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode())
+    parts.append(
+        (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{file_field}\"; filename=\"{filename}\"\r\n"
+         f"Content-Type: {content_type}\r\n\r\n").encode() + file_bytes + b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode())
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+
+
+def _ai_transcribe_audio(audio_bytes, filename="call.m4a"):
+    """Audio baytlarni matnga aylantiradi (OpenAI Whisper, o'zbekcha).
+    Kalit yo'q yoki xato bo'lsa None qaytaradi."""
+    if not OPENAI_API_KEY or not audio_bytes:
+        return None
+    try:
+        body, content_type = _multipart_encode(
+            {"model": OPENAI_TRANSCRIBE_MODEL, "language": "uz"},
+            "file", filename, audio_bytes, "audio/mpeg")
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/audio/transcriptions", data=body,
+            headers={"Authorization": "Bearer " + OPENAI_API_KEY, "Content-Type": content_type})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            resp = json.loads(r.read().decode())
+        return resp.get("text") or ""
+    except Exception:
+        return None
+
+
+def _ai_analyze_call(transcript):
+    """Sotuv qo'ng'irog'i transkriptini tahlil qiladi: yaxshi/xato tomonlar + baho."""
+    if not OPENAI_API_KEY or not transcript:
+        return None
+    prompt = (
+        "Quyidagi o'zbek tilidagi sotuv qo'ng'irog'i transkriptini professional sotuv "
+        "murabbiyi sifatida tahlil qil. Javobni aniq shu tuzilishda ber:\n"
+        "BAHO: (10 balldan necha ball)\n"
+        "YAXSHI TOMONLAR:\n- ...\n"
+        "YAXSHILASH KERAK:\n- ...\n\n"
+        f"Transkript:\n{transcript}"
+    )
+    try:
+        payload = json.dumps({
+            "model": OPENAI_VISION_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 700, "temperature": 0.3,
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.openai.com/v1/chat/completions", data=payload,
+            headers={"Authorization": "Bearer " + OPENAI_API_KEY, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            resp = json.loads(r.read().decode())
+        return resp["choices"][0]["message"]["content"]
+    except Exception:
+        return None
+
+
+def api_lead_call_upload(user, lid, b):
+    if not can_crm(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    if not OPENAI_API_KEY:
+        return {"error": "AI o'chirilgan (OPENAI_API_KEY sozlanmagan)"}, 400
+    data_url = b.get("audio") or ""
+    if not data_url.startswith("data:audio"):
+        return {"error": "Audio fayl kerak"}, 400
+    conn = get_db()
+    row = conn.execute("SELECT assigned_to FROM leads WHERE id=?", (lid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if user["role"] != "ceo" and row["assigned_to"] != user["name"]:
+        conn.close()
+        return {"error": "Ruxsat yo'q"}, 403
+    conn.close()
+    try:
+        _header, b64data = data_url.split(",", 1)
+        audio_bytes = base64.b64decode(b64data)
+    except Exception:
+        return {"error": "Audio fayl noto'g'ri formatda"}, 400
+    if len(audio_bytes) > 25 * 1024 * 1024:
+        return {"error": "Audio fayl juda katta (25MB dan oshmasin) — siqib qayta yuklang"}, 400
+
+    def _process():
+        transcript = _ai_transcribe_audio(audio_bytes)
+        if not transcript:
+            return
+        analysis = _ai_analyze_call(transcript)
+        text = f"📞 Qo'ng'iroq transkripti:\n{transcript}"
+        if analysis:
+            text += f"\n\n🤖 AI tahlili:\n{analysis}"
+        c = get_db()
+        c.execute(
+            "INSERT INTO lead_notes (lead_id, kind, text, created_by, created_at) VALUES (?,?,?,?,?)",
+            (lid, "ai_call", text, "AI", now_local()))
+        c.commit()
+        c.close()
+
+    threading.Thread(target=_process, daemon=True).start()
+    return {"ok": True, "processing": True}
+
+
 def api_create_studio_booking(user, b):
     room = b.get("room") if b.get("room") in STUDIO_ROOMS else "white"
     start = b.get("start_time") or "10:00"
@@ -7533,6 +7638,9 @@ class Handler(BaseHTTPRequestHandler):
         if len(seg) == 7 and seg[1] == "crm" and seg[2] == "leads" and seg[4] == "followups" and seg[6] == "done":
             fid = self._int(seg[5])
             return self._json(api_done_lead_followup(user, fid)) if fid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 5 and seg[1] == "crm" and seg[2] == "leads" and seg[4] == "call":
+            lid = self._int(seg[3])
+            return self._json(api_lead_call_upload(user, lid, b)) if lid else self._json({"error": "Topilmadi"}, 404)
         if path == "/api/scripts":
             if r == "client":
                 return self._forbid()
