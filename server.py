@@ -3527,6 +3527,146 @@ def api_delete_income(user, lid):
     return {"ok": True}
 
 
+# ============================================================
+#  CRM — SOTUV LIDLARI (Nodira, sotuv operatori)
+# ============================================================
+def api_create_lead(user, b):
+    if not can_crm(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    name = (b.get("name") or "").strip()
+    if not name:
+        return {"error": "Ism/kompaniya nomi kerak"}, 400
+    source = b.get("source") if b.get("source") in LEAD_SOURCES else "boshqa"
+    try:
+        value_estimate = max(int(b.get("value_estimate") or 0), 0)
+    except (ValueError, TypeError):
+        value_estimate = 0
+    assigned_to = user["name"] if user["role"] != "ceo" else ((b.get("assigned_to") or "").strip() or user["name"])
+    conn = get_db()
+    now = now_local()
+    sql = ("INSERT INTO leads (name, phone, source, stage, value_estimate, assigned_to, created_by, created_at, updated_at) "
+           "VALUES (?,?,?,?,?,?,?,?,?)")
+    params = (name, (b.get("phone") or "").strip(), source, "yangi", value_estimate, assigned_to, user["name"], now, now)
+    if IS_PG:
+        lid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        lid = conn.execute(sql, params).lastrowid
+    log_audit(conn, user["name"], "yangi lid qo'shdi", name)
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone())
+    conn.close()
+    return row
+
+
+def api_list_leads(user, stage=None):
+    if not can_crm(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    q = "SELECT * FROM leads"
+    cond, params = [], []
+    if user["role"] != "ceo":
+        cond.append("assigned_to=?")
+        params.append(user["name"])
+    if stage and stage in LEAD_STAGES:
+        cond.append("stage=?")
+        params.append(stage)
+    if cond:
+        q += " WHERE " + " AND ".join(cond)
+    q += " ORDER BY id DESC"
+    rows = [dict(r) for r in conn.execute(q, params).fetchall()]
+    conn.close()
+    return rows
+
+
+def api_get_lead(user, lid):
+    if not can_crm(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone()
+    if not row:
+        conn.close()
+        return None
+    row = dict(row)
+    if user["role"] != "ceo" and row["assigned_to"] != user["name"]:
+        conn.close()
+        return {"error": "Ruxsat yo'q"}, 403
+    row["notes"] = [dict(r) for r in conn.execute(
+        "SELECT * FROM lead_notes WHERE lead_id=? ORDER BY id DESC", (lid,)).fetchall()]
+    row["followups"] = [dict(r) for r in conn.execute(
+        "SELECT * FROM lead_followups WHERE lead_id=? ORDER BY due_at", (lid,)).fetchall()]
+    conn.close()
+    return row
+
+
+def api_update_lead(user, lid, b):
+    if not can_crm(user):
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone()
+    if not row:
+        conn.close()
+        return None
+    row = dict(row)
+    if user["role"] != "ceo" and row["assigned_to"] != user["name"]:
+        conn.close()
+        return {"error": "Ruxsat yo'q"}, 403
+    fields = {}
+    if "name" in b:
+        fields["name"] = (b.get("name") or "").strip() or row["name"]
+    if "phone" in b:
+        fields["phone"] = (b.get("phone") or "").strip()
+    if "source" in b and b.get("source") in LEAD_SOURCES:
+        fields["source"] = b["source"]
+    if "value_estimate" in b:
+        try:
+            fields["value_estimate"] = max(int(b.get("value_estimate") or 0), 0)
+        except (ValueError, TypeError):
+            pass
+    if "lost_reason" in b:
+        fields["lost_reason"] = (b.get("lost_reason") or "").strip()
+    new_stage = b.get("stage")
+    if new_stage and new_stage in LEAD_STAGES and new_stage != row["stage"]:
+        fields["stage"] = new_stage
+    if fields:
+        fields["updated_at"] = now_local()
+        set_sql = ", ".join(f"{k}=?" for k in fields)
+        conn.execute(f"UPDATE leads SET {set_sql} WHERE id=?", list(fields.values()) + [lid])
+        log_audit(conn, user["name"], "lidni tahrirladi", row["name"])
+        conn.commit()
+    convert_error = None
+    if fields.get("stage") == "mijoz" and not row.get("converted_project"):
+        dup = conn.execute("SELECT id FROM projects WHERE name=?", (row["name"],)).fetchone()
+        if dup:
+            convert_error = f"'{row['name']}' nomli loyiha allaqachon mavjud — CEO qo'lda bog'lasin"
+        else:
+            proj = api_create_project({"name": row["name"], "monthly_fee": row["value_estimate"]})
+            conn.execute("UPDATE leads SET converted_project=? WHERE id=?", (proj["name"], lid))
+            log_audit(conn, user["name"], "lidni mijozga aylantirdi", f"{row['name']} -> loyiha #{proj['id']}")
+            conn.commit()
+    out = dict(conn.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone())
+    conn.close()
+    if convert_error:
+        out["convertError"] = convert_error
+    return out
+
+
+def api_delete_lead(user, lid):
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT name FROM leads WHERE id=?", (lid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    conn.execute("DELETE FROM lead_notes WHERE lead_id=?", (lid,))
+    conn.execute("DELETE FROM lead_followups WHERE lead_id=?", (lid,))
+    conn.execute("DELETE FROM leads WHERE id=?", (lid,))
+    log_audit(conn, user["name"], "lidni o'chirdi", row["name"])
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 def api_create_studio_booking(user, b):
     room = b.get("room") if b.get("room") in STUDIO_ROOMS else "white"
     start = b.get("start_time") or "10:00"
@@ -7177,6 +7317,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_admin_unpenalize_backstage(user, date_str))
         if path == "/api/payroll/my-history":
             return self._json(api_my_salary_history(user))
+        if path == "/api/crm/leads":
+            stage = (parse_qs(urlparse(self.path).query).get("stage") or [""])[0]
+            return self._json(api_list_leads(user, stage))
+        if len(seg) == 4 and seg[1] == "crm" and seg[2] == "leads":
+            lid = self._int(seg[3])
+            res = api_get_lead(user, lid) if lid else None
+            return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
         if path == "/api/daily":
             if not is_daily_user(user) and role != "ceo":
                 return self._forbid()
@@ -7283,6 +7430,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             b["_actor"] = user["name"]
             return self._json(api_create_project(b), 201)
+        if path == "/api/crm/leads":
+            return self._json(api_create_lead(user, b))
         if path == "/api/scripts":
             if r == "client":
                 return self._forbid()
@@ -7470,6 +7619,12 @@ class Handler(BaseHTTPRequestHandler):
             if pid is None:
                 return self._json({"error": "Topilmadi"}, 404)
             return self._json(api_update_payment(user, pid, b))
+        if len(seg) == 4 and seg[1] == "crm" and seg[2] == "leads":
+            lid = self._int(seg[3])
+            if lid is None:
+                return self._json({"error": "Topilmadi"}, 404)
+            row = api_update_lead(user, lid, b)
+            return self._json(row) if row else self._json({"error": "Topilmadi"}, 404)
         return self._json({"error": "Topilmadi"}, 404)
 
     def do_DELETE(self):
@@ -7524,6 +7679,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             sid = self._int(seg[2])
             return self._json(api_delete_scenarist_script(user, sid)) if sid else self._json({"error": "Topilmadi"}, 404)
+        if len(seg) == 4 and seg[1] == "crm" and seg[2] == "leads":
+            lid = self._int(seg[3])
+            return self._json(api_delete_lead(user, lid)) if lid else self._json({"error": "Topilmadi"}, 404)
         return self._json({"error": "Topilmadi"}, 404)
 
     def log_message(self, *args):
