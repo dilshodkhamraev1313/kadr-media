@@ -3881,6 +3881,27 @@ def api_lead_call_upload(user, lid, b):
     return {"ok": True, "processing": True}
 
 
+def api_crm_stats(user):
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute("SELECT stage, source FROM leads").fetchall()]
+    conn.close()
+    by_stage = {s: 0 for s in LEAD_STAGES}
+    by_source = {s: 0 for s in LEAD_SOURCES}
+    for r in rows:
+        if r["stage"] in by_stage:
+            by_stage[r["stage"]] += 1
+        if r["source"] in by_source:
+            by_source[r["source"]] += 1
+    return {
+        "total": len(rows),
+        "won": by_stage.get("mijoz", 0),
+        "byStage": by_stage,
+        "bySource": by_source,
+    }
+
+
 def api_create_studio_booking(user, b):
     room = b.get("room") if b.get("room") in STUDIO_ROOMS else "white"
     start = b.get("start_time") or "10:00"
@@ -7540,6 +7561,8 @@ class Handler(BaseHTTPRequestHandler):
             lid = self._int(seg[3])
             res = api_get_lead(user, lid) if lid else None
             return self._json(res) if res else self._json({"error": "Topilmadi"}, 404)
+        if path == "/api/crm/stats":
+            return self._json(api_crm_stats(user))
         if path == "/api/daily":
             if not is_daily_user(user) and role != "ceo":
                 return self._forbid()
