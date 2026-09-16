@@ -3134,8 +3134,105 @@ function openLeadModal(lead) {
   });
 }
 
-function openLeadDetailModal(lid) {
-  toast('Lid #' + lid + ' — tafsilot oynasi keyingi bosqichda qo\'shiladi');
+async function openLeadDetailModal(lid) {
+  const lead = await api('/api/crm/leads/' + lid);
+  if (!lead || lead.error) { toast('⚠️ ' + ((lead && lead.error) || 'Topilmadi')); return; }
+  const canDelete = ME.role === 'ceo';
+  const stageOptions = LEAD_STAGE_ORDER.map((s) => `<option value="${s}" ${s === lead.stage ? 'selected' : ''}>${esc(LEAD_STAGES[s])}</option>`).join('');
+  const notesHtml = lead.notes.length ? lead.notes.map((n) => `
+    <div class="ldg-row" style="display:block">
+      <div><b>${n.kind === 'ai_call' ? '🤖 AI' : esc(n.created_by)}</b> <span class="muted">· ${fmtDate(n.created_at)}</span></div>
+      <div style="white-space:pre-wrap;margin-top:4px">${esc(n.text)}</div>
+    </div>`).join('') : '<div class="muted">Hali yozuv yo\'q</div>';
+  const followupsHtml = lead.followups.length ? lead.followups.map((f) => `
+    <div class="ldg-row">
+      <span>${f.done ? '✅' : '⏳'} ${esc(f.due_at)} — ${esc(f.note || '')}</span>
+      ${!f.done ? `<button class="mini-btn blue fu-done" data-fid="${f.id}">Bajarildi</button>` : ''}
+    </div>`).join('') : '<div class="muted">Hali follow-up yo\'q</div>';
+
+  openModal(`Lid · ${esc(lead.name)}`, `
+    <div class="money-rows" style="margin-bottom:12px">
+      <div class="mrow"><span>📞 Telefon</span><b>${esc(lead.phone || '—')}</b></div>
+      <div class="mrow"><span>📍 Manba</span><b>${esc(LEAD_SOURCES[lead.source] || lead.source)}</b></div>
+      <div class="mrow"><span>💰 Taxminiy summa</span><b>${money(lead.value_estimate || 0)}</b></div>
+      <div class="mrow"><span>📶 Bosqich</span><b><select id="ld_stage">${stageOptions}</select></b></div>
+      ${lead.converted_project ? `<div class="mrow"><span>✅ Loyiha</span><b>${esc(lead.converted_project)}</b></div>` : ''}
+    </div>
+
+    <div class="sec-label" style="margin:4px 0 6px">📝 Yozuvlar tarixi</div>
+    <div class="ldg-list" style="margin-bottom:10px">${notesHtml}</div>
+    <div class="field-row" style="margin-bottom:14px">
+      <input id="ld_note_text" placeholder="Yangi yozuv..." style="flex:1" />
+      <button class="mini-btn blue" id="ld_note_add">Qo'shish</button>
+    </div>
+
+    <div class="sec-label" style="margin:4px 0 6px">⏰ Follow-up</div>
+    <div class="ldg-list" style="margin-bottom:10px">${followupsHtml}</div>
+    <div class="field-row" style="margin-bottom:14px">
+      <input id="ld_fu_due" type="datetime-local" />
+      <input id="ld_fu_note" placeholder="Nima haqida..." style="flex:1" />
+      <button class="mini-btn blue" id="ld_fu_add">Reja qo'shish</button>
+    </div>
+
+    <div class="sec-label" style="margin:4px 0 6px">🎙 Qo'ng'iroq audio (AI tahlili uchun)</div>
+    <input id="ld_audio_file" type="file" accept="audio/*" style="margin-bottom:14px" />
+
+    <div class="modal-actions">
+      ${canDelete ? `<button class="mini-btn red" id="ld_delete">🗑 O'chirish</button>` : ''}
+    </div>`, () => {
+
+    $('#ld_stage').addEventListener('change', async (e) => {
+      const res = await api('/api/crm/leads/' + lid, { method: 'PUT', body: JSON.stringify({ stage: e.target.value }) });
+      if (res && res.error) { toast('⚠️ ' + res.error); return; }
+      if (res && res.convertError) toast('⚠️ ' + res.convertError);
+      else toast('✅ Bosqich yangilandi');
+      closeModal(); render();
+    });
+
+    $('#ld_note_add').addEventListener('click', async () => {
+      const text = $('#ld_note_text').value.trim();
+      if (!text) return;
+      const res = await api('/api/crm/leads/' + lid + '/notes', { method: 'POST', body: JSON.stringify({ text }) });
+      if (res && res.error) { toast('⚠️ ' + res.error); return; }
+      closeModal(); openLeadDetailModal(lid);
+    });
+
+    $('#ld_fu_add').addEventListener('click', async () => {
+      const dueRaw = $('#ld_fu_due').value; // "YYYY-MM-DDTHH:MM"
+      if (!dueRaw) { toast('Sana/vaqt tanlang'); return; }
+      const due_at = dueRaw.replace('T', ' ') + ':00';
+      const note = $('#ld_fu_note').value.trim();
+      const res = await api('/api/crm/leads/' + lid + '/followups', { method: 'POST', body: JSON.stringify({ due_at, note }) });
+      if (res && res.error) { toast('⚠️ ' + res.error); return; }
+      closeModal(); openLeadDetailModal(lid);
+    });
+
+    $$('.fu-done').forEach((b) => b.addEventListener('click', async () => {
+      await api('/api/crm/leads/' + lid + '/followups/' + b.dataset.fid + '/done', { method: 'POST', body: '{}' });
+      closeModal(); openLeadDetailModal(lid);
+    }));
+
+    const audioInput = $('#ld_audio_file');
+    if (audioInput) audioInput.addEventListener('change', () => {
+      const file = audioInput.files[0];
+      if (!file) return;
+      toast('🎙 Yuklanmoqda, tahlil fon rejimida bajariladi...');
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const res = await api('/api/crm/leads/' + lid + '/call', { method: 'POST', body: JSON.stringify({ audio: reader.result }) });
+        if (res && res.error) toast('⚠️ ' + res.error);
+        else toast('✅ Yuklandi — tahlil tayyor bo\'lgach yozuvlar tarixida ko\'rinadi');
+      };
+      reader.readAsDataURL(file);
+    });
+
+    const del = $('#ld_delete');
+    if (del) del.addEventListener('click', async () => {
+      if (!confirm('Bu lidni butunlay o\'chirasizmi?')) return;
+      await api('/api/crm/leads/' + lid, { method: 'DELETE' });
+      closeModal(); toast('🗑 O\'chirildi'); render();
+    });
+  });
 }
 
 async function viewCashflow() {
