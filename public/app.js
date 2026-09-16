@@ -33,6 +33,15 @@ const STUDIO_ROOMS_DEFAULT = {
   black: { label: '2-xona · Black', color: '#1C1C1E' },
 };
 const SHOOT_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video', vebinar: 'Vebinar', tadbir: 'Tadbir', kadr_media: 'Kadr Media' };
+const LEAD_STAGES = {
+  yangi: '🆕 Yangi', boglanildi: '📞 Bog\'lanildi', qiziqdi: '🔥 Qiziqdi',
+  taklif: '📨 Taklif yuborildi', mijoz: '✅ Mijoz bo\'ldi', rad: '❌ Rad etildi',
+};
+const LEAD_STAGE_ORDER = ['yangi', 'boglanildi', 'qiziqdi', 'taklif', 'mijoz', 'rad'];
+const LEAD_SOURCES = {
+  reklama: 'Instagram/Telegram reklama', tavsiya: 'Tavsiya',
+  sovuq: 'Sovuq qidiruv', boshqa: 'Sayt/boshqa',
+};
 // Bron rangi MANBA bo'yicha: Kadr Studio = tilla, Kadr Media = ko'k (adashmaslik uchun)
 const SOURCE_COLOR = { studio: '#D4AF37', media: '#0A84FF' };
 // Tashqi syomka "har video" tizimi shu sanadan boshlab amal qiladi (eski syomkalarga tegmaydi)
@@ -281,6 +290,7 @@ const NAV_ITEMS = [
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
   { view: 'cashflow',  icon: '💵', label: 'Pul oqimi',     roles: ['ceo'] },
+  { view: 'crm', icon: '📋', label: 'CRM (Lidlar)', roles: ['ceo', 'sales'] },
   { view: 'kassa',     icon: '💰', label: 'Kassa',         roles: ['ceo', 'lead'], names: ['Dilshod Khamraev', 'Gulmira'] },
   { view: 'late',      icon: '⏰', label: 'Kechikkanlar',   roles: ['ceo'] },
   { view: 'archive',   icon: '🗄', label: 'Oylik arxiv',    roles: ['ceo'] },
@@ -365,6 +375,7 @@ const TITLES = {
   advisor:   ['Moliyachi', 'Kunlik moliyaviy holat, ogohlantirishlar va prognoz'],
   finance:   ['Moliya', 'Montaj xarajatlari va to\'lovlar'],
   cashflow:  ['Pul oqimi', 'Mijoz to\'lovlari va umumiy kirim-chiqim'],
+  crm:       ['CRM — Lidlar', 'Sotuv jarayoni: bog\'lanishdan mijozgacha'],
   kassa:     ['Kassa', 'Kunlik tushum-xarajat, balans va kun moliya yopish (rasm dalil)'],
   late:      ['Kechikkanlar', 'Deadline o\'tib puli kamaygan videolar — pulni tiklash'],
   archive:   ['Oylik arxiv', 'Har oyni muzlatib saqlash — o\'tgan oylar o\'zgarmaydi'],
@@ -408,6 +419,7 @@ async function render() {
     else if (VIEW === 'advisor') await viewAdvisor();
     else if (VIEW === 'finance') await viewFinance();
     else if (VIEW === 'cashflow') await viewCashflow();
+    else if (VIEW === 'crm') await viewCrm();
     else if (VIEW === 'kassa') await viewCash();
     else if (VIEW === 'late') await viewLate();
     else if (VIEW === 'archive') await viewArchive();
@@ -434,6 +446,7 @@ function buildTopbarActions() {
   if (VIEW === 'shoots' && ['ceo', 'coordinator', 'lead'].includes(role)) html += `<button class="btn-primary" data-act="add-shoot">+ Syomka</button>`;
   if (VIEW === 'myscripts') html += `<button class="btn-primary" data-act="add-scenarist">+ Ssenariy</button>`;
   if (VIEW === 'finance') html += `<button class="btn-primary" data-act="add-payment">+ To'lov</button>`;
+  if (VIEW === 'crm') html += `<button class="btn-primary" data-act="add-lead">+ Lid qo'shish</button>`;
   if (VIEW === 'studio') {
     if (studioCanEdit()) html += `<button class="btn-ghost" data-act="studio-expenses">🧾 Xarajatlar</button>`;
     if (studioCanEdit()) html += `<button class="btn-ghost" data-act="studio-finance">💰 Pul hisoboti</button>`;
@@ -449,6 +462,7 @@ function buildTopbarActions() {
     if (act === 'add-shoot') openShootModal();
     if (act === 'add-scenarist') openScenaristModal();
     if (act === 'add-payment') openPaymentModal();
+    if (act === 'add-lead') openLeadModal(null);
     if (act === 'add-booking') openStudioBookingModal();
     if (act === 'studio-finance') openStudioFinanceModal();
     if (act === 'studio-expenses') openStudioExpensesModal();
@@ -3067,6 +3081,61 @@ function openCashCloseModal(d, prev) {
       render();
     });
   });
+}
+
+async function viewCrm() {
+  const leads = await api('/api/crm/leads');
+  DATA.leads = leads;
+  let stats = null;
+  if (ME.role === 'ceo') stats = await api('/api/crm/stats');
+  const byStage = {};
+  LEAD_STAGE_ORDER.forEach((s) => { byStage[s] = []; });
+  leads.forEach((l) => { (byStage[l.stage] || byStage.yangi).push(l); });
+
+  const statsHtml = stats ? `
+    <div class="stats-grid" style="margin-bottom:14px">
+      ${statTile('📋', stats.total, 'Jami lidlar', 'blue')}
+      ${statTile('✅', stats.won, 'Mijozga aylandi', 'green')}
+      ${statTile('📈', stats.total ? Math.round(stats.won / stats.total * 100) + '%' : '0%', 'Konversiya', 'orange')}
+    </div>` : '';
+
+  const cols = LEAD_STAGE_ORDER.map((stage) => `
+    <div class="crm-col">
+      <div class="crm-col-h">${LEAD_STAGES[stage]} <span class="muted">(${byStage[stage].length})</span></div>
+      ${byStage[stage].map((l) => `
+        <div class="crm-card" data-lid="${l.id}">
+          <div class="crm-card-name">${esc(l.name)}</div>
+          <div class="crm-card-sub muted">${esc(LEAD_SOURCES[l.source] || l.source)}${l.value_estimate ? ' · ' + money(l.value_estimate) : ''}</div>
+        </div>`).join('') || '<div class="muted crm-empty">—</div>'}
+    </div>`).join('');
+
+  $('#content').innerHTML = `${statsHtml}<div class="crm-board">${cols}</div>`;
+  $$('.crm-card').forEach((c) => c.addEventListener('click', () => openLeadDetailModal(parseInt(c.dataset.lid, 10))));
+}
+
+function openLeadModal(lead) {
+  openModal('+ Yangi lid', `
+    <div class="field"><label>Ism/kompaniya</label><input id="ld_name" placeholder="Masalan: Kafe Lola" /></div>
+    <div class="field"><label>Telefon</label><input id="ld_phone" placeholder="90 123 45 67" /></div>
+    <div class="field"><label>Manba</label><select id="ld_source">${Object.entries(LEAD_SOURCES).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></div>
+    <div class="field"><label>Taxminiy oylik to'lov (so'm, ixtiyoriy)</label><input id="ld_value" type="number" placeholder="1500000" /></div>
+    <div class="modal-actions"><button class="btn-save" id="ld_save">Saqlash</button></div>`, () => {
+    $('#ld_save').addEventListener('click', async () => {
+      const name = $('#ld_name').value.trim();
+      if (!name) { toast('Ism/kompaniya kerak'); return; }
+      const body = {
+        name, phone: $('#ld_phone').value.trim(), source: $('#ld_source').value,
+        value_estimate: parseInt($('#ld_value').value || '0', 10) || 0,
+      };
+      const res = await api('/api/crm/leads', { method: 'POST', body: JSON.stringify(body) });
+      if (res && res.error) { toast('⚠️ ' + res.error); return; }
+      closeModal(); toast('✅ Lid qo\'shildi'); render();
+    });
+  });
+}
+
+function openLeadDetailModal(lid) {
+  toast('Lid #' + lid + ' — tafsilot oynasi keyingi bosqichda qo\'shiladi');
 }
 
 async function viewCashflow() {

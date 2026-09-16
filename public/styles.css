@@ -270,6 +270,16 @@ body {
 .pc-deadline.late { color: var(--red); font-weight: 600; }
 .pc-deadline.soon { color: var(--orange); font-weight: 600; }
 
+/* CRM Board */
+.crm-board { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+.crm-col { flex: 0 0 220px; background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius); padding: 10px; }
+.crm-col-h { font-weight: 600; margin-bottom: 8px; }
+.crm-card { background: var(--bg); border: 1px solid var(--border-soft); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; cursor: pointer; }
+.crm-card:hover { border-color: var(--blue); }
+.crm-card-name { font-weight: 600; }
+.crm-card-sub { font-size: 12px; margin-top: 2px; }
+.crm-empty { text-align: center; padding: 8px 0; }
+
 /* problem strip */
 .pc-problem {
   margin-top: 12px; padding: 9px 12px; border-radius: 10px;
