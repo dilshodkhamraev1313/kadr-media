@@ -143,6 +143,17 @@ DEFAULT_PLAYBOOKS = {
         ],
         "checklist": ["Qo'llanmani o'qidim", "Loyihalarim va mas'ul jamoani ko'rdim", "Nazorat markazini tushundim", "Mijoz tayyorligi qoidasini bildim"],
     },
+    "sales": {
+        "title": "📞 Sotuv operatori qo'llanmasi",
+        "sections": [
+            {"h": "Vazifang", "b": "Yangi mijozlarni topish va Kadr Media/Kadr Studio xizmatlariga jalb qilish. [Bu yerga qo'shimcha yozing]"},
+            {"h": "Ish jarayoni (qadamlar)", "b": "1) [Lidlar qayerdan kelyapti — reklama/tavsiya/sovuq qidiruv]\n2) Mijoz bilan bog'laning, ehtiyojini aniqlang.\n3) Taklif/narx tақdim eting.\n4) Kelishuv bo'lsa — CEO/koordinatorga xabar bering, loyiha/bron tizimga kiritiladi.\n5) [Keyingi kuzatuv (follow-up) qoidasi]"},
+            {"h": "Komissiya", "b": "Komissiya (% sotuvdan) hali ishlab chiqilmoqda — CEO tasdiqlagach shu yerga yoziladi. Hozircha Fiksa + Intizom asosida ishlaysiz."},
+            {"h": "Standartlar", "b": "• Muloqot ohangi: [...]\n• Javob berish vaqti: [...]\n• CRM/hisobot: [qayerga yozib boriladi]\n• [Boshqa]"},
+            {"h": "Mahsulotlar/xizmatlar", "b": "[Kadr Media va Kadr Studio xizmatlari ro'yxati, narxlar — CEO to'ldiradi]"},
+        ],
+        "checklist": ["Qo'llanmani o'qidim", "Xizmatlar va narxlar ro'yxatini oldim", "CRM/hisobot tartibini bildim", "Birinchi mijoz bilan bog'landim"],
+    },
     "scenarist": {
         "title": "✎ Ssenarist qo'llanmasi",
         "sections": [
@@ -231,11 +242,11 @@ DEFAULT_CHECKLIST = {
 }
 
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
-ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar")
+ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar", "Nodira")
 TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
-    "pardaboyev_samandar": "Samandar",
+    "pardaboyev_samandar": "Samandar", "nbyva_929": "Nodira",
 }
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
@@ -328,6 +339,8 @@ SALARY = {
     "Shodiya": {"title": "Loyiha rahbari + montajchi + operator + SMM", "som": {"Fiksa": 500000, "Intizom": 500000},
                 "usd": {"SMM": 40}, "stories_projects_usd": STORIES_PROJECT_USD, "lead": True, "montaj": True,
                 "operator": True, "close_link": ["SMM"]},
+    # Sotuv operatori — komissiya (% sotuvdan) hali kelishilmagan, keyin qo'shiladi.
+    "Nodira": {"title": "Sotuv operatori", "som": {"Fiksa": 1000000, "Intizom": 500000}},
 }
 
 # Rol='lead' bo'lsa ham montaj qiladigan rahbarlar (Shodiya): montajchi ro'yxatiga
@@ -546,6 +559,9 @@ TEAM = [
     ("Umid",             "umid",    "umid2026", "lead",        "Montajchi + operator + loyiha rahbari", "#5E5CE6", None),
     ("Umida",            "umida",   "umid2027", "editor",      "Montajchi · Ssenarist",   "#AC8E68", None),
     ("Shodiya",          "shodiya", "shod2026", "lead",        "Loyiha rahbari + montajchi + operator + SMM", "#32D74B", None),
+    # Sotuv operatori — komissiya modeli hali kelishilmagan, hozircha faqat
+    # Fiksa+Intizom (SALARY pastda). Sotuv kabineti keyin qo'shiladi.
+    ("Nodira",           "nodira",  "nodira2026","sales",      "Sotuv operatori",         "#FF6B00", None),
     # SMM menejer (faqat joylash)
     ("Aisha",            "aisha",   "aisha2026","smm",         "SMM menejer · Joylash",   "#FF2D55", None),
     # Jarvis (AI yordamchi, Kadr Jarvis OS loyihasi) — coordinator darajasi: operatsion
@@ -5675,6 +5691,8 @@ def _user_playbook_keys(user):
         keys.append("montajchi")
     if role == "smm":
         keys.append("smm")
+    if role == "sales":
+        keys.append("sales")
     cfg = SALARY.get(name, {})
     if cfg.get("montaj") and "montajchi" not in keys:
         keys.append("montajchi")

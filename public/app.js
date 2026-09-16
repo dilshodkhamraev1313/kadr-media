@@ -254,8 +254,8 @@ async function startApp() {
 // ============================================================
 const NAV_ITEMS = [
   // Hamma uchun birinchi — bugungi vazifalar
-  { view: 'bugun',     icon: '🎯', label: 'Bugun',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'smm'] },
-  { view: 'ombor',     icon: '📚', label: 'Qo\'llanma',     roles: ['ceo', 'coordinator', 'lead', 'editor', 'smm'] },
+  { view: 'bugun',     icon: '🎯', label: 'Bugun',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'smm', 'sales'] },
+  { view: 'ombor',     icon: '📚', label: 'Qo\'llanma',     roles: ['ceo', 'coordinator', 'lead', 'editor', 'smm', 'sales'] },
   // Montajchi uchun
   { view: 'cabinet',   icon: '★', label: 'Mening kabinetim', roles: ['editor'] },
   // Montaj ham qiladigan rahbar (Shodiya) — o'z montaj kabineti
@@ -288,7 +288,7 @@ const NAV_ITEMS = [
   { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
-  { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Gulmira', 'Samandar', 'Xonzoda', 'Sardor', 'Umid', 'Shodiya'] },
+  { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Gulmira', 'Samandar', 'Xonzoda', 'Sardor', 'Umid', 'Shodiya', 'Nodira'] },
   { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Samandar', 'Gulmira', 'Xonzoda', 'Shodiya'] },
   { view: 'stats',     icon: '📈', label: 'Oylik statistika', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'reyting',   icon: '🏆', label: 'Reyting',        roles: ['ceo', 'coordinator', 'lead'] },
