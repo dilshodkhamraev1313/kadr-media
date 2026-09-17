@@ -3818,6 +3818,9 @@ def _ai_analyze_call(transcript):
         return None
 
 
+_WHISPER_EXTS = {"flac", "m4a", "mp3", "mp4", "mpeg", "mpga", "oga", "ogg", "wav", "webm"}
+
+
 def _audio_upload_meta(data_url):
     """`data:audio/<subtype>;base64,...` prefiksidan haqiqiy audio turini
     ajratib, OpenAI transkripsiya API uchun mos (filename, content_type)
@@ -3828,10 +3831,13 @@ def _audio_upload_meta(data_url):
         header = data_url.split(",", 1)[0]      # "data:audio/webm;base64"
         mime = header.split(";", 1)[0]          # "data:audio/webm"
         subtype = mime.split("audio/", 1)[1].strip().lower()
+        subtype = "".join(ch for ch in subtype if ch.isalnum() or ch == "-")
+        if subtype.startswith("x-"):
+            subtype = subtype[2:]
         subtype = "".join(ch for ch in subtype if ch.isalnum())
     except Exception:
         subtype = ""
-    if not subtype:
+    if subtype not in _WHISPER_EXTS:
         return "call.m4a", "audio/mp4"
     return f"call.{subtype}", f"audio/{subtype}"
 
@@ -3856,6 +3862,11 @@ def api_lead_call_upload(user, lid, b):
     conn.close()
     try:
         _header, b64data = data_url.split(",", 1)
+    except Exception:
+        return {"error": "Audio fayl noto'g'ri formatda"}, 400
+    if len(b64data) > 34 * 1024 * 1024:
+        return {"error": "Audio fayl juda katta (25MB dan oshmasin) — siqib qayta yuklang"}, 400
+    try:
         audio_bytes = base64.b64decode(b64data)
     except Exception:
         return {"error": "Audio fayl noto'g'ri formatda"}, 400
@@ -3865,6 +3876,13 @@ def api_lead_call_upload(user, lid, b):
     def _process():
         transcript = _ai_transcribe_audio(audio_bytes, filename=filename, content_type=content_type)
         if not transcript:
+            c = get_db()
+            c.execute(
+                "INSERT INTO lead_notes (lead_id, kind, text, created_by, created_at) VALUES (?,?,?,?,?)",
+                (lid, "ai_call", "⚠️ Audio tahlil qilib bo'lmadi — fayl formatini tekshirib qayta yuklang.",
+                 "AI", now_local()))
+            c.commit()
+            c.close()
             return
         analysis = _ai_analyze_call(transcript)
         text = f"📞 Qo'ng'iroq transkripti:\n{transcript}"

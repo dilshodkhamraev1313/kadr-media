@@ -3168,7 +3168,7 @@ async function openLeadDetailModal(lid) {
 
     <div class="sec-label" style="margin:4px 0 6px">⏰ Follow-up</div>
     <div class="ldg-list" style="margin-bottom:10px">${followupsHtml}</div>
-    <div class="field-row" style="margin-bottom:14px">
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px">
       <input id="ld_fu_due" type="datetime-local" />
       <input id="ld_fu_note" placeholder="Nima haqida..." style="flex:1" />
       <button class="mini-btn blue" id="ld_fu_add">Reja qo'shish</button>
