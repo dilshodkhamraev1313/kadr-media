@@ -37,7 +37,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini").strip()
 OPENAI_TRANSCRIBE_MODEL = "whisper-1"
-CRM_TOPIC_ID = os.environ.get("CRM_TOPIC_ID", "").strip()  # Telegram "LID" topic — cron-job.org sozlangach to'ldiriladi
+CRM_TOPIC_ID = os.environ.get("CRM_TOPIC_ID", "8674").strip()  # Telegram "LID" topic
 
 # Toshkent vaqti — O'zbekiston UTC+5, yozgi vaqt yo'q.
 UZ_TZ = datetime.timezone(datetime.timedelta(hours=5))
