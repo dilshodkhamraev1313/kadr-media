@@ -298,7 +298,7 @@ const NAV_ITEMS = [
   { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
-  { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Gulmira', 'Samandar', 'Xonzoda', 'Sardor', 'Umid', 'Shodiya', 'Nodira'] },
+  { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Gulmira', 'Samandar', 'Xonzoda', 'Sardor', 'Umid', 'Shodiya', 'Nodira', 'Murod'] },
   { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor'], names: ['Dilshod Khamraev', 'Samandar', 'Gulmira', 'Xonzoda', 'Shodiya'] },
   { view: 'stats',     icon: '📈', label: 'Oylik statistika', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'reyting',   icon: '🏆', label: 'Reyting',        roles: ['ceo', 'coordinator', 'lead'] },

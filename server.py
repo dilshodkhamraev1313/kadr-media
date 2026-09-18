@@ -361,6 +361,10 @@ SALARY = {
                 "operator": True, "close_link": ["SMM"]},
     # Sotuv operatori — komissiya (% sotuvdan) hali kelishilmagan, keyin qo'shiladi.
     "Nodira": {"title": "Sotuv operatori", "som": {"Fiksa": 1000000, "Intizom": 500000}},
+    # Kun yarmidan keladi — ATTENDANCE_USERS'da EMAS (aks holda kelish vaqti
+    # standart ON_TIME_LIMIT'dan kech bo'lgani uchun har kuni "kech" deb
+    # hisoblanib, noto'g'ri jarima chiqadi). Fiksa to'liq (oylik), Intizom yo'q.
+    "Murod": {"title": "Montajchi", "som": {"Fiksa": 500000}, "montaj": True},
 }
 
 # Rol='lead' bo'lsa ham montaj qiladigan rahbarlar (Shodiya): montajchi ro'yxatiga
@@ -579,6 +583,9 @@ TEAM = [
     ("Umid",             "umid",    "umid2026", "lead",        "Montajchi + operator + loyiha rahbari", "#5E5CE6", None),
     ("Umida",            "umida",   "umid2027", "editor",      "Montajchi · Ssenarist",   "#AC8E68", None),
     ("Shodiya",          "shodiya", "shod2026", "lead",        "Loyiha rahbari + montajchi + operator + SMM", "#32D74B", None),
+    # Kun yarmidan (taxminan tushdan keyin) keladi — shuning uchun Intizom
+    # (kelish vaqtiga bog'liq) hisoblanmaydi, faqat Fiksa + montaj puli.
+    ("Murod",            "murod",   "murod2026","editor",      "Montajchi",               "#00C7BE", None),
     # Sotuv operatori — komissiya modeli hali kelishilmagan, hozircha faqat
     # Fiksa+Intizom (SALARY pastda). Sotuv kabineti keyin qo'shiladi.
     ("Nodira",           "nodira",  "nodira2026","sales",      "Sotuv operatori",         "#FF6B00", None),
