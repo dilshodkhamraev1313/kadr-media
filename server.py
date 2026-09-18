@@ -3554,7 +3554,10 @@ def api_create_lead(user, b):
         value_estimate = max(int(b.get("value_estimate") or 0), 0)
     except (ValueError, TypeError):
         value_estimate = 0
-    assigned_to = user["name"] if user["role"] != "ceo" else ((b.get("assigned_to") or "").strip() or user["name"])
+    # CEO uchun standart: o'ziga emas, sotuv operatoriga biriktiriladi (CEO odatda
+    # lidni O'ZI yuritmaydi, sotuvchiga topshiradi) — agar aniq belgilamasa.
+    default_assignee = CRM_USERS[0] if CRM_USERS else user["name"]
+    assigned_to = user["name"] if user["role"] != "ceo" else ((b.get("assigned_to") or "").strip() or default_assignee)
     conn = get_db()
     now = now_local()
     sql = ("INSERT INTO leads (name, phone, source, stage, value_estimate, assigned_to, created_by, created_at, updated_at) "
@@ -3568,6 +3571,11 @@ def api_create_lead(user, b):
     conn.commit()
     row = dict(conn.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone())
     conn.close()
+    thread_id = int(CRM_TOPIC_ID) if CRM_TOPIC_ID.isdigit() else None
+    send_telegram(
+        f"🆕 <b>Yangi lid qo'shildi</b>\n👤 {name}\n📍 {LEAD_SOURCES.get(source, source)}\n"
+        f"{_telegram_mention(assigned_to)} — CRM'da ko'ring.",
+        thread_id=thread_id)
     return row
 
 
@@ -3637,6 +3645,10 @@ def api_update_lead(user, lid, b):
             pass
     if "lost_reason" in b:
         fields["lost_reason"] = (b.get("lost_reason") or "").strip()
+    if "assigned_to" in b and user["role"] == "ceo":
+        new_assignee = (b.get("assigned_to") or "").strip()
+        if new_assignee:
+            fields["assigned_to"] = new_assignee
     new_stage = b.get("stage")
     if new_stage and new_stage in LEAD_STAGES and new_stage != row["stage"]:
         fields["stage"] = new_stage

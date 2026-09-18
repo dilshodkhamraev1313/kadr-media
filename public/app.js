@@ -38,6 +38,7 @@ const LEAD_STAGES = {
   taklif: '📨 Taklif yuborildi', mijoz: '✅ Mijoz bo\'ldi', rad: '❌ Rad etildi',
 };
 const LEAD_STAGE_ORDER = ['yangi', 'boglanildi', 'qiziqdi', 'taklif', 'mijoz', 'rad'];
+const CRM_USERS = ['Nodira'];
 const LEAD_SOURCES = {
   reklama: 'Instagram/Telegram reklama', tavsiya: 'Tavsiya',
   sovuq: 'Sovuq qidiruv', boshqa: 'Sayt/boshqa',
@@ -3114,11 +3115,15 @@ async function viewCrm() {
 }
 
 function openLeadModal(lead) {
+  const assigneeField = ME.role === 'ceo'
+    ? `<div class="field"><label>Kimga biriktirilsin</label><select id="ld_assignee">${CRM_USERS.map((u) => `<option value="${esc(u)}">${esc(u)}</option>`).join('')}</select></div>`
+    : '';
   openModal('+ Yangi lid', `
     <div class="field"><label>Ism/kompaniya</label><input id="ld_name" placeholder="Masalan: Kafe Lola" /></div>
     <div class="field"><label>Telefon</label><input id="ld_phone" placeholder="90 123 45 67" /></div>
     <div class="field"><label>Manba</label><select id="ld_source">${Object.entries(LEAD_SOURCES).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></div>
     <div class="field"><label>Taxminiy oylik to'lov (so'm, ixtiyoriy)</label><input id="ld_value" type="number" placeholder="1500000" /></div>
+    ${assigneeField}
     <div class="modal-actions"><button class="btn-save" id="ld_save">Saqlash</button></div>`, () => {
     $('#ld_save').addEventListener('click', async () => {
       const name = $('#ld_name').value.trim();
@@ -3127,6 +3132,8 @@ function openLeadModal(lead) {
         name, phone: $('#ld_phone').value.trim(), source: $('#ld_source').value,
         value_estimate: parseInt($('#ld_value').value || '0', 10) || 0,
       };
+      const assigneeSel = $('#ld_assignee');
+      if (assigneeSel) body.assigned_to = assigneeSel.value;
       const res = await api('/api/crm/leads', { method: 'POST', body: JSON.stringify(body) });
       if (res && res.error) { toast('⚠️ ' + res.error); return; }
       closeModal(); toast('✅ Lid qo\'shildi'); render();
@@ -3156,6 +3163,9 @@ async function openLeadDetailModal(lid) {
       <div class="mrow"><span>📍 Manba</span><b>${esc(LEAD_SOURCES[lead.source] || lead.source)}</b></div>
       <div class="mrow"><span>💰 Taxminiy summa</span><b>${money(lead.value_estimate || 0)}</b></div>
       <div class="mrow"><span>📶 Bosqich</span><b><select id="ld_stage">${stageOptions}</select></b></div>
+      <div class="mrow"><span>👤 Mas'ul</span><b>${ME.role === 'ceo'
+        ? `<select id="ld_assignee">${CRM_USERS.map((u) => `<option value="${esc(u)}" ${u === lead.assigned_to ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select>`
+        : esc(lead.assigned_to || '—')}</b></div>
       ${lead.converted_project ? `<div class="mrow"><span>✅ Loyiha</span><b>${esc(lead.converted_project)}</b></div>` : ''}
     </div>
 
@@ -3187,6 +3197,13 @@ async function openLeadDetailModal(lid) {
       if (res && res.convertError) toast('⚠️ ' + res.convertError);
       else toast('✅ Bosqich yangilandi');
       closeModal(); render();
+    });
+
+    const assigneeSel = $('#ld_assignee');
+    if (assigneeSel) assigneeSel.addEventListener('change', async (e) => {
+      const res = await api('/api/crm/leads/' + lid, { method: 'PUT', body: JSON.stringify({ assigned_to: e.target.value }) });
+      if (res && res.error) { toast('⚠️ ' + res.error); return; }
+      toast('✅ Mas\'ul yangilandi'); closeModal(); render();
     });
 
     $('#ld_note_add').addEventListener('click', async () => {
