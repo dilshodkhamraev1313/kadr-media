@@ -346,7 +346,9 @@ SALARY = {
                 "som": {"Fiksa": 2000000, "Intizom": 500000, "Operatsion boshqaruv": 500000},
                 "lead": True, "close_link": "Operatsion boshqaruv", "kassa_penalty": True,
                 "backstage_penalty": True},
-    "Xonzoda": {"title": "Ssenarist + koordinator", "som": {"Fiksa": 2000000, "Intizom": 500000},
+    # Institut o'qishi boshlangani uchun kunning yarmida (~14:00) keladi —
+    # Intizom (kelish vaqtiga bog'liq) olib tashlandi, faqat Fiksa qoladi.
+    "Xonzoda": {"title": "Ssenarist + koordinator", "som": {"Fiksa": 2000000},
                 "usd": {"Koordinatorlik": 100}, "lead": True, "scenarist": True,
                 "close_link": "Koordinatorlik"},
     "Samandar": {"title": "Operator + loyiha rahbari", "som": {"Fiksa": 2000000, "Intizom": 500000},
@@ -356,7 +358,9 @@ SALARY = {
                "montaj": True, "file_archive_daily": FILE_ARCHIVE_DAILY_RATE},
     "Umid": {"title": "Montajchi + operator + loyiha rahbari", "som": {"Fiksa": 500000, "Intizom": 500000},
              "montaj": True, "operator": True, "lead": True},
-    "Shodiya": {"title": "Loyiha rahbari + montajchi + operator + SMM", "som": {"Fiksa": 500000, "Intizom": 500000},
+    # Institut o'qishi boshlangani uchun kunning yarmida (~14:00) keladi —
+    # Intizom (kelish vaqtiga bog'liq) olib tashlandi, faqat Fiksa qoladi.
+    "Shodiya": {"title": "Loyiha rahbari + montajchi + operator + SMM", "som": {"Fiksa": 500000},
                 "usd": {"SMM": 40}, "stories_projects_usd": STORIES_PROJECT_USD, "lead": True, "montaj": True,
                 "operator": True, "close_link": ["SMM"]},
     # Sotuv operatori — komissiya (% sotuvdan) hali kelishilmagan, keyin qo'shiladi.
@@ -813,6 +817,8 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS attendance (
         id {pk}, person TEXT, adate TEXT, checkin_time TEXT,
         on_time INTEGER DEFAULT 0, source TEXT DEFAULT 'bot', created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS absence_warned (
+        id {pk}, person TEXT, adate TEXT, created_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS smm_done (
         id {pk}, person TEXT, project TEXT, ym TEXT)""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS file_archive_log (
@@ -5063,6 +5069,10 @@ def _lateness_penalty(conn, name, today):
 PENALTY_START_DATE = "2026-08-14"  # davomat jarimasi shu sanadan boshlab qo'llaniladi — undan
                                     # oldingi kechikishlar (tizim hali yo'q edi) hisobga kirmaydi
 
+ABSENCE_WARN_TIME = "22:00"            # shu vaqtgacha dumaloq video tashlanmasa — ogohlantirish
+ABSENCE_PENALTY_START_DATE = "2026-09-18"  # kelmaslik shu sanadan boshlab kechikish limitiga qo'shiladi
+                                            # (retroaktiv emas — tizim shu kun joriy qilindi)
+
 KASSA_CLOSE_PERSON = "Gulmira"
 KASSA_PENALTY_PER_DAY = 50000      # Kassa KASSA_CLOSE_DEADLINE'gacha yopilmasa, shu kun uchun jarima
 KASSA_CLOSE_DEADLINE = "22:00"
@@ -5192,13 +5202,18 @@ def _set_ceo_chat_id(conn, chat_id):
 
 def _attendance_penalty(conn, name, today):
     """Davomat (check-in) kechikish jarimasi — oyda LATENESS_FREE_LIMIT martagacha
-    kechikish jarimasiz, 4-martadan boshlab HAR bir kechikkan kun uchun qo'shimcha
+    kechikish/kelmaslik jarimasiz, 4-martadan boshlab HAR bir kun uchun qo'shimcha
     LATENESS_PENALTY_PER_DAY (bu — o'sha kunning yo'qolgan Intizomidan TASHQARI).
-    Faqat PENALTY_START_DATE'dan boshlab (tizim joriy qilingan kundan) sanaladi."""
+    Kech kelgan VA umuman kelmagan (dumaloq video tashlamagan) kunlar BIR XIL
+    limitga kiradi — otpusk kunlari bundan mustasno (_month_attendance_days
+    o'zi otpuskni alohida ajratadi). Faqat PENALTY_START_DATE'dan boshlab
+    (tizim joriy qilingan kundan) sanaladi."""
     if name not in ATTENDANCE_USERS:
         return 0, []
     d = _month_attendance_days(conn, name, today)
-    late_counted = [x for x in d["late"] if x >= PENALTY_START_DATE]
+    late_ok = [x for x in d["late"] if x >= PENALTY_START_DATE]
+    absent_ok = [x for x in d["absent"] if x >= ABSENCE_PENALTY_START_DATE]
+    late_counted = sorted(set(late_ok) | set(absent_ok))
     extra = max(len(late_counted) - LATENESS_FREE_LIMIT, 0)
     return extra * LATENESS_PENALTY_PER_DAY, late_counted
 
@@ -5451,7 +5466,7 @@ def compute_salary(conn, name, rate, ym=None):
     # Davomat (check-in) kechikish jarimasi — oyda 3 martadan keyin har kuni −20 000
     att_pen, att_late = _attendance_penalty(conn, name, today)
     if att_pen > 0:
-        comps.append({"label": f"Davomat jarimasi ({len(att_late)} marta kech, {LATENESS_FREE_LIMIT} tagacha jarimasiz)",
+        comps.append({"label": f"Davomat jarimasi ({len(att_late)} marta kech/kelmagan, {LATENESS_FREE_LIMIT} tagacha jarimasiz)",
                       "amount": -att_pen, "kind": "penalty"})
     # Mukammal davomat bonusi — butun oy 100% vaqtida kelsa
     perfect_bonus = _perfect_attendance_bonus(conn, name, today)
@@ -6875,6 +6890,47 @@ def api_cron_brief_check():
     return {"ok": True, "missing": missing, "phase": phase}
 
 
+def api_cron_absence_check():
+    """ABSENCE_WARN_TIME (22:00)da tashqi cron chaqiradi: bugun dumaloq video
+    umuman tashlamagan (otpuskda bo'lmagan) ATTENDANCE_USERS uchun bir martalik
+    ogohlantirish — bu kun kechikish bilan bir xil limitga kiradi
+    (_attendance_penalty, ABSENCE_PENALTY_START_DATE'dan boshlab)."""
+    today = uz_today()
+    if today.weekday() == 6:
+        return {"ok": True, "skipped": "yakshanba"}
+    now_time = uz_now().strftime("%H:%M")
+    if now_time < ABSENCE_WARN_TIME:
+        return {"ok": True, "skipped": "hali vaqti emas"}
+    today_iso = today.isoformat()
+    ym = today.strftime("%Y-%m")
+    conn = get_db()
+    checked_in = {r["person"] for r in conn.execute(
+        "SELECT person FROM attendance WHERE adate=?", (today_iso,)).fetchall()}
+    already_warned = {r["person"] for r in conn.execute(
+        "SELECT person FROM absence_warned WHERE adate=?", (today_iso,)).fetchall()}
+    missing = []
+    for p in ATTENDANCE_USERS:
+        if p in checked_in or p in already_warned:
+            continue
+        if today_iso in _otpusk_dates_set(conn, p, ym):
+            continue
+        missing.append(p)
+    if not missing:
+        conn.close()
+        return {"ok": True, "warned": []}
+    mentions = ", ".join(_telegram_mention(p) for p in missing)
+    send_telegram(
+        f"⚫️ Bugun ({today_iso}) ishga kelmadingiz (dumaloq video tashlanmadi): {mentions}\n"
+        f"Bu kun kechikish bilan bir xil hisoblanadi — oyda 3 tadan keyin har kuni −{som(LATENESS_PENALTY_PER_DAY)} jarima."
+    )
+    for p in missing:
+        conn.execute("INSERT INTO absence_warned (person, adate, created_at) VALUES (?,?,?)",
+                     (p, today_iso, now_local()))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "warned": missing}
+
+
 def api_cron_inactive_projects():
     """Tashqi cron (har kuni ertalab) chaqiradi — INACTIVITY_DAYS+ kun harakatsiz
     (hali bitmagan, hali ogohlantirilmagan) loyihalar uchun bir martalik guruh
@@ -7447,6 +7503,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_cron_service_check())
         if path == "/api/cron/brief-check":
             return self._json(api_cron_brief_check())
+        if path == "/api/cron/absence-check":
+            return self._json(api_cron_absence_check())
         if path == "/api/cron/crm-followup-check":
             return self._json(api_cron_crm_followup_check())
         if not path.startswith("/api/"):
