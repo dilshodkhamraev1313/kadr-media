@@ -4492,7 +4492,9 @@ def api_shoots(user, show_all=False):
     conn = get_db()
     rows = [dict(r) for r in conn.execute("SELECT * FROM shoots ORDER BY sdate DESC, id DESC").fetchall()]
     conn.close()
-    if user["role"] == "lead" and not show_all:
+    # Gulmira — Kadr Studio kabi, loyihasidan qat'iy nazar HAMMA syomkani ko'radi
+    # (backstage tugmasi uchun har qanday syomkaga kira olishi kerak).
+    if user["role"] == "lead" and not show_all and user["name"] != BACKSTAGE_PERSON:
         names = lead_project_names(user["name"])
         rows = [r for r in rows if r.get("project") in names]
     # Operator daromadi (bekor qilinganlar hisobga olinmaydi)
