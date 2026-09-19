@@ -5428,6 +5428,18 @@ def compute_salary(conn, name, rate, ym=None):
             kind = "auto"
             lbl = f"{label} · {closed}/{wd} kun yopilgan"
         comps.append({"label": lbl, "amount": amt, "kind": kind})
+    # Yakshanba bonusi — oddiy dam olish kuni, lekin kelib dumaloq video
+    # tashlagan bo'lsa, shu kunlik Fiksa stavkasining 1,5 barobari to'lanadi.
+    if name in ATTENDANCE_USERS:
+        fiksa_full = int((cfg.get("som") or {}).get("Fiksa", 0))
+        if fiksa_full:
+            wd = _workdays_in_month(today.year, today.month)
+            daily_rate = fiksa_full / wd if wd else 0
+            sundays = _sunday_worked_days(conn, name, today)
+            if sundays:
+                sunday_bonus = int(round(daily_rate * 1.5 * len(sundays)))
+                comps.append({"label": f"Yakshanba bonusi ({len(sundays)} kun, kunlik stavka ×1,5)",
+                              "amount": sunday_bonus, "kind": "auto"})
     for label, usd in (cfg.get("usd") or {}).items():
         amt = int(usd) * rate
         lbl = f"{label} (${usd})"
@@ -7229,6 +7241,18 @@ def _attended_days(conn, name, today):
     kiritilmaydi — ishga kelmagani uchun Fiksa ham hisoblanmaydi."""
     d = _month_attendance_days(conn, name, today)
     return len(d["on_time"]) + len(d["late"])
+
+
+def _sunday_worked_days(conn, name, today):
+    """Shu oyda yakshanba kuni ishga kelib (dumaloq video tashlab) belgilangan
+    kunlar ro'yxati — yakshanba oddiy ish kuni emas (_month_attendance_days
+    uni butunlay tashlab ketadi), shuning uchun alohida, to'g'ridan-to'g'ri
+    `attendance` jadvalidan hisoblanadi."""
+    ym = today.strftime("%Y-%m")
+    rows = conn.execute(
+        "SELECT adate FROM attendance WHERE person=? AND adate LIKE ? AND adate<=?",
+        (name, ym + "%", today.isoformat())).fetchall()
+    return [r["adate"] for r in rows if datetime.date.fromisoformat(r["adate"]).weekday() == 6]
 
 
 def _workdays_in_month(yy, mm):
