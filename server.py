@@ -4761,7 +4761,7 @@ def api_create_scenarist_script(user, b):
     conn.close()
     send_telegram(
         f"✍️ <b>Ssenariy kiritildi</b>\n{b.get('title') or ''}\n"
-        f"👤 {user['name']} (+{rate:,} so'm)".replace(",", " ")
+        f"👤 {user['name']} — qabul qilindi"
         + (f"\n📁 {b.get('project')}" if b.get("project") else "")
         + (f"\n💰 Mijoz qarzi (hali to'lanmagan): {client_amount:,} so'm".replace(",", " ") if client_amount else "")
     )
