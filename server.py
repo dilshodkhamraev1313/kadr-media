@@ -33,6 +33,11 @@ IS_PG = DATABASE_URL.startswith("postgres")
 # TELEGRAM_CHAT_ID o'rnatilsa ishlaydi. O'rnatilmasa, jim turadi.
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+# Botga shaxsiy yozganda "CEO" deb aniqlanadigan yagona Telegram username —
+# aniq shu kishidan kelgan xabar CEO'ning shaxsiy chat_id'ini yozib qo'yadi
+# (aks holda istalgan begona botga yozib, o'zini "CEO" o'rniga qo'yib olishi
+# mumkin edi).
+CEO_TELEGRAM_USERNAME = "dilshodkhamraev"
 # AI moliyachi — rasmdan (chek/karta skrini) summani o'qish. Kalit bo'lmasa jim (sanoq+math ishlaydi).
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 OPENAI_VISION_MODEL = os.environ.get("OPENAI_VISION_MODEL", "gpt-4o-mini").strip()
@@ -7361,7 +7366,10 @@ def api_telegram_webhook(update):
         chat = msg.get("chat") or {}
         # CEO botga shaxsiy yozganda — chat_id'ni avtomatik ulab qo'yamiz
         # (keyinchalik ertangi kun reja xabarlarini shu yerga yuborish uchun).
-        if chat.get("type") == "private" and uname and uname not in TELEGRAM_ATTEND:
+        # Aniq CEO_TELEGRAM_USERNAME'dan kelgan xabargina qabul qilinadi —
+        # aks holda istalgan begona botga yozib, o'zini CEO deb belgilatib
+        # olishi mumkin edi.
+        if chat.get("type") == "private" and uname == CEO_TELEGRAM_USERNAME:
             conn = get_db()
             _set_ceo_chat_id(conn, chat.get("id"))
             conn.commit()
