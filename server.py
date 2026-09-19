@@ -321,6 +321,11 @@ SSENARIY_DEADLINE_START = "2026-09-01"  # bu qoida shu oydan boshlab qo'llanilad
 # Davomat (check-in) intizomi — kechikish jarimasi, mukammal davomat bonusi, otpusk.
 LATENESS_FREE_LIMIT = 3           # oyda shuncha marta kechikish jarimasiz
 LATENESS_PENALTY_PER_DAY = 20000  # 4-martadan boshlab har kechikkan kun uchun qo'shimcha jarima
+# Institut o'qishi sababli standart ON_TIME_LIMIT'dan doim kech keladigan
+# (CEO tomonidan tasdiqlangan normal jadval) xodimlar — ular uchun "kech kelish"
+# kechikish jarimasiga kirmaydi (faqat Intizom yo'q, dumaloq video Fiksa uchun
+# ishlatiladi), lekin umuman kelmagan kunlar baribir jarima limitiga kiradi.
+LATE_SCHEDULE_EXEMPT = ("Xonzoda", "Shodiya")
 PERFECT_ATTENDANCE_BONUS = 500000  # butun oy (yakshanbadan tashqari) 100% vaqtida kelsa bonus
 OTPUSK_DAYS = 2                   # bir martalik otpusk davomiyligi (kun)
 OTPUSK_COOLDOWN_MONTHS = 1        # otpuskdan otpuskgacha eng kam oraliq (har oyda 1 marta)
@@ -5221,11 +5226,19 @@ def _attendance_penalty(conn, name, today):
     Kech kelgan VA umuman kelmagan (dumaloq video tashlamagan) kunlar BIR XIL
     limitga kiradi — otpusk kunlari bundan mustasno (_month_attendance_days
     o'zi otpuskni alohida ajratadi). Faqat PENALTY_START_DATE'dan boshlab
-    (tizim joriy qilingan kundan) sanaladi."""
+    (tizim joriy qilingan kundan) sanaladi.
+    LATE_SCHEDULE_EXEMPT'dagilar uchun (Xonzoda, Shodiya — institut sababli
+    standart ON_TIME_LIMIT'dan doim kech keladi, bu CEO tomonidan tasdiqlangan
+    normal jadval) — "kech kelish" jarimaga kirmaydi (dumaloq video ular uchun
+    faqat Fiksa/kelganini belgilaydi), lekin UMUMAN kelmagan kunlar baribir
+    hisobdorlik uchun jarima limitiga kiradi."""
     if name not in ATTENDANCE_USERS:
         return 0, []
     d = _month_attendance_days(conn, name, today)
-    late_ok = [x for x in d["late"] if x >= PENALTY_START_DATE]
+    if name in LATE_SCHEDULE_EXEMPT:
+        late_ok = []
+    else:
+        late_ok = [x for x in d["late"] if x >= PENALTY_START_DATE]
     absent_ok = [x for x in d["absent"] if x >= ABSENCE_PENALTY_START_DATE]
     late_counted = sorted(set(late_ok) | set(absent_ok))
     extra = max(len(late_counted) - LATENESS_FREE_LIMIT, 0)
