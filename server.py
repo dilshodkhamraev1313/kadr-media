@@ -262,11 +262,12 @@ DEFAULT_CHECKLIST = {
 }
 
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
-ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar", "Nodira")
+ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar", "Nodira", "Murod")
 TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
     "pardaboyev_samandar": "Samandar", "nbyva_929": "Nodira",
+    "murad_nasullayev": "Murod",
 }
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
@@ -321,11 +322,13 @@ SSENARIY_DEADLINE_START = "2026-09-01"  # bu qoida shu oydan boshlab qo'llanilad
 # Davomat (check-in) intizomi — kechikish jarimasi, mukammal davomat bonusi, otpusk.
 LATENESS_FREE_LIMIT = 3           # oyda shuncha marta kechikish jarimasiz
 LATENESS_PENALTY_PER_DAY = 20000  # 4-martadan boshlab har kechikkan kun uchun qo'shimcha jarima
-# Institut o'qishi sababli standart ON_TIME_LIMIT'dan doim kech keladigan
-# (CEO tomonidan tasdiqlangan normal jadval) xodimlar — ular uchun "kech kelish"
-# kechikish jarimasiga kirmaydi (faqat Intizom yo'q, dumaloq video Fiksa uchun
-# ishlatiladi), lekin umuman kelmagan kunlar baribir jarima limitiga kiradi.
-LATE_SCHEDULE_EXEMPT = ("Xonzoda", "Shodiya")
+# Institut o'qishi/individual jadval sababli standart ON_TIME_LIMIT'dan doim
+# kech keladigan (CEO tomonidan tasdiqlangan normal jadval) xodimlar — ular
+# uchun "kech kelish" kechikish jarimasiga kirmaydi (faqat Intizom yo'q,
+# dumaloq video Fiksa uchun ishlatiladi), lekin umuman kelmagan kunlar
+# baribir jarima limitiga kiradi. Murod — kun yarmidan (taxminan tushdan
+# keyin) keladi.
+LATE_SCHEDULE_EXEMPT = ("Xonzoda", "Shodiya", "Murod")
 PERFECT_ATTENDANCE_BONUS = 500000  # butun oy (yakshanbadan tashqari) 100% vaqtida kelsa bonus
 OTPUSK_DAYS = 2                   # bir martalik otpusk davomiyligi (kun)
 OTPUSK_COOLDOWN_MONTHS = 1        # otpuskdan otpuskgacha eng kam oraliq (har oyda 1 marta)
@@ -370,9 +373,9 @@ SALARY = {
                 "operator": True, "close_link": ["SMM"]},
     # Sotuv operatori — komissiya (% sotuvdan) hali kelishilmagan, keyin qo'shiladi.
     "Nodira": {"title": "Sotuv operatori", "som": {"Fiksa": 1000000, "Intizom": 500000}},
-    # Kun yarmidan keladi — ATTENDANCE_USERS'da EMAS (aks holda kelish vaqti
-    # standart ON_TIME_LIMIT'dan kech bo'lgani uchun har kuni "kech" deb
-    # hisoblanib, noto'g'ri jarima chiqadi). Fiksa to'liq (oylik), Intizom yo'q.
+    # Kun yarmidan keladi — ATTENDANCE_USERS'da (Fiksa kunlik hisoblansin
+    # uchun) va LATE_SCHEDULE_EXEMPT'da (kech kelishi jarima keltirmasin
+    # uchun). Intizom yo'q — faqat Fiksa (kunlik) + montaj puli.
     "Murod": {"title": "Montajchi", "som": {"Fiksa": 500000}, "montaj": True},
 }
 
