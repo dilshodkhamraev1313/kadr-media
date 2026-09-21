@@ -5258,7 +5258,12 @@ LATENESS_ALERT_COLOR = {1: "🟡", 2: "🟠", 3: "🔴"}  # 4+ → ⚫️ (jarim
 
 def _lateness_alert(conn, name, today):
     """Kechikish soni (PENALTY_START_DATE'dan buyon, jarimaga sanaladigan)
-    asosida rang + ogohlantirish matni. Hali kech kelmagan bo'lsa (None, None)."""
+    asosida rang + ogohlantirish matni. Hali kech kelmagan bo'lsa (None, None).
+    LATE_SCHEDULE_EXEMPT'dagilar uchun umuman ko'rsatilmaydi — ularning "kech"
+    kelishi normal jadval, real jarima hisob-kitobiga (_attendance_penalty)
+    bu tegmaydi, faqat bu ogohlantirish matni chiqmaydi."""
+    if name in LATE_SCHEDULE_EXEMPT:
+        return None, None
     _, late_counted = _attendance_penalty(conn, name, today)
     n = len(late_counted)
     if n == 0:
@@ -7382,13 +7387,17 @@ def api_telegram_webhook(update):
         conn = get_db()
         rec = _record_attendance(conn, person, "bot")
         alert_color, alert_text = (None, None)
-        if rec and not rec["on_time"]:
+        if rec and not rec["on_time"] and person not in LATE_SCHEDULE_EXEMPT:
             alert_color, alert_text = _lateness_alert(conn, person, uz_today())
         conn.commit()
         conn.close()
         if rec:
             if rec["on_time"]:
                 send_telegram(f"🟢 <b>{person}</b> ishga keldi — {rec['time']} (✅ o'z vaqtida)")
+            elif person in LATE_SCHEDULE_EXEMPT:
+                # Individual jadval (masalan kun yarmidan/institutdan keyin) —
+                # "kech" degan tavsif va jarima ogohlantirishi mos emas.
+                send_telegram(f"🟢 <b>{person}</b> ishga keldi — {rec['time']}")
             else:
                 send_telegram(f"{alert_color or '🟡'} <b>{person}</b> ishga keldi — {rec['time']} (kech)\n{alert_text or ''}")
     except Exception:
