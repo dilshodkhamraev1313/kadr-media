@@ -285,6 +285,7 @@ INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
 JOIN_DATE = {
     "Samandar": "2026-08-25",  # Saidning o'rniga shu sanada qo'shildi
     "Murod": "2026-09-19",     # ATTENDANCE_USERS'ga shu sanada qo'shildi (tizim shu kundan kuzata boshladi)
+    "Nodira": "2026-09-11",    # ATTENDANCE_USERS'ga shu sanada qo'shildi (tizim shu kundan kuzata boshladi)
 }
 
 
