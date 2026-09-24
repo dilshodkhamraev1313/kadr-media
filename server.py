@@ -7431,7 +7431,17 @@ def api_geofence_ping(token, event):
     hududiga kirganda (Arrive) chaqiriladi. Token orqali shaxs aniqlanadi,
     auth header shart emas (webhook)."""
     person = GEOFENCE_TOKENS.get(token or "")
-    if not person or event != "arrive":
+    if not person:
+        return {"ok": True}
+    if event == "reset":
+        # Faqat pilot-sinov davri uchun: bugungi yozuvni tozalab qayta
+        # sinash imkonini beradi (o'zining tokeni bilan, faqat bugungi kun).
+        conn = get_db()
+        conn.execute("DELETE FROM attendance WHERE person=? AND adate=?", (person, uz_today().isoformat()))
+        conn.commit()
+        conn.close()
+        return {"ok": True, "reset": person}
+    if event != "arrive":
         return {"ok": True}
     conn = get_db()
     rec = _record_attendance(conn, person, "geofence")
