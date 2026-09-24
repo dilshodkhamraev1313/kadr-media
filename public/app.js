@@ -2024,6 +2024,9 @@ async function viewDaily() {
     const op = await api('/api/otpusk').catch(() => ({}));
     DATA.otpuskAll = op.requests || [];
     DATA.otpuskPending = DATA.otpuskAll.filter((r) => r.status === 'pending');
+    const os = await api('/api/offsite').catch(() => ({}));
+    DATA.offsiteAll = os.requests || [];
+    DATA.offsitePending = DATA.offsiteAll.filter((r) => r.status === 'pending');
   }
   let html = '';
   // --- Vazifa biriktirish (Dilshod / Xonzoda) ---
@@ -2048,9 +2051,10 @@ async function viewDaily() {
   }
   if (att.overview) {
     const pendingOtpusk = (DATA.otpuskPending || []).length;
+    const pendingOffsite = (DATA.offsitePending || []).length;
     html += `<div class="panel" style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
         <h3 style="margin:0">Kelish (bugun) — davomat hisoboti</h3>
-        <div style="display:flex;gap:8px">${pendingOtpusk ? `<button class="btn-ghost" id="otpusk_review_btn">🏖 Otpusk so'rovlari (${pendingOtpusk})</button>` : ''}<button class="btn-ghost" id="hook_btn">🤖 Botni ulash</button></div></div><div class="ceo-list">` +
+        <div style="display:flex;gap:8px">${pendingOffsite ? `<button class="btn-ghost" id="offsite_review_btn">📍 Tashqarida so'rovlari (${pendingOffsite})</button>` : ''}${pendingOtpusk ? `<button class="btn-ghost" id="otpusk_review_btn">🏖 Otpusk so'rovlari (${pendingOtpusk})</button>` : ''}<button class="btn-ghost" id="hook_btn">🤖 Botni ulash</button></div></div><div class="ceo-list">` +
       att.overview.map((o) => `
         <div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${colorFor(o.name)}">${initials(o.name)}</div>
           <div><div class="ci-name">${esc(o.name)}</div><div class="ci-sub">Shu oy: ${o.onTimeDays} vaqtida · ${o.lateDays} kech · ${o.absentDays} kelmadi · ${o.pct}% davomat · ${money(o.intizom)}${o.attendancePenalty ? ` · <span style="color:var(--red)">−${money(o.attendancePenalty)} jarima</span>` : ''}</div></div></div>
@@ -2232,6 +2236,9 @@ async function viewDaily() {
   bindOtpusk();
   const orb = $('#otpusk_review_btn');
   if (orb) orb.addEventListener('click', () => openOtpuskReviewModal());
+  bindOffsite();
+  const osrb = $('#offsite_review_btn');
+  if (osrb) osrb.addEventListener('click', () => openOffsiteReviewModal());
 }
 
 function openOtpuskReviewModal() {
@@ -2245,6 +2252,23 @@ function openOtpuskReviewModal() {
   openModal('🏖 Otpusk so\'rovlari', `<div class="ceo-list">${rows}</div>`, () => {
     $('#modalBody').querySelectorAll('[data-otdec]').forEach((b) => b.addEventListener('click', async () => {
       const res = await api('/api/otpusk/decide', { method: 'POST', body: JSON.stringify({ id: parseInt(b.dataset.otdec, 10), decision: b.dataset.decision }) });
+      if (res && res.ok) { toast(b.dataset.decision === 'approved' ? '✅ Tasdiqlandi' : '❌ Rad etildi'); closeModal(); render(); }
+      else { toast('⚠️ ' + (res && res.error || 'Xatolik')); }
+    }));
+  });
+}
+
+function openOffsiteReviewModal() {
+  const rows = (DATA.offsitePending || []).map((r) => `
+    <div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${colorFor(r.person)}">${initials(r.person)}</div>
+      <div><div class="ci-name">${esc(r.person)}</div><div class="ci-sub">${fmtDate(r.odate)}${r.note ? ' · ' + esc(r.note) : ''}</div></div></div>
+      <div style="display:flex;gap:6px">
+        <button class="mini-btn green" data-osdec="${r.id}" data-decision="approved">✅ Tasdiqlash</button>
+        <button class="mini-btn red" data-osdec="${r.id}" data-decision="rejected">❌ Rad etish</button>
+      </div></div>`).join('') || '<div class="muted">Ko\'rib chiqilayotgan so\'rov yo\'q</div>';
+  openModal('📍 Tashqarida so\'rovlari', `<div class="ceo-list">${rows}</div>`, () => {
+    $('#modalBody').querySelectorAll('[data-osdec]').forEach((b) => b.addEventListener('click', async () => {
+      const res = await api('/api/offsite/decide', { method: 'POST', body: JSON.stringify({ id: parseInt(b.dataset.osdec, 10), decision: b.dataset.decision }) });
       if (res && res.ok) { toast(b.dataset.decision === 'approved' ? '✅ Tasdiqlandi' : '❌ Rad etildi'); closeModal(); render(); }
       else { toast('⚠️ ' + (res && res.error || 'Xatolik')); }
     }));
@@ -2653,6 +2677,17 @@ async function attendanceCardHTML() {
   } else {
     otpuskLine = '';
   }
+  const os = await api('/api/offsite').catch(() => ({}));
+  const todayIso = new Date().toLocaleDateString('sv-SE');
+  const osToday = (os.requests || []).find((r) => r.odate === todayIso && r.status !== 'rejected');
+  let offsiteLine;
+  if (osToday) {
+    offsiteLine = `<div class="muted">📍 Bugun tashqarida so'rovi ${osToday.status === 'approved' ? 'tasdiqlangan ✅' : "yuborilgan — ko'rib chiqilmoqda"}</div>`;
+  } else if (!inn) {
+    offsiteLine = `<button class="mini-btn" id="offsite_req_btn" style="margin-top:8px">📍 Bugun tashqaridaman (syomka/boshqa sabab)</button>`;
+  } else {
+    offsiteLine = '';
+  }
   const warnColorMap = { '🟡': 'var(--yellow)', '🟠': 'var(--orange)', '🔴': 'var(--red)', '⚫️': '#fff' };
   const warnBgMap = { '🟡': 'rgba(255,214,10,.12)', '🟠': 'rgba(255,159,10,.12)', '🔴': 'rgba(255,69,58,.12)', '⚫️': 'rgba(0,0,0,.6)' };
   const warnBox = m.warnText ? `
@@ -2668,6 +2703,7 @@ async function attendanceCardHTML() {
       <div class="muted">Intizom: <b>${money(m.intizom)}</b>${m.attendancePenalty ? ` · <span style="color:var(--red)">davomat jarimasi: −${money(m.attendancePenalty)}</span>` : ''}</div>
       ${warnBox}
       ${!inn ? `<div class="muted" style="margin-top:6px">📹 "ish vaqti" guruhiga dumaloq video (kruzhok) tashlang — davomat shundan avtomatik belgilanadi</div>` : ''}
+      ${offsiteLine}
       ${otpuskLine}
     </div></div>`;
 }
@@ -2690,6 +2726,22 @@ function openOtpuskRequestModal() {
 function bindOtpusk() {
   const b = $('#otpusk_req_btn');
   if (b) b.addEventListener('click', openOtpuskRequestModal);
+}
+function openOffsiteRequestModal() {
+  openModal('📍 Bugun tashqaridaman', `
+    <p class="muted" style="margin-bottom:10px">Studiyaga kelmasdan tashqarida (syomka yoki boshqa sabab bilan) ishlaganingizni bildiring — CEO tasdiqlasa, bu kun jarimasiz va to'liq hisoblanadi.</p>
+    <div class="field"><label>Sabab</label><input id="osv_note" placeholder="Masalan: mijozda syomka" /></div>
+    <div class="modal-actions"><button class="btn-save" id="osv_send">✅ So'rov yuborish</button></div>`, () => {
+    $('#osv_send').addEventListener('click', async () => {
+      const res = await api('/api/offsite/request', { method: 'POST', body: JSON.stringify({ note: $('#osv_note').value }) });
+      if (res && res.ok) { closeModal(); toast('📍 So\'rov yuborildi'); render(); }
+      else { toast('⚠️ ' + (res && res.error || 'Xatolik')); }
+    });
+  });
+}
+function bindOffsite() {
+  const b = $('#offsite_req_btn');
+  if (b) b.addEventListener('click', openOffsiteRequestModal);
 }
 
 async function viewCabinet() {
@@ -2736,6 +2788,7 @@ async function viewCabinet() {
     </div>`;
   bindVideoCards();
   bindOtpusk();
+  bindOffsite();
 }
 
 // ============================================================

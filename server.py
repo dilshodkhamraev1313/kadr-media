@@ -870,6 +870,11 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS otpusk_requests (
         id {pk}, person TEXT, start_date TEXT, end_date TEXT, status TEXT DEFAULT 'pending',
         note TEXT DEFAULT '', requested_at {ts}, decided_at TEXT, decided_by TEXT)""")
+    # TASHQARIDA (bir kunlik) — WiFi-geofence pilot davrida, syomka jadvalida
+    # qayd etilmagan favqulodda tashqi ish kunlari uchun, CEO tasdiqlashi bilan.
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS offsite_requests (
+        id {pk}, person TEXT, odate TEXT, status TEXT DEFAULT 'pending',
+        note TEXT DEFAULT '', requested_at {ts}, decided_at TEXT, decided_by TEXT)""")
     # OMBOR — rol qo'llanmalari (bilim bazasi) + onboarding
     conn.execute(f"""CREATE TABLE IF NOT EXISTS playbooks (
         id {pk}, role_key TEXT, title TEXT, sections TEXT DEFAULT '[]',
@@ -5761,6 +5766,84 @@ def api_otpusk_decide(user, b):
     return {"ok": True, "decision": decision}
 
 
+# ------------------------------------------------------------
+#  TASHQARIDA — WiFi-geofence pilot davrida, shoots jadvalida qayd
+#  etilmagan favqulodda tashqi ish kuni so'rovi (CEO tasdiqlashi bilan)
+# ------------------------------------------------------------
+def api_request_offsite(user, b):
+    """Xodim — bugun (yoki ko'rsatilgan sanada) studiyaga kelmasdan
+    tashqarida ishlaganini/ishlashini bildiradi, CEO tasdiqlashi kerak."""
+    if user["name"] not in ATTENDANCE_USERS:
+        return {"error": "Sizga tegishli emas"}, 403
+    odate = (b.get("date") or uz_today().isoformat()).strip()
+    try:
+        datetime.date.fromisoformat(odate)
+    except (ValueError, TypeError):
+        return {"error": "Sana noto'g'ri"}, 400
+    conn = get_db()
+    ex = conn.execute(
+        "SELECT id FROM offsite_requests WHERE person=? AND odate=? AND status IN ('pending','approved')",
+        (user["name"], odate)).fetchone()
+    if ex:
+        conn.close()
+        return {"error": "Bu sana uchun so'rov allaqachon yuborilgan"}, 400
+    conn.execute(
+        "INSERT INTO offsite_requests (person, odate, status, note, requested_at) VALUES (?,?,?,?,?)",
+        (user["name"], odate, "pending", (b.get("note") or "").strip(), now_local()))
+    log_audit(conn, user["name"], "tashqarida so'rovi", odate)
+    conn.commit()
+    conn.close()
+    send_telegram(
+        f"📍 <b>Tashqarida (sababli) so'rovi</b>\n👤 {user['name']}\n📅 {odate}\n"
+        f"📝 {(b.get('note') or '—')}\n\nCEO tasdiqlashi kerak."
+    )
+    return {"ok": True, "date": odate}
+
+
+def api_offsite_list(user):
+    """CEO — barcha so'rovlar; xodim — faqat o'zinikini ko'radi."""
+    conn = get_db()
+    if user["role"] == "ceo":
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM offsite_requests ORDER BY requested_at DESC").fetchall()]
+    else:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM offsite_requests WHERE person=? ORDER BY requested_at DESC", (user["name"],)).fetchall()]
+    conn.close()
+    return {"requests": rows}
+
+
+def api_offsite_decide(user, b):
+    """CEO — tashqarida so'rovini tasdiqlaydi/rad etadi."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    rid = b.get("id")
+    decision = (b.get("decision") or "").strip()
+    if decision not in ("approved", "rejected"):
+        return {"error": "decision noto'g'ri"}, 400
+    conn = get_db()
+    row = conn.execute("SELECT * FROM offsite_requests WHERE id=?", (rid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if row["status"] != "pending":
+        conn.close()
+        return {"error": "Bu so'rov allaqachon ko'rib chiqilgan"}, 400
+    conn.execute(
+        "UPDATE offsite_requests SET status=?, decided_at=?, decided_by=? WHERE id=?",
+        (decision, now_local(), user["name"], rid))
+    log_audit(conn, user["name"], "tashqarida so'rovi " + ("tasdiqlandi" if decision == "approved" else "rad etildi"),
+              f"{row['person']} · {row['odate']}")
+    conn.commit()
+    conn.close()
+    send_telegram(
+        (f"✅ <b>Tashqarida so'rovi tasdiqlandi</b>\n👤 {row['person']}\n📅 {row['odate']}"
+         if decision == "approved" else
+         f"❌ <b>Tashqarida so'rovi rad etildi</b>\n👤 {row['person']}\n📅 {row['odate']}")
+    )
+    return {"ok": True, "decision": decision}
+
+
 def api_brief_submit(user, b):
     """Xodim ertangi kun ish rejasini (kunlik brif) yozadi. BRIEF_DEADLINE
     (20:00)gacha yuborilmasa — ertaga kun yopilmaydi va Fiksa/Intizom kamayadi
@@ -6991,6 +7074,8 @@ def api_cron_absence_check():
             continue
         if today_iso in _otpusk_dates_set(conn, p, ym):
             continue
+        if today_iso in _offsite_dates_set(conn, p, ym):
+            continue
         missing.append(p)
     if not missing:
         conn.close()
@@ -7236,6 +7321,23 @@ def _otpusk_dates_set(conn, person, ym):
     return out
 
 
+def _offsite_dates_set(conn, person, ym):
+    """WiFi/video talab qilinmaydigan, lekin TO'LIQ o'z vaqtida hisoblanadigan
+    kunlar (ISO sana to'plami) — ikki manbadan: (1) shoots jadvalida shu
+    kishi operator sifatida rejalashtirilgan kunlar (avtomatik), (2) CEO
+    tasdiqlagan bir martalik 'tashqarida' so'rovlari (qo'lda)."""
+    out = set()
+    shoot_rows = conn.execute(
+        "SELECT DISTINCT sdate FROM shoots WHERE operator=? AND sdate LIKE ? AND status='active'",
+        (person, ym + "%")).fetchall()
+    out.update(r["sdate"] for r in shoot_rows if r["sdate"])
+    req_rows = conn.execute(
+        "SELECT odate FROM offsite_requests WHERE person=? AND odate LIKE ? AND status='approved'",
+        (person, ym + "%")).fetchall()
+    out.update(r["odate"] for r in req_rows)
+    return out
+
+
 def _month_attendance_days(conn, name, today):
     """Oy boshidan `today`gacha (yakshanbasiz) har bir ish kunini toifalaydi:
     o'z vaqtida / kech / kelmadi / otpuskda. Tasdiqlangan otpusk kunlari —
@@ -7243,6 +7345,7 @@ def _month_attendance_days(conn, name, today):
     Fiksa/Intizomga ham zarar keltirmaydi), lekin alohida ham sanaladi."""
     ym = today.strftime("%Y-%m")
     otpusk = _otpusk_dates_set(conn, name, ym)
+    offsite = _offsite_dates_set(conn, name, ym)
     first = _effective_month_start(name, today)
     rows = {r["adate"]: dict(r) for r in conn.execute(
         "SELECT * FROM attendance WHERE person=? AND adate LIKE ?", (name, ym + "%")).fetchall()}
@@ -7256,7 +7359,12 @@ def _month_attendance_days(conn, name, today):
             else:
                 r = rows.get(iso)
                 if not r:
-                    absent.append(iso)
+                    # Syomka/tashqarida kuni (WiFi kerak emas) — real
+                    # checkin bo'lmasa ham to'liq o'z vaqtida hisoblanadi.
+                    if iso in offsite:
+                        on_time.append(iso)
+                    else:
+                        absent.append(iso)
                 elif r["on_time"]:
                     on_time.append(iso)
                 else:
@@ -7841,6 +7949,10 @@ class Handler(BaseHTTPRequestHandler):
             if not is_attend_user(user) and role != "ceo":
                 return self._forbid()
             return self._json(api_otpusk_list(user))
+        if path == "/api/offsite":
+            if not is_attend_user(user) and role != "ceo":
+                return self._forbid()
+            return self._json(api_offsite_list(user))
         if path == "/api/smm":
             if not is_smm_user(user) and role != "ceo":
                 return self._forbid()
@@ -7902,6 +8014,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_request_otpusk(user, b))
         if path == "/api/otpusk/decide":
             return self._json(api_otpusk_decide(user, b))
+        if path == "/api/offsite/request":
+            return self._json(api_request_offsite(user, b))
+        if path == "/api/offsite/decide":
+            return self._json(api_offsite_decide(user, b))
         if path == "/api/cash/expense":
             return self._json(api_cash_expense(user, b))
         if path == "/api/cash/close":
