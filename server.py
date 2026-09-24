@@ -7426,7 +7426,7 @@ def api_telegram_webhook(update):
     return {"ok": True}
 
 
-def api_geofence_ping(token, event):
+def api_geofence_ping(token, event, extra=None):
     """iPhone 'Shortcuts' avtomatlashtiruvidan keladi — telefon studiya
     hududiga kirganda (Arrive) chaqiriladi. Token orqali shaxs aniqlanadi,
     auth header shart emas (webhook)."""
@@ -7450,6 +7450,20 @@ def api_geofence_ping(token, event):
         conn.commit()
         conn.close()
         return {"ok": True, "reset": person}
+    if event == "set":
+        # Faqat pilot-sinov davri uchun: sinovdan keyin asl (to'g'ri) yozuvni
+        # aniq qiymatlar bilan tiklash (CEO curl orqali, extra=time,on_time,source).
+        ctime, on_time_s, source = (extra or ("", "1", "bot"))
+        conn = get_db()
+        today = uz_today().isoformat()
+        conn.execute("DELETE FROM attendance WHERE person=? AND adate=?", (person, today))
+        conn.execute(
+            "INSERT INTO attendance (person, adate, checkin_time, on_time, source) VALUES (?,?,?,?,?)",
+            (person, today, ctime, 1 if on_time_s == "1" else 0, source),
+        )
+        conn.commit()
+        conn.close()
+        return {"ok": True, "restored": person, "time": ctime}
     if event != "arrive":
         return {"ok": True}
     conn = get_db()
@@ -7646,7 +7660,12 @@ class Handler(BaseHTTPRequestHandler):
             qs = parse_qs(urlparse(self.path).query or "")
             token = (qs.get("token") or [""])[0]
             event = (qs.get("event") or [""])[0]
-            return self._json(api_geofence_ping(token, event))
+            extra = (
+                (qs.get("time") or [""])[0],
+                (qs.get("on_time") or ["1"])[0],
+                (qs.get("source") or ["bot"])[0],
+            )
+            return self._json(api_geofence_ping(token, event, extra))
         if not path.startswith("/api/"):
             return self._serve_static(path)
 
