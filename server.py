@@ -56,9 +56,11 @@ STAGE_LABEL = {
 
 # Video turlari. Rahbar montaj biriktirayotganda turini tanlaydi.
 VIDEO_TYPES = {
-    "reels":   "Reels",
-    "podcast": "Podcast",
-    "youtube": "YouTube video",
+    "reels":     "Reels",
+    "podcast":   "Podcast",
+    "youtube":   "YouTube video",
+    "ai_video":  "AI video",
+    "ai_karusel": "AI karusel post",
 }
 # Video darajalari va narxlari (so'm). Har daraja bitta turga tegishli.
 # Qabul qilishda shu turga mos darajalardan biri tanlanadi — pul avtomatik hisoblanadi.
@@ -440,12 +442,12 @@ RANKS = [
 # Lavozim + video turi bo'yicha montajyor haqi (so'm). Pul shu jadval bo'yicha
 # avtomatik hisoblanadi — montajyor lavozimi qancha baland bo'lsa, haqi shuncha ko'p.
 RANK_PRICES = {
-    "junior":  {"reels": 25000, "podcast": 200000, "youtube": 25000},
-    "pro":     {"reels": 35000, "podcast": 250000, "youtube": 35000},
-    "elite":   {"reels": 50000, "podcast": 300000, "youtube": 50000},
-    "master":  {"reels": 60000, "podcast": 350000, "youtube": 60000},
-    "legenda": {"reels": 70000, "podcast": 400000, "youtube": 70000},
-    "titan":   {"reels": 80000, "podcast": 450000, "youtube": 80000},
+    "junior":  {"reels": 25000, "podcast": 200000, "youtube": 25000, "ai_video": 25000, "ai_karusel": 25000},
+    "pro":     {"reels": 35000, "podcast": 250000, "youtube": 35000, "ai_video": 35000, "ai_karusel": 35000},
+    "elite":   {"reels": 50000, "podcast": 300000, "youtube": 50000, "ai_video": 50000, "ai_karusel": 50000},
+    "master":  {"reels": 60000, "podcast": 350000, "youtube": 60000, "ai_video": 60000, "ai_karusel": 60000},
+    "legenda": {"reels": 70000, "podcast": 400000, "youtube": 70000, "ai_video": 70000, "ai_karusel": 70000},
+    "titan":   {"reels": 80000, "podcast": 450000, "youtube": 80000, "ai_video": 80000, "ai_karusel": 80000},
 }
 
 
@@ -460,7 +462,7 @@ def eff_count(name, accepted):
 
 
 # Montaj deadline (biriktirilgandan qabulgacha). Kechiksa: reels — pul yo'q, podcast/youtube — yarim.
-DEADLINE_HOURS = {"reels": 24, "podcast": 48, "youtube": 48}
+DEADLINE_HOURS = {"reels": 24, "podcast": 48, "youtube": 48, "ai_video": 48, "ai_karusel": 48}
 REELS_PER_DAY = 3  # montajchiga kuniga nechta reels deadline (24 soatlik) qo'yiladi
 
 
@@ -581,7 +583,7 @@ def editor_pay(count, vtype):
     """Montajyor lavozimi (count bo'yicha) va video turiga qarab haq (so'm) + lavozim kaliti."""
     idx = rank_for_count(count)
     rk = RANKS[idx]["key"]
-    vt = vtype if vtype in ("reels", "podcast", "youtube") else "reels"
+    vt = vtype if vtype in ("reels", "podcast", "youtube", "ai_video", "ai_karusel") else "reels"
     return RANK_PRICES[rk][vt], rk
 
 # Mijoz bilan kelishilgan oylik video reja (har bir bosqich uchun shu son).
@@ -628,6 +630,10 @@ TEAM = [
     # Kun yarmidan (taxminan tushdan keyin) keladi — shuning uchun Intizom
     # (kelish vaqtiga bog'liq) hisoblanmaydi, faqat Fiksa + montaj puli.
     ("Murod",            "murod",   "murod2026","editor",      "Montajchi",               "#00C7BE", None),
+    # AI kreator — AI video va AI karusel post yasaydi. Fiksa/Intizom yo'q,
+    # daromadi montajchilar kabi (RANK_PRICES ai_video/ai_karusel, 25.000dan
+    # boshlab, tasdiqlangan ish soniga qarab o'sadi). Telegram: @raxmatjanov_m
+    ("Muhammadyusuf",    "muhammadyusuf", "yusuf2026", "editor", "AI kreator", "#40E0D0", None),
     # Sotuv operatori — komissiya modeli hali kelishilmagan, hozircha faqat
     # Fiksa+Intizom (SALARY pastda). Sotuv kabineti keyin qo'shiladi.
     ("Nodira",           "nodira",  "nodira2026","sales",      "Sotuv operatori",         "#FF6B00", None),

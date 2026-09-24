@@ -27,7 +27,7 @@ const VIDEO_ST = {
   qaytarildi:     { label: 'Qaytarildi',       cls: 'st-red' },
   bekor_qilindi:  { label: 'Bekor qilindi',    cls: 'st-gray' },
 };
-const VIDEO_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video' };
+const VIDEO_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video', ai_video: 'AI video', ai_karusel: 'AI karusel post' };
 const STUDIO_ROOMS_DEFAULT = {
   white: { label: '1-xona · White', color: '#0A84FF' },
   black: { label: '2-xona · Black', color: '#1C1C1E' },
@@ -3869,7 +3869,7 @@ async function openVideoModal(existing = null) {
   const edNames = (Array.isArray(eds) ? eds : []).map((e) => e.name);
   const editing = !!existing;
   const cur = existing || {};
-  const vtypes = [['reels', 'Reels'], ['podcast', 'Podcast'], ['youtube', 'YouTube video']];
+  const vtypes = [['reels', 'Reels'], ['podcast', 'Podcast'], ['youtube', 'YouTube video'], ['ai_video', 'AI video'], ['ai_karusel', 'AI karusel post']];
   const projOpts = DATA.projects.map((p) => `<option value="${esc(p.name)}" data-client="${esc(p.client)}" ${cur.project === p.name ? 'selected' : ''}>${esc(p.name)} (${esc(p.client)})</option>`).join('');
   const scriptOpts = DATA.scripts.map((s) => `<option value="${s.id}" ${cur.script_id == s.id ? 'selected' : ''}>#${s.id} ${esc(s.title)}</option>`).join('');
   const dlVal = cur.due_at ? String(cur.due_at).replace(' ', 'T').slice(0, 16) : '';
