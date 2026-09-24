@@ -277,6 +277,25 @@ TELEGRAM_ATTEND = {
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
 
+# GPS geofencing (pilot, 2026-09-24) — telefon studiya hududiga kirganda
+# (iPhone "Shortcuts" avtomatlashtirish) avtomatik so'rov yuboradi, xuddi
+# dumaloq video kabi _record_attendance()ni chaqiradi. Token — shaxsni
+# aniqlovchi maxfiy kalit (parol o'rnida), URL'da yuriladi. Hozircha
+# dumaloq video BILAN PARALLEL ishlaydi (_record_attendance kuning
+# birinchi chaqiruvini saqlaydi — ikkalasidan qaysi biri birinchi kelsa
+# o'sha hisoblanadi), sinov muvaffaqiyatli bo'lsa keyin video olib tashlanadi.
+GEOFENCE_TOKENS = {
+    "xM8uvINfcyixJ8BXBwNuTeXq": "Dilshod Khamraev",  # pilot/sinov uchun
+    "aNQSgSVZPXJjnFs0Mfj4EGFh": "Gulmira",
+    "nosFInw2Mx87PiXdv6d3xtHj": "Xonzoda",
+    "pNSIhjvSbKZzzeloU4dVEecf": "Umid",
+    "w4JKobkuOcmvZqWZL5zJmij-": "Sardor",
+    "YSvOOe6Rsbl_5Mq61SkrimF-": "Shodiya",
+    "F3441WHP4AJ8REXQoVhoLL2C": "Samandar",
+    "Y0s0M8Bu9qJc4DrFNXmSRbdQ": "Nodira",
+    "LsQj6NqHNSQgoXoMx-WTJDdT": "Murod",
+}
+
 # Xodim OYNING O'RTASIDA tizimga qo'shilsa (masalan yangi ishga olingan/rol
 # almashgan), undan OLDINGI kunlar "kelmagan/yopmagan" deb hisoblanmasin —
 # aks holda Fiksa/Intizom/kun-yopish KPI adolatsiz ravishda nolga tushib qoladi
@@ -7407,6 +7426,30 @@ def api_telegram_webhook(update):
     return {"ok": True}
 
 
+def api_geofence_ping(token, event):
+    """iPhone 'Shortcuts' avtomatlashtiruvidan keladi — telefon studiya
+    hududiga kirganda (Arrive) chaqiriladi. Token orqali shaxs aniqlanadi,
+    auth header shart emas (webhook)."""
+    person = GEOFENCE_TOKENS.get(token or "")
+    if not person or event != "arrive":
+        return {"ok": True}
+    conn = get_db()
+    rec = _record_attendance(conn, person, "geofence")
+    alert_color, alert_text = (None, None)
+    if rec and not rec["on_time"] and person not in LATE_SCHEDULE_EXEMPT:
+        alert_color, alert_text = _lateness_alert(conn, person, uz_today())
+    conn.commit()
+    conn.close()
+    if rec:
+        if rec["on_time"]:
+            send_telegram(f"📍 <b>{person}</b> ishga keldi — {rec['time']} (GPS, avtomatik ✅)")
+        elif person in LATE_SCHEDULE_EXEMPT:
+            send_telegram(f"📍 <b>{person}</b> ishga keldi — {rec['time']} (GPS, avtomatik)")
+        else:
+            send_telegram(f"📍 <b>{person}</b> ishga keldi — {rec['time']} (GPS, avtomatik, kech)\n{alert_text or ''}")
+    return {"ok": True}
+
+
 def _attend_month(conn, name, today):
     ym = today.strftime("%Y-%m")
     rows = {r["adate"]: dict(r) for r in conn.execute(
@@ -7580,6 +7623,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_cron_absence_check())
         if path == "/api/cron/crm-followup-check":
             return self._json(api_cron_crm_followup_check())
+        if path == "/api/geofence":
+            qs = parse_qs(urlparse(self.path).query or "")
+            token = (qs.get("token") or [""])[0]
+            event = (qs.get("event") or [""])[0]
+            return self._json(api_geofence_ping(token, event))
         if not path.startswith("/api/"):
             return self._serve_static(path)
 
