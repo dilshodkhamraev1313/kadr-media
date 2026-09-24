@@ -7433,6 +7433,15 @@ def api_geofence_ping(token, event):
     person = GEOFENCE_TOKENS.get(token or "")
     if not person:
         return {"ok": True}
+    if event == "status":
+        # Faqat o'qish — hech narsani o'zgartirmaydi. Sinovdan oldin bugungi
+        # yozuv bor-yo'qligini xavfsiz tekshirish uchun.
+        conn = get_db()
+        row = conn.execute(
+            "SELECT person, adate, checkin_time, on_time, source FROM attendance WHERE person=? AND adate=?",
+            (person, uz_today().isoformat())).fetchone()
+        conn.close()
+        return {"ok": True, "today": dict(row) if row else None}
     if event == "reset":
         # Faqat pilot-sinov davri uchun: bugungi yozuvni tozalab qayta
         # sinash imkonini beradi (o'zining tokeni bilan, faqat bugungi kun).
