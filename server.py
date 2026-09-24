@@ -284,6 +284,10 @@ INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
 # dumaloq video BILAN PARALLEL ishlaydi (_record_attendance kuning
 # birinchi chaqiruvini saqlaydi — ikkalasidan qaysi biri birinchi kelsa
 # o'sha hisoblanadi), sinov muvaffaqiyatli bo'lsa keyin video olib tashlanadi.
+VIDEO_CHECKIN_ENABLED = False  # 2026-09-24: WiFi-geofence pilot davrida vaqtincha
+# o'chirilgan — dumaloq video endi "ishga keldi" deb belgilamaydi (ko'chadan
+# turib video tashlab firibgarlik qilishning oldini olish uchun). Qayta
+# yoqish uchun shunchaki True qilib qo'yish kifoya.
 GEOFENCE_TOKENS = {
     "xM8uvINfcyixJ8BXBwNuTeXq": "Dilshod Khamraev",  # pilot/sinov uchun
     "aNQSgSVZPXJjnFs0Mfj4EGFh": "Gulmira",
@@ -7400,7 +7404,7 @@ def api_telegram_webhook(update):
             _set_ceo_chat_id(conn, chat.get("id"))
             conn.commit()
             conn.close()
-        if not msg.get("video_note"):
+        if not VIDEO_CHECKIN_ENABLED or not msg.get("video_note"):
             return {"ok": True}
         person = TELEGRAM_ATTEND.get(uname)
         if not person:
