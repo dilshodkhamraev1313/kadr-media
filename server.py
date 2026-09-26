@@ -5286,6 +5286,10 @@ def _attendance_penalty(conn, name, today):
     absent_ok = [x for x in d["absent"] if x >= ABSENCE_PENALTY_START_DATE]
     late_counted = sorted(set(late_ok) | set(absent_ok))
     extra = max(len(late_counted) - LATENESS_FREE_LIMIT, 0)
+    ym = today.strftime("%Y-%m")
+    waived = conn.execute("SELECT 1 FROM penalty_waiver WHERE person=? AND ym=?", (name, ym)).fetchone()
+    if waived:
+        return 0, late_counted
     return extra * LATENESS_PENALTY_PER_DAY, late_counted
 
 
@@ -5305,6 +5309,10 @@ def _lateness_alert(conn, name, today):
     if n == 0:
         return None, None
     if n > LATENESS_FREE_LIMIT:
+        ym = today.strftime("%Y-%m")
+        waived = conn.execute("SELECT 1 FROM penalty_waiver WHERE person=? AND ym=?", (name, ym)).fetchone()
+        if waived:
+            return "🤝", f"Bu oy {n}-marta kech/kelmagansiz, lekin CEO shu oy uchun davomat jarimasini kechirdi."
         penalty_fmt = "{:,}".format(LATENESS_PENALTY_PER_DAY).replace(",", " ")
         return "⚫️", f"Bu oy {n}-marta kech keldingiz — jarima allaqachon amalda (har kechikkan kun uchun −{penalty_fmt} so'm)."
     color = LATENESS_ALERT_COLOR.get(n, "🟡")
