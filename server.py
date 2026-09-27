@@ -1375,7 +1375,7 @@ def api_create_project(b):
     return p
 
 
-def api_update_project(pid, b):
+def api_update_project(pid, b, user=None):
     conn = get_db()
     existing = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
     if not existing:
@@ -1383,6 +1383,7 @@ def api_update_project(pid, b):
         return None
     existing = dict(existing)
     actor = b.get("_actor") or "Tizim"
+    is_ceo = bool(user) and user.get("role") == "ceo"
 
     def pick(key):
         v = b.get(key)
@@ -1396,6 +1397,13 @@ def api_update_project(pid, b):
         except (ValueError, TypeError):
             return existing.get(key) or 0
 
+    # Oylik reja (plan) va bosqichlar bo'yicha bajarilgan son (done_*) — faqat
+    # CEO o'zgartira oladi (rahbarlik puli/reja bajarilishi shu raqamlarga
+    # bog'liq bo'lgani uchun, rahbarning o'zi bu sonlarni tahrirlamasligi kerak).
+    plan_val = iv("plan") if is_ceo else (existing.get("plan") or 0)
+    done_vals = {k: (iv(k) if is_ceo else (existing.get(k) or 0))
+                 for k in ("done_ssenariy", "done_syomka", "done_montaj", "done_tasdiq", "done_joylash")}
+
     merged = {
         "name": b.get("name", existing["name"]),
         "client": b.get("client", existing["client"]),
@@ -1405,15 +1413,13 @@ def api_update_project(pid, b):
         "deadline": b["deadline"] if "deadline" in b else existing["deadline"],
         "muammo": b.get("muammo", existing["muammo"]),
         "izoh": b.get("izoh", existing["izoh"]),
-        "plan": iv("plan"),
-        "monthly_fee": iv("monthly_fee"),
-        "done_ssenariy": iv("done_ssenariy"), "done_syomka": iv("done_syomka"),
-        "done_montaj": iv("done_montaj"), "done_tasdiq": iv("done_tasdiq"),
-        "done_joylash": iv("done_joylash"),
+        "plan": plan_val,
+        "monthly_fee": iv("monthly_fee") if is_ceo else (existing.get("monthly_fee") or 0),
+        **done_vals,
         "self_post": (1 if b.get("self_post") else 0) if "self_post" in b else (existing.get("self_post") or 0),
         "self_script": (1 if b.get("self_script") else 0) if "self_script" in b else (existing.get("self_script") or 0),
         "ssenarist": b.get("ssenarist", existing.get("ssenarist") or ""),
-        "lead_usd": (30 if int(b.get("lead_usd") or 50) == 30 else 50) if "lead_usd" in b else (existing.get("lead_usd") or 50),
+        "lead_usd": ((30 if int(b.get("lead_usd") or 50) == 30 else 50) if "lead_usd" in b else (existing.get("lead_usd") or 50)) if is_ceo else (existing.get("lead_usd") or 50),
     }
 
     # Faollik jurnali — qaysi bosqich "tayyor" bo'ldi
@@ -8214,7 +8220,7 @@ class Handler(BaseHTTPRequestHandler):
             if pid is None:
                 return self._json({"error": "Topilmadi"}, 404)
             b["_actor"] = user["name"]
-            row = api_update_project(pid, b)
+            row = api_update_project(pid, b, user)
             return self._json(row) if row else self._json({"error": "Topilmadi"}, 404)
         if len(seg) == 3 and seg[1] == "videos":
             vid = self._int(seg[2])

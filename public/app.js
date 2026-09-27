@@ -3757,9 +3757,13 @@ async function openProjectModal(project) {
         <option value="30" ${(+PDRAFT.lead_usd || 50) === 30 ? 'selected' : ''}>$30</option></select></div>
     </div>` : ''}
     <div class="divider"></div><div class="sec-label">📅 Oylik reja (mijoz bilan kelishilgan)</div>
+    ${ME.role === 'ceo' ? `
     <div class="field"><label>Oyiga nechta video — har bosqich uchun shu son</label><input id="pf_plan" type="number" min="0" value="${PDRAFT.plan || 0}" placeholder="masalan: 15" /></div>
     <div class="sec-label" style="margin-top:12px">Bu oy bajarilgani (har bosqich):</div>
-    <div class="plan-inputs">${STAGES.map((s) => `<div class="field"><label>${s.label}</label><input id="pf_done_${s.key}" type="number" min="0" value="${PDRAFT['done_' + s.key] || 0}" /></div>`).join('')}</div>
+    <div class="plan-inputs">${STAGES.map((s) => `<div class="field"><label>${s.label}</label><input id="pf_done_${s.key}" type="number" min="0" value="${PDRAFT['done_' + s.key] || 0}" /></div>`).join('')}</div>` : `
+    <div class="field"><label>Oyiga nechta video</label><div class="muted" style="padding:8px 0">${PDRAFT.plan || 0} (faqat CEO o'zgartira oladi)</div></div>
+    <div class="sec-label" style="margin-top:12px">Bu oy bajarilgani (har bosqich):</div>
+    <div class="plan-inputs">${STAGES.map((s) => `<div class="field"><label>${s.label}</label><div class="muted" style="padding:8px 0">${PDRAFT['done_' + s.key] || 0}</div></div>`).join('')}</div>`}
     <div class="divider"></div><div class="sec-label">Jarayon bosqichlari (umumiy holat)</div>
     <div class="stage-editor">${STAGES.map((s) => `<div class="stage-edit-row"><span class="sname">${s.label}</span>
       <div class="seg" data-stage="${s.key}">
@@ -3789,12 +3793,14 @@ async function saveProject() {
     ssenarist: $('#pf_ssenarist') ? $('#pf_ssenarist').value : '',
     deadline: $('#pf_deadline').value || null, muammo: $('#pf_muammo').value.trim(), izoh: $('#pf_izoh').value.trim(),
     ssenariy: PDRAFT.ssenariy, syomka: PDRAFT.syomka, montaj: PDRAFT.montaj, tasdiq: PDRAFT.tasdiq, joylash: PDRAFT.joylash,
-    plan: parseInt($('#pf_plan').value || '0', 10),
-    done_ssenariy: parseInt($('#pf_done_ssenariy').value || '0', 10), done_syomka: parseInt($('#pf_done_syomka').value || '0', 10),
-    done_montaj: parseInt($('#pf_done_montaj').value || '0', 10), done_tasdiq: parseInt($('#pf_done_tasdiq').value || '0', 10),
-    done_joylash: parseInt($('#pf_done_joylash').value || '0', 10),
     self_post: $('#pf_selfpost') && $('#pf_selfpost').checked,
     self_script: $('#pf_selfscript') && $('#pf_selfscript').checked };
+  const planEl = $('#pf_plan');
+  if (planEl) body.plan = parseInt(planEl.value || '0', 10);
+  ['ssenariy', 'syomka', 'montaj', 'tasdiq', 'joylash'].forEach((k) => {
+    const el = $('#pf_done_' + k);
+    if (el) body['done_' + k] = parseInt(el.value || '0', 10);
+  });
   const fee = $('#pf_fee');
   if (fee) body.monthly_fee = parseInt(fee.value || '0', 10);
   const lu = $('#pf_leadusd');
