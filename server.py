@@ -734,6 +734,40 @@ def send_telegram(text, chat_id=None, thread_id=None):
     threading.Thread(target=_send, daemon=True).start()
 
 
+def send_telegram_video(video_bytes, caption, chat_id=None, thread_id=None):
+    """Telegram'ga video fayl yuboradi (sinxron — muvaffaqiyat/xato qaytaradi,
+    chaqiruvchi shunga qarab keyingi qadamni (masalan 'bajarildi' belgilashni)
+    qaror qiladi). multipart/form-data qo'lda quriladi (tashqi kutubxonasiz)."""
+    target = chat_id or TELEGRAM_CHAT_ID
+    if not TELEGRAM_BOT_TOKEN or not target:
+        return False
+    boundary = "----KadrTimelapse" + secrets.token_hex(16)
+    fields = {"chat_id": str(target), "caption": caption, "parse_mode": "HTML"}
+    if thread_id:
+        fields["message_thread_id"] = str(thread_id)
+    parts = []
+    for key, val in fields.items():
+        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n{val}\r\n".encode("utf-8"))
+    parts.append(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"video\"; filename=\"timelapse.mp4\"\r\n"
+        f"Content-Type: video/mp4\r\n\r\n".encode("utf-8")
+    )
+    parts.append(video_bytes)
+    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    body = b"".join(parts)
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
+        req = urllib.request.Request(
+            url, data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+        return bool(res.get("ok"))
+    except Exception:
+        return False
+
+
 # ------------------------------------------------------------
 #  Database — bitta interfeys, ikki dvigatel (SQLite / Postgres)
 # ------------------------------------------------------------
@@ -4830,6 +4864,49 @@ def api_studio_timelapse_done(token, b):
     return {"ok": True}
 
 
+def api_studio_timelapse_upload(token, b):
+    """Kadr Jarvis OS (mini PC) — tayyor (tezlashtirilgan) taymlaps videoni
+    yuboradi (`video`: data:video/mp4;base64,...). Dashboard o'zining
+    TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID'i bilan Telegramga jo'natadi (mini
+    PC'da bu kredensiallarni saqlash shart emas) va muvaffaqiyatli bo'lsa
+    bronni 'bajarildi' deb belgilaydi."""
+    if token != STUDIO_TIMELAPSE_TOKEN:
+        return {"error": "Ruxsat yo'q"}, 403
+    sid = b.get("id")
+    data_url = b.get("video") or ""
+    if not sid or not data_url.startswith("data:video"):
+        return {"error": "id va video kerak"}, 400
+    try:
+        _header, b64data = data_url.split(",", 1)
+    except ValueError:
+        return {"error": "Video fayl noto'g'ri formatda"}, 400
+    if len(b64data) > 70 * 1024 * 1024:
+        return {"error": "Video juda katta (50MB dan oshmasin)"}, 400
+    try:
+        video_bytes = base64.b64decode(b64data)
+    except Exception:
+        return {"error": "Video fayl noto'g'ri formatda"}, 400
+    conn = get_db()
+    row = conn.execute("SELECT * FROM studio_bookings WHERE id=?", (sid,)).fetchone()
+    conn.close()
+    if not row:
+        return {"error": "Bron topilmadi"}, 404
+    row = dict(row)
+    room_label = STUDIO_ROOMS.get(row.get("room"), {}).get("label", row.get("room"))
+    caption = (
+        f"🎥 <b>{row.get('client_name') or 'Mijoz'}</b> uchun taymlaps tayyor\n"
+        f"📍 {room_label} · {row.get('bdate')}"
+    )
+    ok = send_telegram_video(video_bytes, caption)
+    if ok:
+        conn = get_db()
+        conn.execute("UPDATE studio_bookings SET timelapse_sent=1 WHERE id=?", (sid,))
+        conn.commit()
+        conn.close()
+        return {"ok": True}
+    return {"error": "Telegramga yuborishda xato"}, 502
+
+
 def api_delete_shoot(user, sid):
     conn = get_db()
     conn.execute("DELETE FROM shoots WHERE id=?", (sid,))
@@ -8332,6 +8409,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/studio/timelapse-done":
             b0 = self._body()
             return self._json(api_studio_timelapse_done(b0.get("token") or "", b0))
+        if path == "/api/studio/timelapse-upload":
+            b0 = self._body()
+            return self._json(api_studio_timelapse_upload(b0.get("token") or "", b0))
 
         user = self._auth()
         if not user:
