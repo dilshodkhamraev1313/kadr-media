@@ -1862,7 +1862,8 @@ function salaryCard(p) {
   const paid = p.paid || 0;
   const rem = (p.remaining != null) ? p.remaining : p.total;
   const isCeo = ME.role === 'ceo';
-  const pen = p.components.find((c) => c.kind === 'penalty');
+  const pen = p.components.find((c) => c.kind === 'penalty' && !c.label.includes('reels normasi'));
+  const reelsPen = p.components.find((c) => c.kind === 'penalty' && c.label.includes('reels normasi'));
   return `
     <div class="team-card">
       <div class="team-head"><div class="team-av" style="background:${colorFor(p.name)}">${initials(p.name)}</div>
@@ -1873,6 +1874,7 @@ function salaryCard(p) {
         <div class="mrow"><span style="color:var(--orange)">⏳ Qolgan</span><b style="color:var(--orange)">${money(rem)}</b></div>
       </div>
       ${isCeo && pen ? `<button class="btn-ghost waive-pen" data-person="${esc(p.name)}" style="margin-top:8px;width:100%">${pen.waived ? '↩️ Jarimani qaytarish' : '🤝 Jarimani kechirish'}</button>` : ''}
+      ${isCeo && reelsPen ? `<button class="btn-ghost" data-forgive-reels="${esc(p.name)}" style="margin-top:8px;width:100%">🤝 Reels normasi jarimasini kechirish</button>` : ''}
       ${isCeo ? `<button class="btn-ghost pay-team" data-person="${esc(p.name)}" data-rem="${rem}" style="margin-top:8px;width:100%">💸 To'lov kiritish</button>` : ''}
     </div>`;
 }
@@ -2044,6 +2046,23 @@ async function viewDaily() {
     html += `<div class="panel" style="margin-bottom:16px"><h3>📱 SMM loyihalari (${doneN}/${smm.projects.length} bajarildi)</h3>
       <p class="muted" style="margin-bottom:10px">Oy davomida SMM'ini (persona, caption, oblojka, joylash) tugatgan loyihalarni belgilang — SMM daromadingiz shunga qarab hisoblanadi.</p>
       <div class="smm-list">${items}</div></div>`;
+  }
+  // --- Planyorka (Dushanba/Juma, Gulmira mas'ul) ---
+  if (ME.name === 'Gulmira' || ME.role === 'ceo') {
+    const pl = await api('/api/planyorka').catch(() => ({}));
+    if (pl.isPlanyorkaDay) {
+      if (pl.confirmedToday) {
+        html += `<div class="panel" style="margin-bottom:16px;background:rgba(48,209,88,.08);border-color:var(--green)">
+          <b>✅ Bugungi planyorka tasdiqlangan</b></div>`;
+      } else if (ME.name === 'Gulmira') {
+        html += `<div class="panel" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <div><b>📋 Bugun planyorka kuni</b><div class="muted" style="font-size:13px">Soat ${pl.deadline}gacha tasdiqlanmasa jarima yoziladi.</div></div>
+          <button class="btn-primary" id="planyorka_confirm_btn">✅ Bugungi planyorka o'tkazildi</button></div>`;
+      } else {
+        html += `<div class="panel" style="margin-bottom:16px;background:rgba(255,159,10,.08);border-color:var(--orange)">
+          <b>⏳ Bugungi planyorka hali tasdiqlanmagan</b><div class="muted" style="font-size:13px">Gulmira soat ${pl.deadline}gacha tasdiqlashi kerak.</div></div>`;
+      }
+    }
   }
   // --- Kelish (ertalabki kruzhok — Telegram video_note orqali avtomatik) ---
   if (att.amAttend && att.me) {
@@ -2248,6 +2267,12 @@ async function viewDaily() {
     if (res && res.ok) { toast('🤝 Jarima kechirildi'); render(); }
     else { toast('⚠️ ' + (res && res.error || 'Xatolik')); }
   }));
+  const plb = $('#planyorka_confirm_btn');
+  if (plb) plb.addEventListener('click', async () => {
+    const res = await api('/api/planyorka/confirm', { method: 'POST', body: '{}' });
+    if (res && res.ok) { toast('✅ Planyorka tasdiqlandi'); render(); }
+    else { toast('⚠️ ' + (res && res.error || 'Xatolik')); }
+  });
 }
 
 function openOtpuskReviewModal() {
@@ -2658,11 +2683,13 @@ function editorCard(e) {
       ${rankProgressBar(e)}
       <div class="money-rows">
         <div class="mrow"><span>Hisoblangan</span><b>${money(e.earned)}</b></div>
+        ${e.reelsQuotaPenalty ? `<div class="mrow"><span style="color:var(--red)">Kunlik 2 reels normasi jarimasi</span><b style="color:var(--red)">−${money(e.reelsQuotaPenalty)}</b></div>` : ''}
         <div class="mrow"><span>To'langan</span><b style="color:var(--green)">${money(e.paid)}</b></div>
         <div class="mrow big"><span>Qolgan</span><b style="color:var(--orange)">${money(e.remaining)}</b></div>
       </div>
       <div class="ec-stats"><span>${e.accepted} qabul</span><span>${e.pending} kutmoqda</span><span>${e.returned} qaytgan</span><span>~${money(e.avg)}</span></div>
       ${['ceo', 'coordinator'].includes(ME.role) ? `<button class="btn-save sm" data-pay="${esc(e.name)}">💸 To'lov qilish</button>` : ''}
+      ${ME.role === 'ceo' && e.reelsQuotaPenalty ? `<button class="btn-ghost sm" data-forgive-reels="${esc(e.name)}" style="margin-top:6px">🤝 Reels normasi jarimasini kechirish</button>` : ''}
     </div>`;
 }
 
@@ -3951,6 +3978,17 @@ async function openPaymentModal(presetEditor) {
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-pay]');
   if (b) openPaymentModal(b.dataset.pay);
+});
+
+// reels-quota forgive button on editor cards (delegated)
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-forgive-reels]');
+  if (!b) return;
+  const editor = b.dataset.forgiveReels;
+  if (!confirm(`${editor}ning shu vaqtgacha to'plangan reels normasi jarimasi kechirilsinmi? (Bundan keyingisiga ta'sir qilmaydi)`)) return;
+  const res = await api('/api/reels-quota/forgive', { method: 'POST', body: JSON.stringify({ editor }) });
+  if (res && res.ok) { toast('🤝 Jarima kechirildi'); render(); }
+  else { toast('⚠️ ' + (res && res.error || 'Xatolik')); }
 });
 
 // ============================================================

@@ -385,7 +385,7 @@ SALARY = {
     "Gulmira": {"title": "Kadr Studio rahbari",
                 "som": {"Fiksa": 2000000, "Intizom": 500000, "Operatsion boshqaruv": 500000},
                 "lead": True, "close_link": "Operatsion boshqaruv", "kassa_penalty": True,
-                "backstage_penalty": True},
+                "backstage_penalty": True, "planyorka_penalty": True},
     # Institut o'qishi boshlangani uchun kunning yarmida (~14:00) keladi —
     # Intizom (kelish vaqtiga bog'liq) olib tashlandi, faqat Fiksa qoladi.
     "Xonzoda": {"title": "Ssenarist + koordinator", "som": {"Fiksa": 2000000},
@@ -464,6 +464,22 @@ def eff_count(name, accepted):
 # Montaj deadline (biriktirilgandan qabulgacha). Kechiksa: reels — pul yo'q, podcast/youtube — yarim.
 DEADLINE_HOURS = {"reels": 24, "podcast": 48, "youtube": 48, "ai_video": 48, "ai_karusel": 48}
 REELS_PER_DAY = 3  # montajchiga kuniga nechta reels deadline (24 soatlik) qo'yiladi
+
+# Kunlik 2 ta reels normasi (2026-09-29'dan) — barcha montajchilar (rahbar-
+# montajchilar ham) uchun, yakshanbadan tashqari har kuni. Agar o'sha kuni
+# muddati (due_at) kelgan reels 2 tadan kam bo'lsa, talab shu songa tushadi
+# (ish yetishmasa jarima yo'q) — faqat BIRIKTIRILGAN ishni ulgurmaslik uchun.
+REELS_QUOTA_PER_DAY = 2
+REELS_QUOTA_PENALTY_PER_VIDEO = 25000
+REELS_QUOTA_START_DATE = "2026-09-29"
+
+# Dushanba/Juma planyorka (kompaniya rejalashtirish yig'ilishi) — mas'ul
+# Gulmira, soat 21:00gacha dashboardda tasdiqlanmasa jarima.
+PLANYORKA_PERSON = "Gulmira"
+PLANYORKA_WEEKDAYS = (0, 4)  # Python weekday(): Dushanba=0, Juma=4
+PLANYORKA_PENALTY = 50000
+PLANYORKA_DEADLINE = "21:00"
+PLANYORKA_START_DATE = "2026-09-29"
 
 
 def _parse_dt(s):
@@ -886,6 +902,13 @@ def init_db():
     # emas" mantig'i uchun.
     conn.execute(f"""CREATE TABLE IF NOT EXISTS attendance_forgiven (
         id {pk}, person TEXT, adate TEXT, created_by TEXT, created_at {ts})""")
+    # Kunlik 2 ta reels normasi — CEO ANIQ BIR KUN uchun kechirgan kunlar.
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS reels_quota_forgiven (
+        id {pk}, editor TEXT, qdate TEXT, created_by TEXT, created_at {ts})""")
+    # Dushanba/Juma planyorka — kun bo'yicha tasdiqlash/jarima jurnali.
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS planyorka_log (
+        id {pk}, pdate TEXT UNIQUE, confirmed_by TEXT, confirmed_at TEXT,
+        penalized INTEGER DEFAULT 0)""")
     # OMBOR — rol qo'llanmalari (bilim bazasi) + onboarding
     conn.execute(f"""CREATE TABLE IF NOT EXISTS playbooks (
         id {pk}, role_key TEXT, title TEXT, sections TEXT DEFAULT '[]',
@@ -2467,11 +2490,15 @@ def editor_summary(conn, name):
     paid = _paid_to(conn, name, ym)
     # Salaried montajchi (SALARYda bor) uchun "ishlagan" = TO'LIQ oylik maosh
     # (fiksa+intizom+montaj+...), aks holda (sof piece-rate) faqat montaj puli.
+    reels_quota_penalty = 0
     if name in SALARY:
         _sal = compute_salary(conn, name, get_usd_rate())
         earned = _sal["total"] if _sal else montaj_earned
     else:
-        earned = montaj_earned
+        # SALARYda yo'q (sof piece-rate) montajchilar uchun kunlik 2 reels
+        # normasi jarimasi compute_salary orqali emas, shu yerda hisoblanadi.
+        reels_quota_penalty, _ = _reels_quota_penalty(conn, name, uz_today())
+        earned = montaj_earned - reels_quota_penalty
     by_project = {}
     for v in accepted_m:
         by_project[v["project"]] = by_project.get(v["project"], 0) + 1
@@ -2492,6 +2519,7 @@ def editor_summary(conn, name):
         "pending": sum(1 for v in vids if v["status"] in ("biriktirildi", "qaytarildi")),
         "earned": earned,
         "montajEarned": montaj_earned,
+        "reelsQuotaPenalty": reels_quota_penalty,
         "paid": paid,
         "remaining": earned - paid,
         "month": ym,
@@ -5274,6 +5302,57 @@ def _set_ceo_chat_id(conn, chat_id):
     conn.execute("INSERT INTO settings (skey, svalue) VALUES ('ceo_chat_id', ?)", (str(chat_id),))
 
 
+def _reels_quota_penalty(conn, name, today):
+    """Kunlik 2 ta reels normasi (REELS_QUOTA_START_DATE'dan, shu oy uchun).
+    Har kun (yakshanba/otpusk/tashqarida-syomka kunlaridan tashqari) uchun
+    o'sha kuni muddati (due_at) kelgan reels sonidan oshmagan holda, kamida
+    REELS_QUOTA_PER_DAY tugatilishi (montaj_at) kerak. Agar o'sha kuni umuman
+    reels biriktirilmagan/kam biriktirilgan bo'lsa — talab shu songa tushadi."""
+    ym = today.strftime("%Y-%m")
+    month_first = datetime.date(today.year, today.month, 1)
+    first = max(month_first, datetime.date.fromisoformat(REELS_QUOTA_START_DATE))
+    if first > today:
+        return 0, []
+    otpusk = _otpusk_dates_set(conn, name, ym)
+    offsite = _offsite_dates_set(conn, name, ym)
+    forgiven = {r["qdate"] for r in conn.execute(
+        "SELECT qdate FROM reels_quota_forgiven WHERE editor=? AND qdate LIKE ?", (name, ym + "%")).fetchall()}
+    due_by_day, done_by_day = {}, {}
+    for r in conn.execute(
+            "SELECT due_at FROM videos WHERE editor=? AND vtype='reels' AND due_at IS NOT NULL AND due_at<>''",
+            (name,)).fetchall():
+        dstr = (r["due_at"] or "")[:10]
+        due_by_day[dstr] = due_by_day.get(dstr, 0) + 1
+    for r in conn.execute(
+            "SELECT montaj_at FROM videos WHERE editor=? AND vtype='reels' AND montaj_at IS NOT NULL AND montaj_at<>''",
+            (name,)).fetchall():
+        dstr = (r["montaj_at"] or "")[:10]
+        done_by_day[dstr] = done_by_day.get(dstr, 0) + 1
+    shortfalls = []
+    d = first
+    while d <= today:
+        iso = d.isoformat()
+        if d.weekday() != 6 and iso not in otpusk and iso not in offsite and iso not in forgiven:
+            required = min(REELS_QUOTA_PER_DAY, due_by_day.get(iso, 0))
+            short = max(required - done_by_day.get(iso, 0), 0)
+            if short > 0:
+                shortfalls.append((iso, short))
+        d += datetime.timedelta(days=1)
+    total_short = sum(s for _, s in shortfalls)
+    return total_short * REELS_QUOTA_PENALTY_PER_VIDEO, shortfalls
+
+
+def _planyorka_penalty(conn, name, ym):
+    """Gulmiraga — shu oyda Dushanba/Juma planyorka soat 21:00gacha
+    tasdiqlanmagani uchun jarimaga tortilgan har kun uchun −50 000."""
+    if name != PLANYORKA_PERSON:
+        return 0, 0
+    n = conn.execute(
+        "SELECT COUNT(*) AS n FROM planyorka_log WHERE penalized=1 AND pdate LIKE ?",
+        (ym + "%",)).fetchone()["n"] or 0
+    return n * PLANYORKA_PENALTY, n
+
+
 def _attendance_penalty(conn, name, today):
     """Davomat (check-in) kechikish jarimasi — oyda LATENESS_FREE_LIMIT martagacha
     kechikish/kelmaslik jarimasiz, 4-martadan boshlab HAR bir kun uchun qo'shimcha
@@ -5558,6 +5637,10 @@ def compute_salary(conn, name, rate, ym=None):
         comps.append({"label": "Ssenariy puli (shu oy)", "amount": _scenarist_earn(conn, name, ym), "kind": "auto"})
     if cfg.get("montaj"):
         comps.append({"label": "Montaj puli (shu oy)", "amount": _montaj_earn(conn, name, ym), "kind": "auto"})
+        rq_pen, rq_short = _reels_quota_penalty(conn, name, today)
+        if rq_pen > 0:
+            comps.append({"label": f"Kunlik 2 reels normasi bajarilmadi ({sum(s for _, s in rq_short)} ta video, {len(rq_short)} kun)",
+                          "amount": -rq_pen, "kind": "penalty"})
     if cfg.get("studio_bonus"):
         comps.append({"label": "Studio mijoz bonusi", "amount": _studio_client_bonus(conn), "kind": "auto"})
     # Kechikish jarimasi (rahbar loyihalari + Said QC) — CEO kechirishi mumkin
@@ -5598,6 +5681,12 @@ def compute_salary(conn, name, rate, ym=None):
         if sv_pen > 0:
             comps.append({"label": f"Servis berilmadi ({sv_n} ta bron, {SERVICE_DEADLINE}gacha)",
                           "amount": -sv_pen, "kind": "penalty"})
+    # Dushanba/Juma planyorka tasdiqlanmagani uchun jarima (faqat Gulmira)
+    if cfg.get("planyorka_penalty"):
+        pl_pen, pl_n = _planyorka_penalty(conn, name, ym)
+        if pl_pen > 0:
+            comps.append({"label": f"Planyorka tasdiqlanmadi ({pl_n} kun, {PLANYORKA_DEADLINE}gacha)",
+                          "amount": -pl_pen, "kind": "penalty"})
     total = sum(c["amount"] for c in comps)
     paid = _paid_to(conn, name, ym)
     return {"name": name, "title": cfg.get("title", ""), "components": comps,
@@ -7042,6 +7131,118 @@ def api_cron_service_check():
     return {"ok": True, "warned": warned, "penalized": penalized}
 
 
+def api_planyorka_status(user):
+    """Bugungi planyorka holati (Gulmira/CEO uchun) + shu oy tarixi."""
+    today = uz_today()
+    ym = today.strftime("%Y-%m")
+    conn = get_db()
+    today_row = conn.execute("SELECT * FROM planyorka_log WHERE pdate=?", (today.isoformat(),)).fetchone()
+    history = [dict(r) for r in conn.execute(
+        "SELECT * FROM planyorka_log WHERE pdate LIKE ? ORDER BY pdate DESC", (ym + "%",)).fetchall()]
+    conn.close()
+    return {
+        "isPlanyorkaDay": today.weekday() in PLANYORKA_WEEKDAYS,
+        "confirmedToday": bool(today_row and today_row["confirmed_at"]),
+        "deadline": PLANYORKA_DEADLINE,
+        "history": history,
+    }
+
+
+def api_confirm_planyorka(user):
+    """Gulmira — bugungi (Dushanba/Juma) planyorka o'tkazilganini tasdiqlaydi."""
+    if user["name"] != PLANYORKA_PERSON:
+        return {"error": "Sizga tegishli emas"}, 403
+    today = uz_today()
+    if today.weekday() not in PLANYORKA_WEEKDAYS:
+        return {"error": "Bugun planyorka kuni emas"}, 400
+    today_iso = today.isoformat()
+    conn = get_db()
+    ex = conn.execute("SELECT id FROM planyorka_log WHERE pdate=?", (today_iso,)).fetchone()
+    if ex:
+        conn.execute("UPDATE planyorka_log SET confirmed_by=?, confirmed_at=? WHERE id=?",
+                     (user["name"], now_local(), ex["id"]))
+    else:
+        conn.execute("INSERT INTO planyorka_log (pdate, confirmed_by, confirmed_at) VALUES (?,?,?)",
+                     (today_iso, user["name"], now_local()))
+    log_audit(conn, user["name"], "planyorka tasdiqladi", today_iso)
+    conn.commit()
+    conn.close()
+    return {"ok": True, "date": today_iso}
+
+
+def api_cron_planyorka_check():
+    """Tashqi cron (masalan har 10-15 daqiqada) chaqiradi: Dushanba/Juma kuni
+    PLANYORKA_DEADLINE (21:00)gacha planyorka tasdiqlanmagan bo'lsa — bir
+    martalik jarima (Gulmiraga −50 000) + Telegram ogohlantirish."""
+    today = uz_today()
+    today_iso = today.isoformat()
+    if today.weekday() not in PLANYORKA_WEEKDAYS or today_iso < PLANYORKA_START_DATE:
+        return {"ok": True, "skipped": "bugun planyorka kuni emas"}
+    now_time = uz_now().strftime("%H:%M")
+    if now_time < PLANYORKA_DEADLINE:
+        return {"ok": True, "skipped": "hali vaqti emas"}
+    conn = get_db()
+    row = conn.execute("SELECT * FROM planyorka_log WHERE pdate=?", (today_iso,)).fetchone()
+    if row and (row["confirmed_at"] or row["penalized"]):
+        conn.close()
+        return {"ok": True, "skipped": "allaqachon belgilangan"}
+    if row:
+        conn.execute("UPDATE planyorka_log SET penalized=1 WHERE id=?", (row["id"],))
+    else:
+        conn.execute("INSERT INTO planyorka_log (pdate, penalized) VALUES (?,1)", (today_iso,))
+    send_telegram(
+        f"⚫️ <b>Bugungi planyorka o'tkazilmadi!</b>\n"
+        f"{_telegram_mention(PLANYORKA_PERSON)} — −{som(PLANYORKA_PENALTY)} jarima yozildi."
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True, "penalized": True}
+
+
+def api_admin_unpenalize_planyorka(user, date_str):
+    """CEO — shu sanadagi planyorka jarimasini bekor qiladi."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    date_str = (date_str or "").strip()
+    if not date_str:
+        return {"error": "Sana kerak"}, 400
+    conn = get_db()
+    conn.execute("UPDATE planyorka_log SET penalized=0 WHERE pdate=?", (date_str,))
+    log_audit(conn, user["name"], "planyorka jarimasini bekor qildi", date_str)
+    conn.commit()
+    conn.close()
+    return {"ok": True, "date": date_str}
+
+
+def api_forgive_reels_quota(user, b):
+    """CEO — kunlik 2 reels normasi jarimasini kechiradi. `date` berilsa —
+    faqat o'sha bitta kun. Berilmasa — hozircha to'plangan barcha kamchilik
+    kunlari bir yo'la kechiriladi (bundan keyingisiga ta'sir qilmaydi)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    editor = (b.get("editor") or "").strip()
+    if not editor:
+        return {"error": "Montajchi kerak"}, 400
+    conn = get_db()
+    today = uz_today()
+    date_str = (b.get("date") or "").strip()
+    if date_str:
+        dates = [date_str]
+    else:
+        _, shortfalls = _reels_quota_penalty(conn, editor, today)
+        dates = [d for d, _ in shortfalls]
+    for d in dates:
+        ex = conn.execute("SELECT id FROM reels_quota_forgiven WHERE editor=? AND qdate=?", (editor, d)).fetchone()
+        if not ex:
+            conn.execute(
+                "INSERT INTO reels_quota_forgiven (editor, qdate, created_by, created_at) VALUES (?,?,?,?)",
+                (editor, d, user["name"], now_local()))
+    log_audit(conn, user["name"], "reels normasi jarimasini kechirdi", f"{editor} · {', '.join(dates) if dates else 'kun yoʻq'}")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "editor": editor, "forgivenDates": dates}
+
+
 def api_cron_brief_check():
     """18:00da (BRIEF_REMINDER_TIME) VA 20:05da (BRIEF_DEADLINE'dan keyin) tashqi
     cron chaqiradi: ertangi kun rejasini hali yubormaganlarga @ bilan eslatma/ogohlantirish."""
@@ -7855,6 +8056,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_cron_absence_check())
         if path == "/api/cron/crm-followup-check":
             return self._json(api_cron_crm_followup_check())
+        if path == "/api/cron/planyorka-check":
+            return self._json(api_cron_planyorka_check())
         if path == "/api/geofence":
             qs = parse_qs(urlparse(self.path).query or "")
             token = (qs.get("token") or [""])[0]
@@ -7993,6 +8196,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             date_str = (parse_qs(urlparse(self.path).query).get("date") or [""])[0]
             return self._json(api_admin_unpenalize_backstage(user, date_str))
+        if path == "/api/admin/planyorka-unpenalize":
+            if role != "ceo":
+                return self._forbid()
+            date_str = (parse_qs(urlparse(self.path).query).get("date") or [""])[0]
+            return self._json(api_admin_unpenalize_planyorka(user, date_str))
         if path == "/api/payroll/my-history":
             return self._json(api_my_salary_history(user))
         if path == "/api/crm/leads":
@@ -8040,6 +8248,10 @@ class Handler(BaseHTTPRequestHandler):
             if not is_attend_user(user) and role != "ceo":
                 return self._forbid()
             return self._json(api_offsite_list(user))
+        if path == "/api/planyorka":
+            if user["name"] != PLANYORKA_PERSON and role != "ceo":
+                return self._forbid()
+            return self._json(api_planyorka_status(user))
         if path == "/api/smm":
             if not is_smm_user(user) and role != "ceo":
                 return self._forbid()
@@ -8109,6 +8321,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_forgive_attendance(user, b))
         if path == "/api/attendance/unforgive":
             return self._json(api_unforgive_attendance(user, b))
+        if path == "/api/planyorka/confirm":
+            return self._json(api_confirm_planyorka(user))
+        if path == "/api/reels-quota/forgive":
+            return self._json(api_forgive_reels_quota(user, b))
         if path == "/api/cash/expense":
             return self._json(api_cash_expense(user, b))
         if path == "/api/cash/close":
