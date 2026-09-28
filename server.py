@@ -881,6 +881,11 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS offsite_requests (
         id {pk}, person TEXT, odate TEXT, status TEXT DEFAULT 'pending',
         note TEXT DEFAULT '', requested_at {ts}, decided_at TEXT, decided_by TEXT)""")
+    # Davomat kechikish/kelmaslik jarimasini CEO ANIQ BIR KUN uchun kechiradi
+    # (butun oy uchun emas!) — "shu vaqtgacha kechirilgan, bundan keyingisi
+    # emas" mantig'i uchun.
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS attendance_forgiven (
+        id {pk}, person TEXT, adate TEXT, created_by TEXT, created_at {ts})""")
     # OMBOR — rol qo'llanmalari (bilim bazasi) + onboarding
     conn.execute(f"""CREATE TABLE IF NOT EXISTS playbooks (
         id {pk}, role_key TEXT, title TEXT, sections TEXT DEFAULT '[]',
@@ -5291,11 +5296,15 @@ def _attendance_penalty(conn, name, today):
         late_ok = [x for x in d["late"] if x >= PENALTY_START_DATE]
     absent_ok = [x for x in d["absent"] if x >= ABSENCE_PENALTY_START_DATE]
     late_counted = sorted(set(late_ok) | set(absent_ok))
-    extra = max(len(late_counted) - LATENESS_FREE_LIMIT, 0)
+    # CEO alohida kechirgan aniq kunlar (attendance_forgiven) — faqat o'sha
+    # kunlar uchun, soni ham puli ham hisobdan butunlay chiqadi. Bu — vaqt
+    # bo'yicha "shu kungacha kechirilgan" degani: bundan keyingi yangi
+    # kechikish/kelmaslik kunlari bunga kirmaydi, qaytadan hisoblanadi
+    # (oy davomida abadiy kechirilgan bo'lib QOLMAYDI).
     ym = today.strftime("%Y-%m")
-    waived = conn.execute("SELECT 1 FROM penalty_waiver WHERE person=? AND ym=?", (name, ym)).fetchone()
-    if waived:
-        return 0, late_counted
+    forgiven = _forgiven_dates_set(conn, name, ym)
+    late_counted = [x for x in late_counted if x not in forgiven]
+    extra = max(len(late_counted) - LATENESS_FREE_LIMIT, 0)
     return extra * LATENESS_PENALTY_PER_DAY, late_counted
 
 
@@ -5315,10 +5324,6 @@ def _lateness_alert(conn, name, today):
     if n == 0:
         return None, None
     if n > LATENESS_FREE_LIMIT:
-        ym = today.strftime("%Y-%m")
-        waived = conn.execute("SELECT 1 FROM penalty_waiver WHERE person=? AND ym=?", (name, ym)).fetchone()
-        if waived:
-            return "🤝", f"Bu oy {n}-marta kech/kelmagansiz, lekin CEO shu oy uchun davomat jarimasini kechirdi."
         penalty_fmt = "{:,}".format(LATENESS_PENALTY_PER_DAY).replace(",", " ")
         return "⚫️", f"Bu oy {n}-marta kech keldingiz — jarima allaqachon amalda (har kechikkan kun uchun −{penalty_fmt} so'm)."
     color = LATENESS_ALERT_COLOR.get(n, "🟡")
@@ -7341,6 +7346,14 @@ def _otpusk_dates_set(conn, person, ym):
     return out
 
 
+def _forgiven_dates_set(conn, person, ym):
+    """CEO alohida kechirgan davomat kechikish/kelmaslik kunlari (ISO sana to'plami)."""
+    rows = conn.execute(
+        "SELECT adate FROM attendance_forgiven WHERE person=? AND adate LIKE ?",
+        (person, ym + "%")).fetchall()
+    return {r["adate"] for r in rows}
+
+
 def _offsite_dates_set(conn, person, ym):
     """WiFi/video talab qilinmaydigan, lekin TO'LIQ o'z vaqtida hisoblanadigan
     kunlar (ISO sana to'plami) — ikki manbadan: (1) shoots jadvalida shu
@@ -7667,6 +7680,43 @@ def api_clear_attendance(user, b):
     conn.commit()
     conn.close()
     return {"ok": True}
+
+
+def api_forgive_attendance(user, b):
+    """CEO — davomat kechikish/kelmaslik jarimasini kechiradi.
+    `date` berilsa — FAQAT o'sha bitta kun kechiriladi. Berilmasa — hozircha
+    jarimaga sanaladigan (shu vaqtgacha to'plangan) barcha kunlar bir yo'la
+    kechiriladi. Ikkala holatda ham bu — FAQAT o'tmishga tegishli: bundan
+    keyingi yangi kechikish/kelmaslik kunlari bunga kirmaydi, qayta hisoblana
+    boshlaydi (butun oy uchun abadiy kechirilmaydi)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    person = (b.get("person") or "").strip()
+    if person not in ATTENDANCE_USERS:
+        return {"error": "Xodim topilmadi"}, 400
+    conn = get_db()
+    today = uz_today()
+    date_str = (b.get("date") or "").strip()
+    if date_str:
+        try:
+            datetime.date.fromisoformat(date_str)
+        except ValueError:
+            conn.close()
+            return {"error": "Sana noto'g'ri"}, 400
+        dates = [date_str]
+    else:
+        _, late_counted = _attendance_penalty(conn, person, today)
+        dates = late_counted
+    for d in dates:
+        ex = conn.execute("SELECT id FROM attendance_forgiven WHERE person=? AND adate=?", (person, d)).fetchone()
+        if not ex:
+            conn.execute(
+                "INSERT INTO attendance_forgiven (person, adate, created_by, created_at) VALUES (?,?,?,?)",
+                (person, d, user["name"], now_local()))
+    log_audit(conn, user["name"], "davomat jarimasini kechirdi", f"{person} · {', '.join(dates) if dates else 'kun yoʻq'}")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "person": person, "forgivenDates": dates}
 
 
 def api_setup_webhook(user):
@@ -8038,6 +8088,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_request_offsite(user, b))
         if path == "/api/offsite/decide":
             return self._json(api_offsite_decide(user, b))
+        if path == "/api/attendance/forgive":
+            return self._json(api_forgive_attendance(user, b))
         if path == "/api/cash/expense":
             return self._json(api_cash_expense(user, b))
         if path == "/api/cash/close":

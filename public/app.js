@@ -2058,7 +2058,9 @@ async function viewDaily() {
       att.overview.map((o) => `
         <div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${colorFor(o.name)}">${initials(o.name)}</div>
           <div><div class="ci-name">${esc(o.name)}</div><div class="ci-sub">Shu oy: ${o.onTimeDays} vaqtida · ${o.lateDays} kech · ${o.absentDays} kelmadi · ${o.pct}% davomat · ${money(o.intizom)}${o.attendancePenalty ? ` · <span style="color:var(--red)">−${money(o.attendancePenalty)} jarima</span>` : ''}</div></div></div>
-          <span class="pill ${o.todayIn ? (o.todayOnTime ? 'green' : 'orange') : 'red'}">${o.todayIn ? (o.todayOnTime ? '🌅 ' + o.todayTime : '🟡 ' + o.todayTime) : '⏳ yo\'q'}</span></div>`).join('') +
+          <div style="display:flex;align-items:center;gap:6px">
+          ${o.attendancePenalty ? `<button class="mini-btn" data-forgive-attend="${esc(o.name)}" title="Shu vaqtgacha to'plangan davomat jarimasini kechirish (bundan keyingisiga ta'sir qilmaydi)">🤝 Kechirish</button>` : ''}
+          <span class="pill ${o.todayIn ? (o.todayOnTime ? 'green' : 'orange') : 'red'}">${o.todayIn ? (o.todayOnTime ? '🌅 ' + o.todayTime : '🟡 ' + o.todayTime) : '⏳ yo\'q'}</span></div></div>`).join('') +
       `</div></div>`;
   }
   if (d.amDaily) {
@@ -2239,6 +2241,13 @@ async function viewDaily() {
   bindOffsite();
   const osrb = $('#offsite_review_btn');
   if (osrb) osrb.addEventListener('click', () => openOffsiteReviewModal());
+  $$('[data-forgive-attend]').forEach((b) => b.addEventListener('click', async () => {
+    const person = b.dataset.forgiveAttend;
+    if (!confirm(`${person}ning shu vaqtgacha to'plangan davomat jarimasi kechirilsinmi? (Bundan keyingi kechikish/kelmasliklarga ta'sir qilmaydi)`)) return;
+    const res = await api('/api/attendance/forgive', { method: 'POST', body: JSON.stringify({ person }) });
+    if (res && res.ok) { toast('🤝 Jarima kechirildi'); render(); }
+    else { toast('⚠️ ' + (res && res.error || 'Xatolik')); }
+  }));
 }
 
 function openOtpuskReviewModal() {
