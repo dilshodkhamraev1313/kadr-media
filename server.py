@@ -290,6 +290,10 @@ VIDEO_CHECKIN_ENABLED = False  # 2026-09-24: WiFi-geofence pilot davrida vaqtinc
 # o'chirilgan — dumaloq video endi "ishga keldi" deb belgilamaydi (ko'chadan
 # turib video tashlab firibgarlik qilishning oldini olish uchun). Qayta
 # yoqish uchun shunchaki True qilib qo'yish kifoya.
+# 2026-09-28: Murodning Android'ida WiFi-avtomatlashtiruv ishonchli ishlamagani
+# uchun, FAQAT unga dumaloq video hali ham "keldi" deb hisoblanadi (boshqalarga
+# tegishli emas — ular hali ham faqat WiFi orqali belgilanadi).
+VIDEO_CHECKIN_EXEMPT = ("Murod",)
 GEOFENCE_TOKENS = {
     "xM8uvINfcyixJ8BXBwNuTeXq": "Dilshod Khamraev",  # pilot/sinov uchun
     "aNQSgSVZPXJjnFs0Mfj4EGFh": "Gulmira",
@@ -7746,10 +7750,12 @@ def api_telegram_webhook(update):
             _set_ceo_chat_id(conn, chat.get("id"))
             conn.commit()
             conn.close()
-        if not VIDEO_CHECKIN_ENABLED or not msg.get("video_note"):
+        if not msg.get("video_note"):
             return {"ok": True}
         person = TELEGRAM_ATTEND.get(uname)
         if not person:
+            return {"ok": True}
+        if not VIDEO_CHECKIN_ENABLED and person not in VIDEO_CHECKIN_EXEMPT:
             return {"ok": True}
         conn = get_db()
         rec = _record_attendance(conn, person, "bot")
