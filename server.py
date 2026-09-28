@@ -86,6 +86,11 @@ STUDIO_ROOMS = {
 # rahbarlari va CEO. Pul hisoboti faqat CEO'da.
 STUDIO_EDIT_USERS = ("Dilshod Khamraev", "Gulmira")
 
+# Taymlaps — Kadr Jarvis OS (mini PC, Frigate kamera) shu tokendan foydalanib
+# tugagan bronlar ro'yxatini so'raydi va tayyor bo'lganini belgilaydi. Maxfiy
+# kalit (parol o'rnida) — GEOFENCE_TOKENS bilan bir xil naqsh.
+STUDIO_TIMELAPSE_TOKEN = "y30Lxb841om3YvQYehn5S0XzjuxSrUN2"
+
 # Syomka turlari va OPERATORGA to'lanadigan pul (mijoz to'lovidan ALOHIDA).
 # Bu Kadr Studio bronlarida ham, Kadr Media loyiha syomkalarida ham ishlatiladi.
 SHOOT_TYPES = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video", "vebinar": "Vebinar", "tadbir": "Tadbir", "kadr_media": "Kadr Media (ichki)"}
@@ -1014,6 +1019,9 @@ def init_db():
     add_column_if_missing(conn, "studio_bookings", "service_at", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "studio_bookings", "service_warned", "INTEGER DEFAULT 0")
     add_column_if_missing(conn, "studio_bookings", "service_penalized", "INTEGER DEFAULT 0")
+    # Taymlaps (tezlashtirilgan syomka videosi, Kadr Jarvis kamera orqali,
+    # backstage'dan mustaqil — avtomatik, mijoz nomi bilan Telegramga yuboriladi.
+    add_column_if_missing(conn, "studio_bookings", "timelapse_sent", "INTEGER DEFAULT 0")
     # xarajatlar: qayerdan pul chiqdi — usul (naqt/plastik) + kim to'ladi (Dilshod/Gulmira)
     add_column_if_missing(conn, "studio_expenses", "method", "TEXT DEFAULT 'naqt'")
     add_column_if_missing(conn, "studio_expenses", "paid_by", "TEXT DEFAULT ''")
@@ -4786,6 +4794,42 @@ def api_studio_service_ready(user, sid):
     return row
 
 
+def api_studio_timelapse_pending(token):
+    """Kadr Jarvis OS (mini PC) — tugagan, hali taymlaps yuborilmagan bronlar
+    ro'yxatini so'raydi. Faqat oxirgi 3 kun ichida tugaganlar (Frigate'ning
+    uzluksiz yozuvi ~5 kun saqlanadi, undan keyin kesib bo'lmaydi)."""
+    if token != STUDIO_TIMELAPSE_TOKEN:
+        return {"error": "Ruxsat yo'q"}, 403
+    now = uz_now()
+    today = now.date()
+    cutoff = (today - datetime.timedelta(days=3)).isoformat()
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT id, room, client_name, bdate, start_time, end_time FROM studio_bookings "
+        "WHERE (status IS NULL OR status<>'bekor_qilindi') AND (timelapse_sent IS NULL OR timelapse_sent=0) "
+        "AND bdate>=? AND bdate<=? ORDER BY bdate, start_time",
+        (cutoff, today.isoformat())).fetchall()]
+    conn.close()
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    pending = [r for r in rows if f"{r['bdate']} {r['end_time'] or '23:59'}:00" <= now_str]
+    return {"ok": True, "bookings": pending}
+
+
+def api_studio_timelapse_done(token, b):
+    """Kadr Jarvis OS (mini PC) — taymlaps tayyorlanib Telegramga yuborilgandan
+    keyin shu bronni 'bajarildi' deb belgilaydi (qayta ishlanmasin)."""
+    if token != STUDIO_TIMELAPSE_TOKEN:
+        return {"error": "Ruxsat yo'q"}, 403
+    sid = b.get("id")
+    if not sid:
+        return {"error": "id kerak"}, 400
+    conn = get_db()
+    conn.execute("UPDATE studio_bookings SET timelapse_sent=1 WHERE id=?", (sid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 def api_delete_shoot(user, sid):
     conn = get_db()
     conn.execute("DELETE FROM shoots WHERE id=?", (sid,))
@@ -8074,6 +8118,9 @@ class Handler(BaseHTTPRequestHandler):
                 (qs.get("source") or ["bot"])[0],
             )
             return self._json(api_geofence_ping(token, event, extra))
+        if path == "/api/studio/timelapse-pending":
+            token = (parse_qs(urlparse(self.path).query or "").get("token") or [""])[0]
+            return self._json(api_studio_timelapse_pending(token))
         if not path.startswith("/api/"):
             return self._serve_static(path)
 
@@ -8281,6 +8328,10 @@ class Handler(BaseHTTPRequestHandler):
         # Telegram webhook — ochiq (bot chaqiradi, auth yo'q)
         if path == "/api/telegram/webhook":
             return self._json(api_telegram_webhook(self._body()))
+        # Kadr Jarvis OS (mini PC) — o'z tokeni bilan, sessiya auth shart emas
+        if path == "/api/studio/timelapse-done":
+            b0 = self._body()
+            return self._json(api_studio_timelapse_done(b0.get("token") or "", b0))
 
         user = self._auth()
         if not user:
