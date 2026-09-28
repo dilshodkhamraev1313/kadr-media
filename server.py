@@ -7719,6 +7719,23 @@ def api_forgive_attendance(user, b):
     return {"ok": True, "person": person, "forgivenDates": dates}
 
 
+def api_unforgive_attendance(user, b):
+    """CEO — avval kechirilgan aniq bir kunni qaytadan jarimaga sanaladigan
+    holatga qaytaradi (kechirishni bekor qiladi, faqat o'sha bitta kun uchun)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    person = (b.get("person") or "").strip()
+    date_str = (b.get("date") or "").strip()
+    if not person or not date_str:
+        return {"error": "Xodim va sana kerak"}, 400
+    conn = get_db()
+    conn.execute("DELETE FROM attendance_forgiven WHERE person=? AND adate=?", (person, date_str))
+    log_audit(conn, user["name"], "davomat kechirimini bekor qildi", f"{person} · {date_str}")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "person": person, "date": date_str}
+
+
 def api_setup_webhook(user):
     """CEO — botning webhook manzilini Telegramga ro'yxatdan o'tkazadi."""
     base = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
@@ -8090,6 +8107,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_offsite_decide(user, b))
         if path == "/api/attendance/forgive":
             return self._json(api_forgive_attendance(user, b))
+        if path == "/api/attendance/unforgive":
+            return self._json(api_unforgive_attendance(user, b))
         if path == "/api/cash/expense":
             return self._json(api_cash_expense(user, b))
         if path == "/api/cash/close":
