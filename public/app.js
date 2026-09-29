@@ -3794,11 +3794,11 @@ async function openProjectModal(project) {
     </div>` : ''}
     <div class="divider"></div><div class="sec-label">📅 Oylik reja (mijoz bilan kelishilgan)</div>
     ${ME.role === 'ceo' ? `
-    <div class="field"><label>Oyiga nechta video — har bosqich uchun shu son</label><input id="pf_plan" type="number" min="0" value="${PDRAFT.plan || 0}" placeholder="masalan: 15" /></div>
+    <div class="field"><label>Oyiga nechta video — har bosqich uchun shu son</label><input id="pf_plan" type="number" min="0" value="${PDRAFT.plan || 0}" placeholder="masalan: 15" /></div>` : `
+    <div class="field"><label>Oyiga nechta video</label><div class="muted" style="padding:8px 0">${PDRAFT.plan || 0} (faqat CEO o'zgartira oladi)</div></div>`}
     <div class="sec-label" style="margin-top:12px">Bu oy bajarilgani (har bosqich):</div>
+    ${(ME.role === 'ceo' || ME.role === 'lead') ? `
     <div class="plan-inputs">${STAGES.map((s) => `<div class="field"><label>${s.label}</label><input id="pf_done_${s.key}" type="number" min="0" value="${PDRAFT['done_' + s.key] || 0}" /></div>`).join('')}</div>` : `
-    <div class="field"><label>Oyiga nechta video</label><div class="muted" style="padding:8px 0">${PDRAFT.plan || 0} (faqat CEO o'zgartira oladi)</div></div>
-    <div class="sec-label" style="margin-top:12px">Bu oy bajarilgani (har bosqich):</div>
     <div class="plan-inputs">${STAGES.map((s) => `<div class="field"><label>${s.label}</label><div class="muted" style="padding:8px 0">${PDRAFT['done_' + s.key] || 0}</div></div>`).join('')}</div>`}
     <div class="divider"></div><div class="sec-label">Jarayon bosqichlari (umumiy holat)</div>
     <div class="stage-editor">${STAGES.map((s) => `<div class="stage-edit-row"><span class="sname">${s.label}</span>

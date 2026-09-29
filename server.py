@@ -1471,12 +1471,12 @@ def api_update_project(pid, b, user=None):
         except (ValueError, TypeError):
             return existing.get(key) or 0
 
-    # Oylik reja (plan) va bosqichlar bo'yicha bajarilgan son (done_*) — faqat
-    # CEO o'zgartira oladi (rahbarlik puli/reja bajarilishi shu raqamlarga
-    # bog'liq bo'lgani uchun, rahbarning o'zi bu sonlarni tahrirlamasligi kerak).
+    # Oylik reja (plan — "Oyiga nechta video, har bosqich uchun shu son") faqat
+    # CEO o'zgartira oladi. "Bu oy bajarilgan" (done_*) esa loyiha rahbari ham
+    # kiritadi — bu haqiqiy ishning kundalik hisobi, rahbar o'zi yuritadi.
     plan_val = iv("plan") if is_ceo else (existing.get("plan") or 0)
-    done_vals = {k: (iv(k) if is_ceo else (existing.get(k) or 0))
-                 for k in ("done_ssenariy", "done_syomka", "done_montaj", "done_tasdiq", "done_joylash")}
+    done_vals = {k: iv(k) for k in
+                 ("done_ssenariy", "done_syomka", "done_montaj", "done_tasdiq", "done_joylash")}
 
     merged = {
         "name": b.get("name", existing["name"]),
