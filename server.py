@@ -8722,7 +8722,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/admin/monthly-report-send":
             return self._json(api_admin_monthly_report_send(user, (b or {}).get("ym")))
         if path == "/api/debug/send-message":
-            return self._forbid() if role != "ceo" else self._json(api_debug_send_message(b))
+            return self._forbid() if r != "ceo" else self._json(api_debug_send_message(b))
         if path == "/api/editors/recompute":
             return self._json(api_recompute_editor(user, (b.get("editor") or "").strip()))
         if path == "/api/videos/backfill":
