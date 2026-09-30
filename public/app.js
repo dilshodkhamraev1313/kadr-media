@@ -1831,7 +1831,7 @@ function openScenaristModal() {
 // ============================================================
 function salaryCard(p) {
   const rows = p.components.map((c) => {
-    const cls = c.kind === 'auto' ? 'sal-auto' : (c.kind === 'lead' ? 'sal-lead' : (c.kind === 'penalty' ? 'sal-penalty' : ''));
+    const cls = (c.kind === 'auto' || c.kind === 'bonus') ? 'sal-auto' : (c.kind === 'lead' ? 'sal-lead' : (c.kind === 'penalty' ? 'sal-penalty' : ''));
     const val = c.kind === 'penalty' && c.amount < 0 ? `<span style="color:var(--red)">${money(c.amount)}</span>` : money(c.amount);
     let html = `<div class="mrow ${cls}"><span>${esc(c.label)}</span><b>${val}</b></div>`;
     if (c.kind === 'lead' && c.detail && c.detail.length) {
@@ -2674,6 +2674,22 @@ function rankProgressBar(e) {
       <div class="rank-next">${nextTxt}</div>
     </div>`;
 }
+function volumeBonusBar(e) {
+  const target = e.monthlyVolumeTarget || 60;
+  const count = e.monthlyVolumeCount || 0;
+  const amount = e.monthlyVolumeBonusAmount || 0;
+  const pct = Math.min(100, Math.round(100 * count / target));
+  const done = e.monthlyVolumeBonus > 0;
+  return `
+    <div class="rank-box" style="margin-top:6px">
+      <div class="rank-top"><span class="rank-chip" style="${done ? 'background:var(--green)' : ''}">🎯 Oylik hajm bonusi</span>
+        <span class="muted">${count}/${target}</span></div>
+      <div class="rank-meter"><div class="rank-fill" style="width:${pct}%${done ? ';background:var(--green)' : ''}"></div></div>
+      <div class="rank-next">${done
+        ? `✅ Bonus qo'lga kiritildi: +${money(amount)}`
+        : `Yana <b>${Math.max(target - count, 0)}</b> ta video — +${money(amount)} bonus (bu oy)`}</div>
+    </div>`;
+}
 function editorCard(e) {
   const proj = e.byProject.slice(0, 3).map((p) => `${esc(p.project)}: ${p.count}`).join(' · ');
   return `
@@ -2681,6 +2697,7 @@ function editorCard(e) {
       <div class="team-head">${avatarEl(e.name, e.color, e.avatar, 'team-av')}
         <div><div class="team-name">${esc(e.name)}</div><div class="team-role">${e.accepted} video · ${proj || 'hozircha yo\'q'}</div></div></div>
       ${rankProgressBar(e)}
+      ${volumeBonusBar(e)}
       <div class="money-rows">
         <div class="mrow"><span>Hisoblangan</span><b>${money(e.earned)}</b></div>
         ${e.reelsQuotaPenalty ? `<div class="mrow"><span style="color:var(--red)">Kunlik 2 reels normasi jarimasi</span><b style="color:var(--red)">−${money(e.reelsQuotaPenalty)}</b></div>` : ''}
@@ -2810,6 +2827,7 @@ async function viewCabinet() {
   $('#content').innerHTML = `
     ${attCard}
     ${rankHero}
+    ${volumeBonusBar(c)}
     <div class="stats-grid">
       ${statTile('🎬', c.toDo, 'Montaj qilish kerak', 'orange')}
       ${statTile('💰', money(c.earned), 'Bu oy ishlangan', 'green')}

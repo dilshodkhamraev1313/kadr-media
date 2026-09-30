@@ -482,6 +482,14 @@ REELS_QUOTA_PER_DAY = 2
 REELS_QUOTA_PENALTY_PER_VIDEO = 25000
 REELS_QUOTA_START_DATE = "2026-09-29"
 
+# Oylik hajm bonusi — bir oyda (barcha turdagi video birga, uzluksizlik shart
+# emas) MONTHLY_VOLUME_BONUS_TARGET tagacha qabul qilingan video bo'lsa,
+# ustiga bir martalik qo'shimcha bonus. 2026-10-01'dan boshlab (2026-09-30
+# CEO bilan kelishilgan qaror — retrospektiv emas, kelgusi to'liq oydan).
+MONTHLY_VOLUME_BONUS_TARGET = 60
+MONTHLY_VOLUME_BONUS_AMOUNT = 1000000
+MONTHLY_VOLUME_BONUS_START_DATE = "2026-10-01"
+
 # Dushanba/Juma planyorka (kompaniya rejalashtirish yig'ilishi) — mas'ul
 # Gulmira, soat 21:00gacha dashboardda tasdiqlanmasa jarima.
 PLANYORKA_PERSON = "Gulmira"
@@ -2569,6 +2577,12 @@ def editor_summary(conn, name):
     accepted_m = [v for v in accepted_all if (v.get("approved_at") or "").startswith(ym)]
     montaj_earned = sum(v["amount"] or 0 for v in accepted_m)
     paid = _paid_to(conn, name, ym)
+    # Oylik hajm bonusi — barcha turdagi video birga, MONTHLY_VOLUME_BONUS_TARGET
+    # tagacha yetsa bir martalik qo'shimcha (compute_salary ichida SALARY
+    # xodimlar uchun ham hisoblanadi — bu yerda faqat ko'rsatish/piece-rate uchun).
+    vb_count = len(accepted_m)
+    vb_bonus = MONTHLY_VOLUME_BONUS_AMOUNT if (
+        ym >= MONTHLY_VOLUME_BONUS_START_DATE[:7] and vb_count >= MONTHLY_VOLUME_BONUS_TARGET) else 0
     # Salaried montajchi (SALARYda bor) uchun "ishlagan" = TO'LIQ oylik maosh
     # (fiksa+intizom+montaj+...), aks holda (sof piece-rate) faqat montaj puli.
     reels_quota_penalty = 0
@@ -2577,9 +2591,10 @@ def editor_summary(conn, name):
         earned = _sal["total"] if _sal else montaj_earned
     else:
         # SALARYda yo'q (sof piece-rate) montajchilar uchun kunlik 2 reels
-        # normasi jarimasi compute_salary orqali emas, shu yerda hisoblanadi.
+        # normasi jarimasi va oylik hajm bonusi compute_salary orqali emas,
+        # shu yerda hisoblanadi.
         reels_quota_penalty, _ = _reels_quota_penalty(conn, name, uz_today())
-        earned = montaj_earned - reels_quota_penalty
+        earned = montaj_earned - reels_quota_penalty + vb_bonus
     by_project = {}
     for v in accepted_m:
         by_project[v["project"]] = by_project.get(v["project"], 0) + 1
@@ -2601,6 +2616,10 @@ def editor_summary(conn, name):
         "earned": earned,
         "montajEarned": montaj_earned,
         "reelsQuotaPenalty": reels_quota_penalty,
+        "monthlyVolumeCount": vb_count,
+        "monthlyVolumeBonus": vb_bonus,
+        "monthlyVolumeTarget": MONTHLY_VOLUME_BONUS_TARGET,
+        "monthlyVolumeBonusAmount": MONTHLY_VOLUME_BONUS_AMOUNT,
         "paid": paid,
         "remaining": earned - paid,
         "month": ym,
@@ -5801,6 +5820,13 @@ def compute_salary(conn, name, rate, ym=None):
         if rq_pen > 0:
             comps.append({"label": f"Kunlik 2 reels normasi bajarilmadi ({sum(s for _, s in rq_short)} ta video, {len(rq_short)} kun)",
                           "amount": -rq_pen, "kind": "penalty"})
+        if ym >= MONTHLY_VOLUME_BONUS_START_DATE[:7]:
+            vb_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM videos WHERE editor=? AND approved_at LIKE ? "
+                "AND status IN ('qabul_qilindi','joylandi')", (name, ym + "%")).fetchone()["c"] or 0
+            if vb_count >= MONTHLY_VOLUME_BONUS_TARGET:
+                comps.append({"label": f"Oylik hajm bonusi ({vb_count}/{MONTHLY_VOLUME_BONUS_TARGET}+ video)",
+                              "amount": MONTHLY_VOLUME_BONUS_AMOUNT, "kind": "bonus"})
     if cfg.get("studio_bonus"):
         comps.append({"label": "Studio mijoz bonusi", "amount": _studio_client_bonus(conn), "kind": "auto"})
     # Kechikish jarimasi (rahbar loyihalari + Said QC) — CEO kechirishi mumkin
@@ -5932,6 +5958,9 @@ def _employee_month_report(conn, name, ym, rate, editor_names):
         if s["reelsQuotaPenalty"]:
             lines.append(f"   • Kunlik reels normasi jarimasi: -{som(s['reelsQuotaPenalty'])}")
             penalties += s["reelsQuotaPenalty"]
+        if s["monthlyVolumeBonus"]:
+            lines.append(f"   • Oylik hajm bonusi ({s['monthlyVolumeCount']}/{s['monthlyVolumeTarget']}+ video): "
+                          f"+{som(s['monthlyVolumeBonus'])}")
         total, paid, remaining = s["earned"], s["paid"], s["remaining"]
     lines.append(f"   JAMI: {som(total)} | To'langan: {som(paid)} | Qoldi: {som(remaining)}")
 
