@@ -768,6 +768,37 @@ def send_telegram_video(video_bytes, caption, chat_id=None, thread_id=None):
         return False
 
 
+def send_telegram_document(file_bytes, filename, caption, chat_id=None):
+    """Telegram'ga matnli hujjat (masalan oylik hisobot .txt) yuboradi —
+    sendVideo bilan bir xil qo'lda-multipart uslub, faqat 'document' maydoni."""
+    target = chat_id or TELEGRAM_CHAT_ID
+    if not TELEGRAM_BOT_TOKEN or not target:
+        return False
+    boundary = "----KadrDoc" + secrets.token_hex(16)
+    fields = {"chat_id": str(target), "caption": caption, "parse_mode": "HTML"}
+    parts = []
+    for key, val in fields.items():
+        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n{val}\r\n".encode("utf-8"))
+    parts.append(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"document\"; filename=\"{filename}\"\r\n"
+        f"Content-Type: text/plain; charset=utf-8\r\n\r\n".encode("utf-8")
+    )
+    parts.append(file_bytes)
+    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    body = b"".join(parts)
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+        req = urllib.request.Request(
+            url, data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+        return bool(res.get("ok"))
+    except Exception:
+        return False
+
+
 # ------------------------------------------------------------
 #  Database — bitta interfeys, ikki dvigatel (SQLite / Postgres)
 # ------------------------------------------------------------
@@ -952,6 +983,10 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS planyorka_log (
         id {pk}, pdate TEXT UNIQUE, confirmed_by TEXT, confirmed_at TEXT,
         penalized INTEGER DEFAULT 0)""")
+    # Oy oxiri (23:00) avtomatik hisobot — bir oyga bir marta yuborilganini
+    # belgilaydi (cron ikki marta yubormasligi uchun).
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS monthly_report_log (
+        id {pk}, ym TEXT UNIQUE, sent_at {ts})""")
     # OMBOR — rol qo'llanmalari (bilim bazasi) + onboarding
     conn.execute(f"""CREATE TABLE IF NOT EXISTS playbooks (
         id {pk}, role_key TEXT, title TEXT, sections TEXT DEFAULT '[]',
@@ -5843,6 +5878,218 @@ def api_payroll(user, ym=None):
     return {"rate": rate, "isCeo": False, "me": me}
 
 
+VTYPE_LABEL = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video",
+               "ai_video": "AI video", "ai_karusel": "AI karusel"}
+
+
+def _all_employee_names(conn):
+    """SALARY'dagi hamma + barcha montajchilar (SALARY'da bo'lmagan piece-rate'lar
+    ham), dublikatsiz — oylik umumiy hisobot uchun to'liq xodimlar ro'yxati."""
+    _mw, _mp = _montajchi_where()
+    editor_names = [r["name"] for r in conn.execute(
+        "SELECT name FROM users WHERE " + _mw + " ORDER BY name", _mp).fetchall()]
+    names = list(SALARY.keys())
+    for n in editor_names:
+        if n not in names:
+            names.append(n)
+    return names, set(editor_names)
+
+
+def _video_type_breakdown(conn, name, ym):
+    rows = conn.execute(
+        "SELECT vtype, amount FROM videos WHERE editor=? AND approved_at LIKE ? "
+        "AND status IN ('qabul_qilindi','joylandi')", (name, ym + "%")).fetchall()
+    agg = {}
+    for r in rows:
+        k = r["vtype"] or "nomalum"
+        d = agg.setdefault(k, {"count": 0, "amount": 0})
+        d["count"] += 1
+        d["amount"] += r["amount"] or 0
+    cancelled = conn.execute(
+        "SELECT COUNT(*) AS c FROM videos WHERE editor=? AND status='bekor_qilindi' AND vdate LIKE ?",
+        (name, ym + "%")).fetchone()["c"] or 0
+    return agg, cancelled
+
+
+def _employee_month_report(conn, name, ym, rate, editor_names):
+    """Bitta xodim uchun oylik hisobot matni + jami/to'langan/qolgan/jarima
+    summasi (kompaniya hisobotidagi qarz reytingi va jarima jamlanmasi uchun)."""
+    lines = [f"👤 {name}"]
+    penalties = 0
+
+    sal = compute_salary(conn, name, rate, ym=ym) if name in SALARY else None
+    if sal:
+        lines.append(f"   Lavozim: {sal['title']}")
+        for c in sal["components"]:
+            if c.get("kind") == "penalty" and c["amount"] < 0:
+                penalties += -c["amount"]
+            lines.append(f"   • {c['label']}: {som(c['amount'])}")
+        total, paid, remaining = sal["total"], sal["paid"], sal["remaining"]
+    else:
+        s = editor_summary(conn, name)
+        lines.append("   Lavozim: Montajchi (dona-hisobda)")
+        lines.append(f"   • Montaj puli: {som(s['montajEarned'])}")
+        if s["reelsQuotaPenalty"]:
+            lines.append(f"   • Kunlik reels normasi jarimasi: -{som(s['reelsQuotaPenalty'])}")
+            penalties += s["reelsQuotaPenalty"]
+        total, paid, remaining = s["earned"], s["paid"], s["remaining"]
+    lines.append(f"   JAMI: {som(total)} | To'langan: {som(paid)} | Qoldi: {som(remaining)}")
+
+    if name in editor_names:
+        agg, cancelled = _video_type_breakdown(conn, name, ym)
+        if agg:
+            lines.append("   Videolar:")
+            for vt, d in sorted(agg.items(), key=lambda x: -x[1]["amount"]):
+                lbl = VTYPE_LABEL.get(vt, vt)
+                lines.append(f"     - {lbl}: {d['count']} ta — {som(d['amount'])}")
+        if cancelled:
+            lines.append(f"     - Bekor qilingan: {cancelled} ta")
+        s2 = editor_summary(conn, name)
+        lines.append(f"   Daraja: {s2['rank_icon']} {s2['rank_label']} "
+                      f"({s2['in_rank']}/100, keyingisi: {s2['next_label']})")
+
+    if name in ATTENDANCE_USERS:
+        from calendar import monthrange
+        yy, mm = (int(x) for x in ym.split("-"))
+        today_for_ym = datetime.date(yy, mm, monthrange(yy, mm)[1])
+        att = _attend_month(conn, name, today_for_ym)
+        lines.append(f"   Davomat: {att['onTimeDays']} o'z vaqtida, {att['lateDays']} kech, "
+                      f"{att['absentDays']} kelmagan, {att['otpuskDays']} otpusk")
+        if att["attendancePenalty"]:
+            lines.append(f"     - Davomat jarimasi: -{som(att['attendancePenalty'])}")
+
+    return {"name": name, "text": "\n".join(lines), "total": total, "paid": paid,
+            "remaining": remaining, "penalties": penalties}
+
+
+def _company_month_report_text(conn, ym):
+    """Kadr Studio + Kadr Media umumiy oylik moliyaviy hisoboti (api_advisor
+    ustidan qurilgan — bir xil raqamlar, faqat Telegram matn ko'rinishida)."""
+    fake_user = {"role": "ceo", "name": "Dilshod Khamraev"}
+    adv = api_advisor(fake_user)
+    lines = [f"🏢 <b>Kadr Media + Kadr Studio — {ym} umumiy hisobot</b>", ""]
+    lines.append(f"📊 Holat: <b>{adv['statusLabel']}</b>")
+    lines.append(f"💰 Kompaniya sof foyda: {som(adv['companyNet'])} "
+                  f"(oy oxiri prognoz: {som(adv['forecastNet'])})")
+    lines.append("")
+    lines.append(f"🎥 Kadr Studio — daromad: {som(adv['studioPL']['income'])}, "
+                  f"sof: {som(adv['studioPL']['net'])}")
+    lines.append(f"📽 Kadr Media — daromad: {som(adv['mediaPL']['income'])}, "
+                  f"sof: {som(adv['mediaPL']['net'])}")
+    lines.append(f"👥 Umumiy oylik fond (payroll): {som(adv['payrollTotal'])}")
+    lines.append(f"💵 Hozir qo'lda naqd: {som(adv['cashNow'])} | "
+                  f"Mijoz/studiodan yig'ilishi kerak: {som(adv['toCollect'])}")
+    if adv["alerts"]:
+        lines.append("")
+        lines.append("⚠️ Ogohlantirishlar:")
+        for a in adv["alerts"]:
+            lines.append(f"  {a['icon']} <b>{a['title']}</b> — {a['text']}")
+    return "\n".join(lines)
+
+
+def _build_monthly_report(conn, ym):
+    """Berilgan oy uchun kompaniya matni + har bir xodim hisoboti + qarz
+    reytingi + jami jarima — hisoblaydi, LEKIN hech narsa yubormaydi/yozmaydi
+    (preview va haqiqiy yuborish ikkalasi ham shundan foydalanadi)."""
+    rate = get_usd_rate()
+    names, editor_names = _all_employee_names(conn)
+    reports = [_employee_month_report(conn, n, ym, rate, editor_names) for n in names]
+    debts = sorted(((r["name"], r["remaining"]) for r in reports if r["remaining"] > 0),
+                    key=lambda x: -x[1])
+    total_penalties = sum(r["penalties"] for r in reports)
+
+    company_text = _company_month_report_text(conn, ym)
+    if debts:
+        debts_lines = "\n".join(f"  {i+1}. {n} — {som(r)}" for i, (n, r) in enumerate(debts))
+        company_text += f"\n\n💳 <b>Qolgan qarzlar (eng ko'pdan kamga)</b>:\n{debts_lines}"
+    company_text += f"\n\n⚠️ Bu oy jami jarimalar (barcha xodim): {som(total_penalties)}"
+
+    employees_doc = f"XODIMLAR OYLIK HISOBOTI — {ym}\n" + "=" * 40 + "\n\n" + \
+        "\n\n".join(r["text"] for r in reports)
+    return {"companyText": company_text, "employeesDoc": employees_doc,
+            "employeeCount": len(reports)}
+
+
+def _send_monthly_report(conn, ym, mark_sent=True):
+    """Hisobotni haqiqatan CEO'ga yuboradi + (birinchi marta bo'lsa) arxivlaydi
+    + monthly_report_log'ga yozadi (mark_sent=False bo'lsa — faqat yuboradi,
+    'yuborilgan' deb belgilamaydi — qo'lda qayta-yuborishda foydali)."""
+    ceo_chat = _get_ceo_chat_id(conn)
+    if not ceo_chat:
+        return {"ok": False, "error": "CEO chat_id topilmagan — botga shaxsiy (DM) yozib, ro'yxatdan o'ting"}
+
+    built = _build_monthly_report(conn, ym)
+    send_telegram(built["companyText"], chat_id=ceo_chat)
+    doc_ok = send_telegram_document(
+        built["employeesDoc"].encode("utf-8"), f"xodimlar-{ym}.txt",
+        f"👥 Barcha xodimlar — {ym} oylik hisobot ({built['employeeCount']} kishi)", chat_id=ceo_chat)
+
+    if not conn.execute("SELECT ym FROM monthly_archive WHERE ym=?", (ym,)).fetchone():
+        snap = _month_snapshot(conn, ym, "avtomatik oylik hisobot")
+        data = json.dumps(snap, ensure_ascii=False)
+        conn.execute("INSERT INTO monthly_archive (ym, data, net, created_by, created_at) VALUES (?,?,?,?,?)",
+                     (ym, data, snap["companyNet"], "Tizim (oylik hisobot)", now_local()))
+
+    if mark_sent:
+        ex = conn.execute("SELECT id FROM monthly_report_log WHERE ym=?", (ym,)).fetchone()
+        if ex:
+            conn.execute("UPDATE monthly_report_log SET sent_at=? WHERE ym=?", (now_local(), ym))
+        else:
+            conn.execute("INSERT INTO monthly_report_log (ym, sent_at) VALUES (?,?)", (ym, now_local()))
+    log_audit(conn, "Tizim", "oylik hisobot yuborildi", ym)
+    conn.commit()
+    return {"ok": True, "ym": ym, "employees": built["employeeCount"], "documentSent": doc_ok}
+
+
+def api_cron_monthly_report():
+    """Har oyning OXIRGI KUNI, soat 23:00'dan keyin — CEO'ga shaxsiy DM orqali
+    (1) kompaniya umumiy moliyaviy hisoboti xabar sifatida, (2) barcha xodimlarning
+    to'liq oylik hisoboti bitta .txt hujjat sifatida yuboriladi. Oyiga bir marta
+    (monthly_report_log orqali himoyalangan, cron necha marta chaqirilsa ham)."""
+    from calendar import monthrange
+    today = uz_today()
+    dim = monthrange(today.year, today.month)[1]
+    if today.day != dim:
+        return {"ok": True, "skipped": "bugun oyning oxirgi kuni emas"}
+    if uz_now().strftime("%H:%M") < "23:00":
+        return {"ok": True, "skipped": "hali vaqti emas (23:00dan keyin)"}
+
+    ym = today.strftime("%Y-%m")
+    conn = get_db()
+    if conn.execute("SELECT 1 FROM monthly_report_log WHERE ym=?", (ym,)).fetchone():
+        conn.close()
+        return {"ok": True, "skipped": "bu oy uchun hisobot allaqachon yuborilgan"}
+    result = _send_monthly_report(conn, ym)
+    conn.close()
+    return result
+
+
+def api_admin_monthly_report_preview(user, ym=None):
+    """CEO — joriy (yoki berilgan) oy uchun hisobot matnini KO'RIB CHIQADI,
+    hech narsa yubormaydi/yozmaydi. Test/tekshirish uchun."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    ym = (ym or "").strip() or uz_now().strftime("%Y-%m")
+    conn = get_db()
+    built = _build_monthly_report(conn, ym)
+    conn.close()
+    return {"ym": ym, **built}
+
+
+def api_admin_monthly_report_send(user, ym=None):
+    """CEO — hisobotni HOZIR, qo'lda yuboradi (masalan sinash uchun, yoki
+    23:00'ni kutmasdan). 'Yuborilgan' deb belgilamaydi — cron shu kuni
+    kechqurun baribir avtomatik yuboraveradi (ikkalasi ham ishlasa muammo yo'q,
+    xabar ikki marta borishi mumkin — shuning uchun buni faqat ataylab bosing)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    ym = (ym or "").strip() or uz_now().strftime("%Y-%m")
+    conn = get_db()
+    result = _send_monthly_report(conn, ym, mark_sent=False)
+    conn.close()
+    return result
+
+
 def api_my_salary_history(user):
     """Har kim FAQAT o'zining tarixini ko'radi: o'tgan (arxivlangan) oylardagi
     jami/to'langan/qolgan + umrbod olgan pulning jami summasi (motivatsiya uchun).
@@ -8185,6 +8432,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_cron_crm_followup_check())
         if path == "/api/cron/planyorka-check":
             return self._json(api_cron_planyorka_check())
+        if path == "/api/cron/monthly-report":
+            return self._json(api_cron_monthly_report())
         if path == "/api/geofence":
             qs = parse_qs(urlparse(self.path).query or "")
             token = (qs.get("token") or [""])[0]
@@ -8321,6 +8570,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
             return self._json(api_payroll(user, ym))
+        if path == "/api/admin/monthly-report-preview":
+            if role != "ceo":
+                return self._forbid()
+            ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
+            return self._json(api_admin_monthly_report_preview(user, ym))
         if path == "/api/admin/backstage-unpenalize":
             if role != "ceo":
                 return self._forbid()
@@ -8436,6 +8690,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_toggle_freeze(user, pid)) if pid else self._json({"error": "Topilmadi"}, 404)
         if path == "/api/archive":
             return self._json(api_archive_month(user, b))
+        if path == "/api/admin/monthly-report-send":
+            return self._json(api_admin_monthly_report_send(user, (b or {}).get("ym")))
         if path == "/api/debug/send-message":
             return self._forbid() if role != "ceo" else self._json(api_debug_send_message(b))
         if path == "/api/editors/recompute":
