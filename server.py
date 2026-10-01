@@ -5517,7 +5517,11 @@ def _reels_quota_penalty(conn, name, today):
         done_by_day[dstr] = done_by_day.get(dstr, 0) + 1
     shortfalls = []
     d = first
-    while d <= today:
+    # MUHIM: bugungi (hali tugamagan) kun jarimaga kiritilmaydi — faqat
+    # o'tgan, allaqachon yakunlangan kunlar uchun hisoblanadi. Aks holda
+    # ertalabdan, kun hali tugamay turib, "norma bajarilmadi" deb jarima
+    # yozilib qolar edi (CEO bilan 2026-10-01 kelishilgan tuzatish).
+    while d < today:
         iso = d.isoformat()
         if d.weekday() != 6 and iso not in otpusk and iso not in offsite and iso not in forgiven:
             required = min(REELS_QUOTA_PER_DAY, due_by_day.get(iso, 0))
