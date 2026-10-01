@@ -777,7 +777,7 @@ function projectCard(p) {
         </div>` : ''}
       <div class="pc-foot"><div class="pc-resp"><div class="mini-av" style="background:${colorFor(p.responsible)}">${initials(p.responsible)}</div><span>${esc(p.responsible) || '—'}</span></div>
         <div class="pc-deadline ${dlCls}">📅 ${dl}</div></div>
-      ${(ME.role === 'ceo' && !p.fullyDone && !p.frozen) ? `<button class="mini-btn blue proj-reset" data-resetproj="${p.id}" data-name="${esc(p.name)}" style="margin-top:8px;width:100%">🔄 Shu loyihani yangilash (yangi davr)</button>` : ''}
+      ${(ME.role === 'ceo' && !p.frozen) ? `<button class="mini-btn blue proj-reset" data-resetproj="${p.id}" data-name="${esc(p.name)}" style="margin-top:8px;width:100%">🔄 Shu loyihani yangilash (yangi davr)</button>` : ''}
       ${(ME.role === 'ceo' && !p.fullyDone) ? `<button class="mini-btn ${p.frozen ? 'green' : 'gray'} proj-freeze" data-freezeproj="${p.id}" data-name="${esc(p.name)}" data-frozen="${p.frozen ? 1 : 0}" style="margin-top:8px;width:100%">${p.frozen ? '🔥 Muzlatishdan tiklash' : '🧊 Muzlatish (mijoz to\'xtatdi)'}</button>` : ''}
     </div>`;
 }

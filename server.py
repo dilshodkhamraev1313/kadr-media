@@ -1380,18 +1380,24 @@ def _freeze_and_reset_project(conn, pid, row):
 
 
 def api_reset_project_stats(user):
-    """CEO — BARCHA faol (tugamagan) loyihalar statistikasini bir yo'la yangilaydi
-    (kim o'z loyihasini alohida yangilashni unutgan bo'lsa, shuning uchun zaxira
-    tugma). Tugagan loyihalarga TEGILMAYDI. Eski sonlar tarixiy (prev_*) saqlanadi."""
+    """CEO — BARCHA (tugagan yoki tugamagan, muzlatilmagan) loyihalar statistikasini
+    bir yo'la yangilaydi. 100% bajarilgan (fullyDone) loyihalar ayni shu tugma
+    uchun ENG MUHIM holat — ular yangi davrga o'tishi aynan shu orqali bo'ladi.
+    Shu oyda ALLAQACHON yangilangan loyihaga qayta tegilmaydi (prev_reset_at
+    tekshiriladi) — aks holda bugun erta tongda yangi davr uchun qo'shilgan
+    ishlar yana 'eski davr' deb hisoblanib ketib qolardi. Eski sonlar tarixiy
+    (prev_*) saqlanadi, yo'qolmaydi."""
     if user["role"] != "ceo":
         return {"error": "Ruxsat yo'q"}, 403
     conn = get_db()
     rows = conn.execute("SELECT * FROM projects").fetchall()
+    ym = uz_today().strftime("%Y-%m")
     n = 0
     for r in rows:
-        p = decorate(dict(r))
-        if p["fullyDone"]:
+        if r["frozen"]:
             continue
+        if (r["prev_reset_at"] or "")[:7] == ym:
+            continue  # shu oyda allaqachon yangilangan — qayta tegilmaydi
         _freeze_and_reset_project(conn, r["id"], r)
         n += 1
     log_audit(conn, user["name"], "loyiha statistikasi reset qilindi (barchasi)", f"{n} loyiha · {uz_today().isoformat()}")
@@ -1401,8 +1407,10 @@ def api_reset_project_stats(user):
 
 
 def api_reset_single_project(user, pid):
-    """CEO — bitta loyihani o'z sanasida (10/20-sana mijozlar uchun) alohida
-    yangilaydi. Tugagan loyihaga ruxsat berilmaydi (yangilash ma'nosiz)."""
+    """CEO — bitta loyihani o'z sanasida (10/20-sana mijozlar uchun yoki 100%
+    bajarilgan loyihani yangi davrga o'tkazish uchun) alohida yangilaydi. Shu
+    oyda allaqachon yangilangan bo'lsa qayta ruxsat berilmaydi (ikki marta
+    yangilash joriy davr ishini "eski" deb hisoblab, yo'qotib qo'yadi)."""
     if user["role"] != "ceo":
         return {"error": "Ruxsat yo'q"}, 403
     conn = get_db()
@@ -1410,10 +1418,10 @@ def api_reset_single_project(user, pid):
     if not row:
         conn.close()
         return {"error": "Topilmadi"}, 404
-    p = decorate(dict(row))
-    if p["fullyDone"]:
+    ym = uz_today().strftime("%Y-%m")
+    if (row["prev_reset_at"] or "")[:7] == ym:
         conn.close()
-        return {"error": "Bu loyiha tugagan — yangilash shart emas"}, 400
+        return {"error": "Bu loyiha shu oyda allaqachon yangilangan"}, 400
     _freeze_and_reset_project(conn, pid, row)
     log_audit(conn, user["name"], "loyihani yangiladi (davr)", f"#{pid} {row['name']}")
     conn.commit()
