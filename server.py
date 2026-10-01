@@ -4937,13 +4937,15 @@ def api_studio_timelapse_upload(token, b):
     yuboradi (`video`: data:video/mp4;base64,...). Dashboard o'zining
     TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID'i bilan Telegramga jo'natadi (mini
     PC'da bu kredensiallarni saqlash shart emas) va muvaffaqiyatli bo'lsa
-    bronni 'bajarildi' deb belgilaydi."""
+    bronni 'bajarildi' deb belgilaydi.
+    `id` berilmasa (bronsiz, qo'lda/ad-hoc so'rov) — `caption` to'g'ridan-to'g'ri
+    ishlatiladi, bron jadvaliga tegilmaydi."""
     if token != STUDIO_TIMELAPSE_TOKEN:
         return {"error": "Ruxsat yo'q"}, 403
     sid = b.get("id")
     data_url = b.get("video") or ""
-    if not sid or not data_url.startswith("data:video"):
-        return {"error": "id va video kerak"}, 400
+    if not data_url.startswith("data:video"):
+        return {"error": "video kerak"}, 400
     try:
         _header, b64data = data_url.split(",", 1)
     except ValueError:
@@ -4954,6 +4956,10 @@ def api_studio_timelapse_upload(token, b):
         video_bytes = base64.b64decode(b64data)
     except Exception:
         return {"error": "Video fayl noto'g'ri formatda"}, 400
+    if not sid:
+        caption = (b.get("caption") or "🎥 Taymlaps tayyor").strip()
+        ok = send_telegram_video(video_bytes, caption)
+        return {"ok": True} if ok else ({"error": "Telegramga yuborishda xato"}, 502)
     conn = get_db()
     row = conn.execute("SELECT * FROM studio_bookings WHERE id=?", (sid,)).fetchone()
     conn.close()
