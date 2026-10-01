@@ -369,9 +369,9 @@ LATENESS_PENALTY_PER_DAY = 20000  # 4-martadan boshlab har kechikkan kun uchun q
 # kech keladigan (CEO tomonidan tasdiqlangan normal jadval) xodimlar — ular
 # uchun "kech kelish" kechikish jarimasiga kirmaydi (faqat Intizom yo'q,
 # dumaloq video Fiksa uchun ishlatiladi), lekin umuman kelmagan kunlar
-# baribir jarima limitiga kiradi. Murod — kun yarmidan (taxminan tushdan
-# keyin) keladi.
-LATE_SCHEDULE_EXEMPT = ("Xonzoda", "Shodiya", "Murod")
+# baribir jarima limitiga kiradi. Murod, Xayrulloh — kun yarmidan (taxminan
+# tushdan keyin) keladi.
+LATE_SCHEDULE_EXEMPT = ("Xonzoda", "Shodiya", "Murod", "Xayrulloh")
 PERFECT_ATTENDANCE_BONUS = 500000  # butun oy (yakshanbadan tashqari) 100% vaqtida kelsa bonus
 OTPUSK_DAYS = 2                   # bir martalik otpusk davomiyligi (kun)
 OTPUSK_COOLDOWN_MONTHS = 1        # otpuskdan otpuskgacha eng kam oraliq (har oyda 1 marta)
