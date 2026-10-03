@@ -183,7 +183,7 @@ DEFAULT_PLAYBOOKS = {
 }
 # Kadr Media (ichki syomka) — studio TUSHUMIga pul hisoblanmaydi (faqat xona/vaqt band + operator puli)
 STUDIO_NO_INCOME_TYPES = ("kadr_media",)
-STUDIO_OPERATORS = ("Samandar", "Umid")  # Shodiya 2026-10-03'da operatorlikdan chiqarildi (OPERATOR_PAY tarixiy yozuvlar uchun qoladi)
+STUDIO_OPERATORS = ("Samandar", "Umid", "Shodiya")  # Shodiya ba'zida operatorlik qiladi (2026-10-03: saqlab qolindi)
 # Sotuv operatorlari — CRM (lid) bo'limiga kirish huquqi. Kelajakda ko'payadi.
 CRM_USERS = ("Nodira",)
 LEAD_STAGES = {
@@ -227,7 +227,7 @@ LEADERSHIP_USD_HALF = 25  # deadline o'tib ketgan bo'lsa
 STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun (har bron)
 
 # Kunlik sarhisob yopish majburiyati shu 4 kishida.
-DAILY_CLOSE_USERS = ("Gulmira", "Xonzoda", "Samandar")  # Shodiya 2026-10-03'da chiqarildi (SMM/Stories vazifalari olib tashlandi)
+DAILY_CLOSE_USERS = ("Gulmira", "Xonzoda", "Shodiya", "Samandar")
 WORKDAYS_PER_MONTH = 25  # intizom bo'linadigan ish kunlari (yakshanba dam)
 STORIES_PROJECT_USD = 100  # har biriktirilgan "Stories" loyihasi uchun OYLIK maksimal ($/25 kun = kunlik ulush)
 
@@ -267,9 +267,11 @@ DEFAULT_CHECKLIST = {
         "Ssenarist yordami (Xonzodaga)",
     ],
     "Shodiya": [
-        "Stories joylandi",
-        "Kadr Studio SMM: caption / oblojka / opisaniya",
-        "Videolar Instagram'ga joylandi",
+        "G'oyalar: bugun taklif qilingan g'oyalar (qaysi loyiha, nomi)",
+        "Rad etilgan/qaytarilgan g'oyalarni qayta ishlash",
+        "Loyiha strategiyasi / PR: nima ustida ishladi (kontent kalendar, referens, kollab)",
+        "KADR MEDIA rahbarligi: loyiha holati va bosqichlar nazorati",
+        "Montaj yoki operatorlik (agar bugun qilgan bo'lsa)",
     ],
 }
 
@@ -411,11 +413,11 @@ SALARY = {
              "montaj": True, "operator": True, "lead": True},
     # Institut o'qishi boshlangani uchun kunning yarmida (~14:00) keladi —
     # Intizom (kelish vaqtiga bog'liq) olib tashlandi, faqat Fiksa qoladi.
-    # 2026-10-03: Shodiya SMM/Stories/operatorlikdan chiqarildi — asosiy ish
-    # KREATIV STRATEG (CREATIVE_PROJECTS bo'yicha, qabul qilingan g'oyalarga
-    # qarab to'lanadi). Faqat KADR MEDIA rahbarligi + (vaqti yetsa) montaj qoladi.
-    "Shodiya": {"title": "Kreativ strateg + montajchi", "som": {"Fiksa": 500000},
-                "lead": True, "montaj": True, "creative_strategist": True},
+    # 2026-10-03: Shodiya SMM/Stories'dan chiqarildi — asosiy ish KREATIV STRATEG
+    # (CREATIVE_PROJECTS bo'yicha, qabul qilingan g'oyalarga qarab to'lanadi).
+    # KADR MEDIA rahbarligi, kun yopish, ba'zida montaj va operatorlik qoladi.
+    "Shodiya": {"title": "Kreativ strateg + montajchi + operator", "som": {"Fiksa": 500000},
+                "lead": True, "montaj": True, "operator": True, "creative_strategist": True},
     # Sotuv operatori — komissiya (% sotuvdan) hali kelishilmagan, keyin qo'shiladi.
     "Nodira": {"title": "Sotuv operatori", "som": {"Fiksa": 1000000, "Intizom": 500000}},
     # Kun yarmidan keladi — ATTENDANCE_USERS'da (Fiksa kunlik hisoblansin
@@ -697,7 +699,7 @@ TEAM = [
     ("Oygul",            "oygul",   "oygu2026", "editor",      "Montajchi",               "#FF6482", None),
     ("Umid",             "umid",    "umid2026", "lead",        "Montajchi + operator + loyiha rahbari", "#5E5CE6", None),
     ("Umida",            "umida",   "umid2027", "editor",      "Montajchi · Ssenarist",   "#AC8E68", None),
-    ("Shodiya",          "shodiya", "shod2026", "lead",        "Kreativ strateg + montajchi", "#32D74B", None),
+    ("Shodiya",          "shodiya", "shod2026", "lead",        "Kreativ strateg + montajchi + operator", "#32D74B", None),
     # Kun yarmidan (taxminan tushdan keyin) keladi — shuning uchun Intizom
     # (kelish vaqtiga bog'liq) hisoblanmaydi, faqat Fiksa + montaj puli.
     ("Murod",            "murod",   "murod2026","editor",      "Montajchi",               "#00C7BE", None),
@@ -7331,10 +7333,12 @@ EVIDENCE_FIELDS = {
     "Gulmira": ["studio_created"],
     "Xonzoda": ["scripts"],
     "Umida": ["posted", "scripts"],
+    "Shodiya": ["ideas_sent", "ideas_accepted", "shoots"],
 }
 EVIDENCE_LABEL = {
     "shoots": "🎥 Syomka", "qc": "🔎 Sifat tekshirdi", "accepted": "✅ Video qabul qildi",
     "studio_created": "🎬 Studio bron kiritdi", "scripts": "✍️ Ssenariy", "posted": "📷 Instagram'ga joyladi",
+    "ideas_sent": "💡 G'oya yubordi", "ideas_accepted": "✅ G'oyasi qabul qilindi",
 }
 
 
@@ -7354,6 +7358,8 @@ def _today_evidence(conn, person, today):
         "studio_created": (lambda: c("SELECT COUNT(*) AS n FROM studio_bookings WHERE created_by=? AND CAST(created_at AS TEXT) LIKE ? AND (status IS NULL OR status<>'bekor_qilindi')", (person, like))),
         "scripts": (lambda: c("SELECT COUNT(*) AS n FROM scenarist_scripts WHERE author=? AND sdate=? AND (status IS NULL OR status<>'bekor_qilindi')", (person, tstr))),
         "posted": (lambda: c("SELECT COUNT(*) AS n FROM videos WHERE posted_by=? AND posted_at LIKE ? AND status='joylandi'", (person, like))),
+        "ideas_sent": (lambda: c("SELECT COUNT(*) AS n FROM creative_ideas WHERE created_by=? AND created_at LIKE ?", (person, like))),
+        "ideas_accepted": (lambda: c("SELECT COUNT(*) AS n FROM creative_ideas WHERE created_by=? AND decided_at LIKE ? AND status IN ('qabul','ishlatildi')", (person, like))),
     }
     out = []
     for key in EVIDENCE_FIELDS.get(person, []):
