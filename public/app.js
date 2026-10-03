@@ -1997,9 +1997,10 @@ async function viewCreative() {
       ${statTile('💡', `${accTotal}/${needTotal}`, 'Qabul qilingan g\'oyalar (bu oy)', 'green')}
       ${statTile('⏳', pend.length, 'Ko\'rib chiqilmoqda', 'orange')}
       ${showPay ? statTile('💵', money(d.payTotal), `Hisoblangan haq (maks $${d.payMaxUsd})`, 'blue') : ''}
+      ${showPay && d.closedDays != null ? statTile('🌙', `${d.closedDays}/${d.workdays}`, 'Yopilgan kunlar (haqqa ta\'sir qiladi)', 'purple') : ''}
     </div>
     ${d.isStrategist ? `<div class="panel"><button class="btn-save" id="idea_new">＋ Yangi g'oya taklif qilish</button>
-      <div class="muted" style="margin-top:6px">G'oya faqat loyiha rahbari/koordinator/CEO qabul qilgandan keyin hisobga o'tadi. Shablonning barcha maydoni to'ldirilishi shart.</div></div>` : ''}
+      <div class="muted" style="margin-top:6px">G'oya faqat loyiha rahbari/koordinator/CEO qabul qilgandan keyin hisobga o'tadi. Shablonning barcha maydoni to'ldirilishi shart. Yakuniy haq = qabul qilingan g'oyalar bo'yicha haq × yopilgan kunlar ulushi (kunni har kuni yoping va ertangi rejani yozing).</div></div>` : ''}
     <div class="cards-grid">${prog || emptyState()}</div>
     <div class="panel"><h3>⏳ Ko'rib chiqish kutilmoqda (${pend.length})</h3><div class="ceo-list">${pend.map(ideaCard).join('') || '<div class="muted">Yo\'q ✓</div>'}</div></div>
     <div class="panel"><h3>📚 G'oyalar tarixi</h3><div class="ceo-list">${rest.map(ideaCard).join('') || '<div class="muted">Hozircha yo\'q</div>'}</div></div>`;

@@ -5298,6 +5298,18 @@ def _creative_pay(conn, name, rate, ym=None):
     return total, details
 
 
+def _creative_pay_final(conn, name, rate, ym, today):
+    """Kreativ strateg YAKUNIY haqi: qabul qilingan g'oyalar bo'yicha haq ×
+    (yopilgan kunlar / oy ish kunlari) — kun yopadigan boshqa rahbarlar KPI'si
+    bilan bir xil mantiq (_kpi_after_discipline). Kun yopmaydigan bo'lsa — to'liq.
+    Qaytaradi: (summa, tafsilot, yopilgan kunlar yoki None, oy ish kunlari yoki None)."""
+    cp, det = _creative_pay(conn, name, rate, ym)
+    closed = wd = None
+    if cp > 0 and name in DAILY_CLOSE_USERS:
+        cp, closed, wd = _kpi_after_discipline(conn, name, cp, today)
+    return cp, det, closed, wd
+
+
 def _studio_client_bonus(conn):
     n = conn.execute("SELECT COUNT(*) AS n FROM studio_bookings WHERE (status IS NULL OR status<>'bekor_qilindi')").fetchone()["n"]
     return (n or 0) * STUDIO_CLIENT_BONUS
@@ -5929,9 +5941,11 @@ def compute_salary(conn, name, rate, ym=None):
         lbl = f"Rahbarlik ({len(det)} loyiha · reja bajarilishiga qarab)"
         comps.append({"label": lbl, "amount": lp, "kind": "lead", "detail": det})
     if cfg.get("creative_strategist"):
-        cp, cdet = _creative_pay(conn, name, rate, ym)
-        comps.append({"label": f"Kreativ strateg ({len(cdet)} loyiha · qabul qilingan g'oyalarga qarab)",
-                      "amount": cp, "kind": "creative", "detail": cdet})
+        cp, cdet, c_closed, c_wd = _creative_pay_final(conn, name, rate, ym, today)
+        lbl = f"Kreativ strateg ({len(cdet)} loyiha · qabul qilingan g'oyalarga qarab)"
+        if c_closed is not None:
+            lbl += f" · {c_closed}/{c_wd} kun yopilgan"
+        comps.append({"label": lbl, "amount": cp, "kind": "creative", "detail": cdet})
     if cfg.get("operator"):
         comps.append({"label": "Operator syomka puli (shu oy)", "amount": _op_earn(conn, name, ym), "kind": "auto"})
     if cfg.get("scenarist"):
@@ -6266,6 +6280,7 @@ def api_creative(user):
     ym = uz_now().strftime("%Y-%m")
     counts = _creative_counts(conn, ym)
     rate = get_usd_rate()
+    conn2 = get_db()
     show_pay = is_strat or role == "ceo"
     _total, pay_det = _creative_pay(conn, CREATIVE_STRATEGIST, rate, ym)
     pay_by_proj = {d["project"]: d for d in pay_det}
@@ -6300,8 +6315,12 @@ def api_creative(user):
            "template": [{"key": k, "label": lbl} for k, lbl in CREATIVE_TEMPLATE],
            "projects": list(CREATIVE_PROJECTS.keys()), "execWeight": CREATIVE_EXEC_WEIGHT}
     if show_pay:
-        res["payTotal"] = sum(d["usd"] for d in pay_det) * rate
+        final, _det, c_closed, c_wd = _creative_pay_final(conn2, CREATIVE_STRATEGIST, rate, ym, uz_today())
+        res["payTotal"] = final
+        res["payBeforeClose"] = sum(d["usd"] for d in pay_det) * rate
+        res["closedDays"], res["workdays"] = c_closed, c_wd
         res["payMaxUsd"] = sum(pc["usd"] for pc in CREATIVE_PROJECTS.values())
+    conn2.close()
     return res
 
 
