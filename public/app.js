@@ -288,6 +288,8 @@ const NAV_ITEMS = [
   { view: 'shoots',    icon: '📹', label: 'Kadr Media',     roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'studio',    icon: '🎥', label: 'Kadr Studio',   roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Gulmira', 'Xonzoda', 'Samandar'] },
   { view: 'myscripts', icon: '✍️', label: 'Ssenariylarim', roles: ['coordinator', 'editor', 'lead'], names: ['Xonzoda'] },
+  // Kreativ strateg (Shodiya) g'oyalari + qabul qiluvchilar (CEO, koordinator, loyiha rahbarlari)
+  { view: 'creative',  icon: '💡', label: 'G\'oyalar',     roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Xonzoda', 'Gulmira', 'Samandar', 'Shodiya'] },
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
   { view: 'cashflow',  icon: '💵', label: 'Pul oqimi',     roles: ['ceo'] },
@@ -300,7 +302,7 @@ const NAV_ITEMS = [
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
   { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Gulmira', 'Samandar', 'Xonzoda', 'Sardor', 'Umid', 'Shodiya', 'Nodira', 'Murod'] },
-  { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Samandar', 'Gulmira', 'Xonzoda', 'Shodiya', 'Umid', 'Nodira'] },
+  { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Samandar', 'Gulmira', 'Xonzoda', 'Umid', 'Nodira'] },
   { view: 'stats',     icon: '📈', label: 'Oylik statistika', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'reyting',   icon: '🏆', label: 'Reyting',        roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'shootstat', icon: '⏱', label: 'Syomka soatlari', roles: ['ceo', 'coordinator', 'lead'] },
@@ -353,6 +355,7 @@ function setActiveNav() {
 //  RENDER ROUTER
 // ============================================================
 const TITLES = {
+  creative:  ['G\'oyalar', 'Kreativ strategiya — taklif, qabul, ishlatilgan'],
   dashboard: ['Boshqaruv paneli', 'Bugungi holat — bir qarashda'],
   projects:  ['Loyihalar', 'Barcha loyihalar'],
   scripts:   ['Ssenariylar', 'Yozish, tasdiqlash, versiyalar'],
@@ -408,6 +411,7 @@ async function render() {
     else if (VIEW === 'shoots') await viewShoots();
     else if (VIEW === 'myscripts') await viewScenarist();
     else if (VIEW === 'salary') await viewSalary();
+    else if (VIEW === 'creative') await viewCreative();
     else if (VIEW === 'daily') await viewDaily();
     else if (VIEW === 'stats') await viewStats();
     else if (VIEW === 'reyting') await viewLeaderboard();
@@ -1831,9 +1835,15 @@ function openScenaristModal() {
 // ============================================================
 function salaryCard(p) {
   const rows = p.components.map((c) => {
-    const cls = (c.kind === 'auto' || c.kind === 'bonus') ? 'sal-auto' : (c.kind === 'lead' ? 'sal-lead' : (c.kind === 'penalty' ? 'sal-penalty' : ''));
+    const cls = (c.kind === 'auto' || c.kind === 'bonus') ? 'sal-auto' : ((c.kind === 'lead' || c.kind === 'creative') ? 'sal-lead' : (c.kind === 'penalty' ? 'sal-penalty' : ''));
     const val = c.kind === 'penalty' && c.amount < 0 ? `<span style="color:var(--red)">${money(c.amount)}</span>` : money(c.amount);
     let html = `<div class="mrow ${cls}"><span>${esc(c.label)}</span><b>${val}</b></div>`;
+    if (c.kind === 'creative' && c.detail && c.detail.length) {
+      html += c.detail.map((d) => {
+        if (d.frozen) return `<div class="mrow sal-sub"><span>↳ ${esc(d.project)} · 🧊 muzlatilgan</span><b class="muted">$0</b></div>`;
+        return `<div class="mrow sal-sub"><span>↳ ${esc(d.project)} · ${d.accepted}/${d.need} g'oya qabul · ${d.pct}%</span><b class="muted">$${d.usd}/${d.rate}</b></div>`;
+      }).join('');
+    }
     if (c.kind === 'lead' && c.detail && c.detail.length) {
       html += c.detail.map((d) => {
         if (d.frozen) return `<div class="mrow sal-sub"><span>↳ ${esc(d.matched || d.project)} · 🧊 muzlatilgan</span><b class="muted">$0</b></div>`;
@@ -1936,6 +1946,96 @@ function openEditPaymentModal(id, amt, date, note, onDone) {
       const r = await api('/api/payments/' + id, { method: 'PUT', body: JSON.stringify({ amount: a, pdate: $('#ep_date').value, note: $('#ep_note').value }) });
       if (r && r.error) { toast('⚠️ ' + r.error); return; }
       toast('✏️ To\'lov tuzatildi'); onDone();
+    });
+  });
+}
+
+// ============================================================
+//  KREATIV STRATEG — g'oyalar (taklif → qabul/rad → ishlatildi)
+// ============================================================
+const IDEA_STATUS = {
+  taklif: ['⏳ Kutilmoqda', 'st-orange'], qabul: ['✅ Qabul qilindi', 'st-green'],
+  ishlatildi: ['🚀 Ishlatildi', 'st-blue'], rad: ['❌ Rad etildi', 'st-red'],
+};
+async function viewCreative() {
+  const d = await api('/api/creative');
+  if (!d || d.error) { $('#content').innerHTML = emptyState(esc((d && d.error) || 'Xatolik')); return; }
+  const showPay = d.payTotal != null;
+  const prog = d.progress.map((p) => {
+    const pct = Math.min(100, Math.round(100 * p.accepted / (p.need || 1)));
+    const pay = showPay ? `<div class="muted" style="margin-top:4px">${p.frozen ? '🧊 muzlatilgan — $0' : `$${p.usd}/${p.rate} · ${p.pct}%`}</div>` : '';
+    return `<div class="team-card">
+      <div class="team-name">${esc(p.project)}${p.frozen ? ' 🧊' : ''}${p.missing ? ' ⚠️' : ''}</div>
+      <div class="muted">Rahbar: ${esc(p.responsible || '—')}</div>
+      <div class="rank-meter" style="margin:8px 0"><div class="rank-fill" style="width:${pct}%"></div></div>
+      <div class="ec-stats"><span>✅ ${p.accepted}/${p.need}</span><span>🚀 ${p.used}</span><span>⏳ ${p.pending}</span><span>❌ ${p.rejected}</span></div>
+      ${pay}
+    </div>`;
+  }).join('');
+  const ideaCard = (i) => {
+    const st = IDEA_STATUS[i.status] || [i.status, 'st-gray'];
+    const fields = d.template.map((t) => `<div><b>${esc(t.label)}:</b> ${esc(i[t.key])}</div>`).join('');
+    const btns = [];
+    if (i.canDecide) btns.push(`<button class="mini-btn green" data-cdec="accept" data-id="${i.id}">✅ Qabul</button><button class="mini-btn red" data-cdec="reject" data-id="${i.id}">❌ Rad</button>`);
+    if (i.canUse) btns.push(`<button class="mini-btn blue" data-cused="${i.id}">🚀 Ishlatildi</button>`);
+    if (i.canDelete) btns.push(`<button class="mini-btn gray" data-cdel="${i.id}">🗑 O'chirish</button>`);
+    return `<div class="ceo-item" style="display:block">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div><div class="ci-name">${esc(i.title)}</div><div class="ci-sub">${esc(i.project)} · ${esc(i.created_by)} · ${fmtDate(i.created_at)}</div></div>
+        <span class="pill ${st[1]}" style="align-self:flex-start">${st[0]}</span></div>
+      <details style="margin-top:6px"><summary class="muted">Tafsilot</summary>
+        <div style="padding:6px 0;line-height:1.55">${fields}${i.reason ? `<div><b>Izoh:</b> ${esc(i.reason)}</div>` : ''}${i.used_link ? `<div><b>Havola:</b> ${esc(i.used_link)}</div>` : ''}</div></details>
+      ${btns.length ? `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">${btns.join('')}</div>` : ''}
+    </div>`;
+  };
+  const pend = d.ideas.filter((i) => i.status === 'taklif');
+  const rest = d.ideas.filter((i) => i.status !== 'taklif');
+  const accTotal = d.progress.reduce((a, p) => a + p.accepted, 0);
+  const needTotal = d.progress.reduce((a, p) => a + p.need, 0);
+  $('#content').innerHTML = `
+    <div class="stats-grid">
+      ${statTile('💡', `${accTotal}/${needTotal}`, 'Qabul qilingan g\'oyalar (bu oy)', 'green')}
+      ${statTile('⏳', pend.length, 'Ko\'rib chiqilmoqda', 'orange')}
+      ${showPay ? statTile('💵', money(d.payTotal), `Hisoblangan haq (maks $${d.payMaxUsd})`, 'blue') : ''}
+    </div>
+    ${d.isStrategist ? `<div class="panel"><button class="btn-save" id="idea_new">＋ Yangi g'oya taklif qilish</button>
+      <div class="muted" style="margin-top:6px">G'oya faqat loyiha rahbari/koordinator/CEO qabul qilgandan keyin hisobga o'tadi. Shablonning barcha maydoni to'ldirilishi shart.</div></div>` : ''}
+    <div class="cards-grid">${prog || emptyState()}</div>
+    <div class="panel"><h3>⏳ Ko'rib chiqish kutilmoqda (${pend.length})</h3><div class="ceo-list">${pend.map(ideaCard).join('') || '<div class="muted">Yo\'q ✓</div>'}</div></div>
+    <div class="panel"><h3>📚 G'oyalar tarixi</h3><div class="ceo-list">${rest.map(ideaCard).join('') || '<div class="muted">Hozircha yo\'q</div>'}</div></div>`;
+  const act = async (url, body, okMsg) => {
+    const r = await api(url, { method: 'POST', body: JSON.stringify(body || {}) });
+    if (r && r.error) { toast(r.error); return; }
+    toast(okMsg); render();
+  };
+  document.querySelectorAll('[data-cdec]').forEach((b) => b.addEventListener('click', async () => {
+    const accept = b.dataset.cdec === 'accept';
+    let reason = '';
+    if (!accept) { reason = prompt('Rad etish sababi (muallif ko\'radi):') || ''; if (reason.trim().length < 5) { toast('Sabab kamida 5 belgi bo\'lsin'); return; } }
+    await act(`/api/creative/ideas/${b.dataset.id}/decide`, { action: b.dataset.cdec, reason }, accept ? '✅ Qabul qilindi' : '❌ Rad etildi');
+  }));
+  document.querySelectorAll('[data-cused]').forEach((b) => b.addEventListener('click', async () => {
+    const link = prompt('Joylangan post/video havolasi (ixtiyoriy):') || '';
+    await act(`/api/creative/ideas/${b.dataset.cused}/used`, { link }, '🚀 Ishlatildi deb belgilandi');
+  }));
+  document.querySelectorAll('[data-cdel]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('G\'oya o\'chirilsinmi?')) return;
+    await act(`/api/creative/ideas/${b.dataset.cdel}/delete`, {}, '🗑 O\'chirildi');
+  }));
+  const nb = $('#idea_new');
+  if (nb) nb.addEventListener('click', () => {
+    openModal('Yangi g\'oya', `
+      <div class="field"><label>Loyiha</label><select id="ci_project">${d.projects.map((p) => `<option>${esc(p)}</option>`).join('')}</select></div>
+      <div class="field"><label>G'oya nomi</label><input id="ci_title" placeholder="Qisqa, aniq nom" /></div>
+      ${d.template.map((t) => `<div class="field"><label>${esc(t.label)}</label><textarea id="ci_${t.key}" rows="2"></textarea></div>`).join('')}
+      <div class="modal-actions"><button class="btn-save" id="ci_save">Yuborish</button></div>`, () => {
+      $('#ci_save').addEventListener('click', async () => {
+        const body = { project: $('#ci_project').value, title: $('#ci_title').value };
+        d.template.forEach((t) => { body[t.key] = $('#ci_' + t.key).value; });
+        const r = await api('/api/creative/ideas', { method: 'POST', body: JSON.stringify(body) });
+        if (r && r.error) { toast(r.error); return; }
+        closeModal(); toast('💡 G\'oya yuborildi'); render();
+      });
     });
   });
 }

@@ -183,7 +183,7 @@ DEFAULT_PLAYBOOKS = {
 }
 # Kadr Media (ichki syomka) — studio TUSHUMIga pul hisoblanmaydi (faqat xona/vaqt band + operator puli)
 STUDIO_NO_INCOME_TYPES = ("kadr_media",)
-STUDIO_OPERATORS = ("Samandar", "Umid", "Shodiya")
+STUDIO_OPERATORS = ("Samandar", "Umid")  # Shodiya 2026-10-03'da operatorlikdan chiqarildi (OPERATOR_PAY tarixiy yozuvlar uchun qoladi)
 # Sotuv operatorlari — CRM (lid) bo'limiga kirish huquqi. Kelajakda ko'payadi.
 CRM_USERS = ("Nodira",)
 LEAD_STAGES = {
@@ -227,7 +227,7 @@ LEADERSHIP_USD_HALF = 25  # deadline o'tib ketgan bo'lsa
 STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun (har bron)
 
 # Kunlik sarhisob yopish majburiyati shu 4 kishida.
-DAILY_CLOSE_USERS = ("Gulmira", "Xonzoda", "Shodiya", "Samandar")
+DAILY_CLOSE_USERS = ("Gulmira", "Xonzoda", "Samandar")  # Shodiya 2026-10-03'da chiqarildi (SMM/Stories vazifalari olib tashlandi)
 WORKDAYS_PER_MONTH = 25  # intizom bo'linadigan ish kunlari (yakshanba dam)
 STORIES_PROJECT_USD = 100  # har biriktirilgan "Stories" loyihasi uchun OYLIK maksimal ($/25 kun = kunlik ulush)
 
@@ -411,9 +411,11 @@ SALARY = {
              "montaj": True, "operator": True, "lead": True},
     # Institut o'qishi boshlangani uchun kunning yarmida (~14:00) keladi —
     # Intizom (kelish vaqtiga bog'liq) olib tashlandi, faqat Fiksa qoladi.
-    "Shodiya": {"title": "Loyiha rahbari + montajchi + operator + SMM", "som": {"Fiksa": 500000},
-                "usd": {"SMM": 40}, "stories_projects_usd": STORIES_PROJECT_USD, "lead": True, "montaj": True,
-                "operator": True, "close_link": ["SMM"]},
+    # 2026-10-03: Shodiya SMM/Stories/operatorlikdan chiqarildi — asosiy ish
+    # KREATIV STRATEG (CREATIVE_PROJECTS bo'yicha, qabul qilingan g'oyalarga
+    # qarab to'lanadi). Faqat KADR MEDIA rahbarligi + (vaqti yetsa) montaj qoladi.
+    "Shodiya": {"title": "Kreativ strateg + montajchi", "som": {"Fiksa": 500000},
+                "lead": True, "montaj": True, "creative_strategist": True},
     # Sotuv operatori — komissiya (% sotuvdan) hali kelishilmagan, keyin qo'shiladi.
     "Nodira": {"title": "Sotuv operatori", "som": {"Fiksa": 1000000, "Intizom": 500000}},
     # Kun yarmidan keladi — ATTENDANCE_USERS'da (Fiksa kunlik hisoblansin
@@ -493,6 +495,38 @@ REELS_QUOTA_START_DATE = "2026-09-29"
 MONTHLY_VOLUME_BONUS_TARGET = 60
 MONTHLY_VOLUME_BONUS_AMOUNT = 1000000
 MONTHLY_VOLUME_BONUS_START_DATE = "2026-10-01"
+
+# Kunlik 2 ta reels normasidan ozod: montaj ularning asosiy ishi emas (faqat
+# vaqti yetsa qiladi), shuning uchun majburiy norma/jarima tegishli emas.
+REELS_QUOTA_EXEMPT = ("Shodiya",)
+
+# KREATIV STRATEG (2026-10-03, CEO bilan kelishilgan; 60 kunlik sinov). Haq
+# rahbarlik puli bilan bir xil mantiqda: har loyiha uchun stavka ($) × (qabul
+# qilingan g'oyalar / shu oy uchun talab, 100% dan oshmaydi); muzlatilgan
+# loyiha = $0. G'oya FAQAT loyiha rahbari/CEO/koordinator qabul qilgandagina
+# sanaladi (muallif o'zi qabul qila olmaydi). CREATIVE_EXEC_WEIGHT > 0 bo'lsa,
+# haqning shu ulushi "ishlatilgan" (ishlab chiqarilgan) g'oyalarga bog'lanadi.
+CREATIVE_STRATEGIST = "Shodiya"
+CREATIVE_START_MONTH = "2026-10"
+CREATIVE_EXEC_WEIGHT = 0.0
+CREATIVE_PROJECTS = {
+    "Kadr Studio":            {"usd": 50, "ideas": 4},
+    "KADR MEDIA":             {"usd": 50, "ideas": 4},
+    "Irs_uzbekistan":         {"usd": 50, "ideas": 4},
+    "Dr Temur Nizamov":       {"usd": 50, "ideas": 4},
+    "Rohatoy Murodullayevna": {"usd": 50, "ideas": 4},
+    "Shirina Xalitova":       {"usd": 30, "ideas": 4},
+    "MEDLAYT klinika":        {"usd": 30, "ideas": 4},
+}
+# G'oya shabloni: barcha maydon to'ldirilmasa g'oya qabul qilinmaydi.
+CREATIVE_TEMPLATE = (
+    ("goal", "Maqsad (nimaga erishamiz)"),
+    ("audience", "Auditoriya (kim uchun)"),
+    ("hook", "Hook (birinchi 3 soniya)"),
+    ("outline", "Ssenariy skeleti / format"),
+    ("reference", "Referens (misol havolasi)"),
+    ("kpi", "Ko'rsatkich (qanday o'lchaymiz)"),
+)
 
 # Dushanba/Juma planyorka (kompaniya rejalashtirish yig'ilishi) — mas'ul
 # Gulmira, soat 21:00gacha dashboardda tasdiqlanmasa jarima.
@@ -663,7 +697,7 @@ TEAM = [
     ("Oygul",            "oygul",   "oygu2026", "editor",      "Montajchi",               "#FF6482", None),
     ("Umid",             "umid",    "umid2026", "lead",        "Montajchi + operator + loyiha rahbari", "#5E5CE6", None),
     ("Umida",            "umida",   "umid2027", "editor",      "Montajchi · Ssenarist",   "#AC8E68", None),
-    ("Shodiya",          "shodiya", "shod2026", "lead",        "Loyiha rahbari + montajchi + operator + SMM", "#32D74B", None),
+    ("Shodiya",          "shodiya", "shod2026", "lead",        "Kreativ strateg + montajchi", "#32D74B", None),
     # Kun yarmidan (taxminan tushdan keyin) keladi — shuning uchun Intizom
     # (kelish vaqtiga bog'liq) hisoblanmaydi, faqat Fiksa + montaj puli.
     ("Murod",            "murod",   "murod2026","editor",      "Montajchi",               "#00C7BE", None),
@@ -1001,6 +1035,12 @@ def init_db():
     # belgilaydi (cron ikki marta yubormasligi uchun).
     conn.execute(f"""CREATE TABLE IF NOT EXISTS monthly_report_log (
         id {pk}, ym TEXT UNIQUE, sent_at {ts})""")
+    # Kreativ strateg g'oyalari: taklif -> qabul/rad -> ishlatildi.
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS creative_ideas (
+        id {pk}, project TEXT, title TEXT, goal TEXT, audience TEXT, hook TEXT,
+        outline TEXT, reference TEXT, kpi TEXT, status TEXT DEFAULT 'taklif',
+        reason TEXT DEFAULT '', created_by TEXT, created_at TEXT,
+        decided_by TEXT, decided_at TEXT, used_at TEXT, used_link TEXT DEFAULT '')""")
     # OMBOR — rol qo'llanmalari (bilim bazasi) + onboarding
     conn.execute(f"""CREATE TABLE IF NOT EXISTS playbooks (
         id {pk}, role_key TEXT, title TEXT, sections TEXT DEFAULT '[]',
@@ -5206,6 +5246,56 @@ def _leadership_pay(conn, name, rate, ym=None):
     return total, details
 
 
+def _creative_counts(conn, ym):
+    """{loyiha: {accepted, used, pending, rejected}} — shu oy uchun. Qabul qilinganlar
+    QAROR sanasi (decided_at) bo'yicha, kutilayotganlar yaratilgan sana bo'yicha."""
+    out = {}
+    for r in conn.execute(
+            "SELECT project, status, created_at, decided_at FROM creative_ideas").fetchall():
+        d = out.setdefault(r["project"], {"accepted": 0, "used": 0, "pending": 0, "rejected": 0})
+        st = r["status"]
+        if st in ("qabul", "ishlatildi") and (r["decided_at"] or "").startswith(ym):
+            d["accepted"] += 1
+            if st == "ishlatildi":
+                d["used"] += 1
+        elif st == "taklif" and (r["created_at"] or "").startswith(ym):
+            d["pending"] += 1
+        elif st == "rad" and (r["decided_at"] or "").startswith(ym):
+            d["rejected"] += 1
+    return out
+
+
+def _creative_pay(conn, name, rate, ym=None):
+    """Kreativ strateg puli: har loyiha uchun stavka ($) × (qabul qilingan g'oyalar /
+    talab, cap 100%). Muzlatilgan yoki topilmagan loyiha = $0 (rahbarlik puli kabi).
+    Qaytaradi: (jami so'm, [loyiha tafsilotlari])."""
+    ym = ym or uz_now().strftime("%Y-%m")
+    if name != CREATIVE_STRATEGIST or ym < CREATIVE_START_MONTH:
+        return 0, []
+    counts = _creative_counts(conn, ym)
+    projs = {r["name"]: dict(r) for r in conn.execute("SELECT name, frozen FROM projects").fetchall()}
+    total, details = 0, []
+    for pname, pc in CREATIVE_PROJECTS.items():
+        need = pc["ideas"]
+        c = counts.get(pname, {})
+        acc, used = c.get("accepted", 0), c.get("used", 0)
+        info = projs.get(pname)
+        if info is None or info.get("frozen"):
+            details.append({"project": pname, "matched": pname, "usd": 0, "pct": 0, "rate": pc["usd"],
+                            "accepted": acc, "used": used, "need": need, "frozen": True})
+            continue
+        acc_pct = min(acc / need, 1.0) if need else 0.0
+        used_pct = min(used / need, 1.0) if need else 0.0
+        w = CREATIVE_EXEC_WEIGHT
+        pct = (1 - w) * acc_pct + w * used_pct
+        usd = int(round(pc["usd"] * pct))
+        total += usd * rate
+        details.append({"project": pname, "matched": pname, "usd": usd, "pct": int(round(pct * 100)),
+                        "rate": pc["usd"], "accepted": acc, "used": used, "need": need,
+                        "byPlan": True, "full": pct >= 1.0})
+    return total, details
+
+
 def _studio_client_bonus(conn):
     n = conn.execute("SELECT COUNT(*) AS n FROM studio_bookings WHERE (status IS NULL OR status<>'bekor_qilindi')").fetchone()["n"]
     return (n or 0) * STUDIO_CLIENT_BONUS
@@ -5507,6 +5597,8 @@ def _reels_quota_penalty(conn, name, today):
     o'sha kuni muddati (due_at) kelgan reels sonidan oshmagan holda, kamida
     REELS_QUOTA_PER_DAY tugatilishi (montaj_at) kerak. Agar o'sha kuni umuman
     reels biriktirilmagan/kam biriktirilgan bo'lsa — talab shu songa tushadi."""
+    if name in REELS_QUOTA_EXEMPT:
+        return 0, []
     ym = today.strftime("%Y-%m")
     month_first = datetime.date(today.year, today.month, 1)
     first = max(month_first, datetime.date.fromisoformat(REELS_QUOTA_START_DATE))
@@ -5834,6 +5926,10 @@ def compute_salary(conn, name, rate, ym=None):
         lp, det = _leadership_pay(conn, name, rate, ym)
         lbl = f"Rahbarlik ({len(det)} loyiha · reja bajarilishiga qarab)"
         comps.append({"label": lbl, "amount": lp, "kind": "lead", "detail": det})
+    if cfg.get("creative_strategist"):
+        cp, cdet = _creative_pay(conn, name, rate, ym)
+        comps.append({"label": f"Kreativ strateg ({len(cdet)} loyiha · qabul qilingan g'oyalarga qarab)",
+                      "amount": cp, "kind": "creative", "detail": cdet})
     if cfg.get("operator"):
         comps.append({"label": "Operator syomka puli (shu oy)", "amount": _op_earn(conn, name, ym), "kind": "auto"})
     if cfg.get("scenarist"):
@@ -6141,6 +6237,177 @@ def api_admin_monthly_report_send(user, ym=None):
     result = _send_monthly_report(conn, ym, mark_sent=False)
     conn.close()
     return result
+
+
+def _creative_can_decide(user, project_responsible, author):
+    """G'oyani qabul/rad qila oladi: CEO, koordinator, yoki shu loyihaning rahbari —
+    lekin muallifning o'zi hech qachon."""
+    if user["name"] == author:
+        return False
+    return user["role"] in ("ceo", "coordinator") or (
+        bool(project_responsible) and project_responsible == user["name"])
+
+
+def api_creative(user):
+    """Kreativ strateg paneli: loyiha bo'yicha progress, g'oyalar ro'yxati, ruxsatlar.
+    Ko'radi: strateg (o'zinikini), CEO/koordinator (hammasini), loyiha rahbari
+    (faqat o'z loyihalaridagi g'oyalarni)."""
+    name, role = user["name"], user["role"]
+    is_strat = name == CREATIVE_STRATEGIST
+    conn = get_db()
+    projs = {r["name"]: dict(r) for r in conn.execute(
+        "SELECT name, responsible, frozen FROM projects").fetchall()}
+    my_projects = {p for p in CREATIVE_PROJECTS if projs.get(p, {}).get("responsible") == name}
+    if not (is_strat or role in ("ceo", "coordinator") or my_projects):
+        conn.close()
+        return {"error": "Ruxsat yo'q"}, 403
+    ym = uz_now().strftime("%Y-%m")
+    counts = _creative_counts(conn, ym)
+    rate = get_usd_rate()
+    show_pay = is_strat or role == "ceo"
+    _total, pay_det = _creative_pay(conn, CREATIVE_STRATEGIST, rate, ym)
+    pay_by_proj = {d["project"]: d for d in pay_det}
+    progress = []
+    for pname, pc in CREATIVE_PROJECTS.items():
+        if not (is_strat or role in ("ceo", "coordinator") or pname in my_projects):
+            continue
+        c = counts.get(pname, {})
+        info = projs.get(pname) or {}
+        row = {"project": pname, "need": pc["ideas"], "rate": pc["usd"],
+               "accepted": c.get("accepted", 0), "used": c.get("used", 0),
+               "pending": c.get("pending", 0), "rejected": c.get("rejected", 0),
+               "responsible": info.get("responsible") or "", "frozen": bool(info.get("frozen")),
+               "missing": pname not in projs}
+        if show_pay:
+            row["pct"] = (pay_by_proj.get(pname) or {}).get("pct", 0)
+            row["usd"] = (pay_by_proj.get(pname) or {}).get("usd", 0)
+        progress.append(row)
+    ideas = []
+    for r in conn.execute("SELECT * FROM creative_ideas ORDER BY id DESC LIMIT 300").fetchall():
+        d = dict(r)
+        if not (is_strat or role in ("ceo", "coordinator") or d["project"] in my_projects):
+            continue
+        resp = (projs.get(d["project"]) or {}).get("responsible")
+        d["canDecide"] = d["status"] == "taklif" and _creative_can_decide(user, resp, d["created_by"])
+        d["canUse"] = d["status"] == "qabul" and (is_strat or _creative_can_decide(user, resp, d["created_by"]))
+        d["canDelete"] = d["status"] == "taklif" and (name == d["created_by"] or role == "ceo")
+        ideas.append(d)
+    conn.close()
+    res = {"month": ym, "isStrategist": is_strat, "strategist": CREATIVE_STRATEGIST,
+           "progress": progress, "ideas": ideas,
+           "template": [{"key": k, "label": lbl} for k, lbl in CREATIVE_TEMPLATE],
+           "projects": list(CREATIVE_PROJECTS.keys()), "execWeight": CREATIVE_EXEC_WEIGHT}
+    if show_pay:
+        res["payTotal"] = sum(d["usd"] for d in pay_det) * rate
+        res["payMaxUsd"] = sum(pc["usd"] for pc in CREATIVE_PROJECTS.values())
+    return res
+
+
+def api_creative_submit(user, b):
+    if user["name"] != CREATIVE_STRATEGIST:
+        return {"error": "Faqat kreativ strateg g'oya taklif qila oladi"}, 403
+    project = (b.get("project") or "").strip()
+    if project not in CREATIVE_PROJECTS:
+        return {"error": "Bu loyiha kreativ strategiya ro'yxatida yo'q"}, 400
+    title = (b.get("title") or "").strip()
+    fields = {k: (b.get(k) or "").strip() for k, _ in CREATIVE_TEMPLATE}
+    if len(title) < 3 or any(len(v) < 5 for v in fields.values()):
+        return {"error": "Sarlavha va shablonning BARCHA maydonlari to'ldirilishi kerak (har biri kamida 5 belgi)"}, 400
+    conn = get_db()
+    resp_row = conn.execute("SELECT responsible FROM projects WHERE name=?", (project,)).fetchone()
+    cols = "project, title, goal, audience, hook, outline, reference, kpi, status, created_by, created_at"
+    params = (project, title, fields["goal"], fields["audience"], fields["hook"], fields["outline"],
+              fields["reference"], fields["kpi"], "taklif", user["name"], now_local())
+    sql = f"INSERT INTO creative_ideas ({cols}) VALUES ({','.join('?' * 11)})"
+    if IS_PG:
+        iid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        iid = conn.execute(sql, params).lastrowid
+    log_audit(conn, user["name"], "kreativ g'oya taklif qildi", f"#{iid} {project} · {title}")
+    conn.commit()
+    conn.close()
+    responsible = (resp_row["responsible"] if resp_row else "") or ""
+    # Rahbari muallifning o'zi bo'lsa (masalan KADR MEDIA) — qabul qiluvchi CEO/koordinator.
+    who = _telegram_mention(responsible) if responsible and responsible != user["name"] else "CEO / koordinator"
+    send_telegram(f"💡 <b>Yangi kreativ g'oya</b>\n📁 {project}\n📝 {title}\n👤 {user['name']}\n👀 Ko'rib chiqadi: {who}")
+    return {"ok": True, "id": iid}
+
+
+def api_creative_decide(user, iid, b):
+    action = (b.get("action") or "").strip()
+    reason = (b.get("reason") or "").strip()
+    if action not in ("accept", "reject"):
+        return {"error": "action noto'g'ri"}, 400
+    conn = get_db()
+    row = conn.execute("SELECT * FROM creative_ideas WHERE id=?", (iid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    row = dict(row)
+    if row["status"] != "taklif":
+        conn.close()
+        return {"error": "Bu g'oya allaqachon ko'rib chiqilgan"}, 400
+    pr = conn.execute("SELECT responsible FROM projects WHERE name=?", (row["project"],)).fetchone()
+    resp = pr["responsible"] if pr else None
+    if not _creative_can_decide(user, resp, row["created_by"]):
+        conn.close()
+        return {"error": "Bu g'oyani qabul/rad qilishga ruxsatingiz yo'q"}, 403
+    if action == "reject" and len(reason) < 5:
+        conn.close()
+        return {"error": "Rad etish sababini yozing (kamida 5 belgi)"}, 400
+    status = "qabul" if action == "accept" else "rad"
+    conn.execute("UPDATE creative_ideas SET status=?, reason=?, decided_by=?, decided_at=? WHERE id=?",
+                 (status, reason, user["name"], now_local(), iid))
+    log_audit(conn, user["name"], "kreativ g'oyani " + ("qabul qildi" if status == "qabul" else "rad etdi"),
+              f"#{iid} {row['project']} · {row['title']}")
+    conn.commit()
+    conn.close()
+    icon = "✅" if status == "qabul" else "❌"
+    send_telegram(f"{icon} <b>G'oya {'qabul qilindi' if status == 'qabul' else 'rad etildi'}</b>\n📁 {row['project']}\n"
+                  f"📝 {row['title']}\n👤 Muallif: {row['created_by']} · 👮 {user['name']}"
+                  + (f"\n💬 {reason}" if reason else ""))
+    return {"ok": True, "status": status}
+
+
+def api_creative_used(user, iid, b):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM creative_ideas WHERE id=?", (iid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    row = dict(row)
+    if row["status"] != "qabul":
+        conn.close()
+        return {"error": "Faqat qabul qilingan g'oya 'ishlatildi' deb belgilanadi"}, 400
+    pr = conn.execute("SELECT responsible FROM projects WHERE name=?", (row["project"],)).fetchone()
+    resp = pr["responsible"] if pr else None
+    if not (user["name"] == CREATIVE_STRATEGIST or _creative_can_decide(user, resp, row["created_by"])):
+        conn.close()
+        return {"error": "Ruxsat yo'q"}, 403
+    link = (b.get("link") or "").strip()
+    conn.execute("UPDATE creative_ideas SET status='ishlatildi', used_at=?, used_link=? WHERE id=?",
+                 (now_local(), link, iid))
+    log_audit(conn, user["name"], "kreativ g'oya ishlatildi", f"#{iid} {row['project']} · {row['title']}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_creative_delete(user, iid):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM creative_ideas WHERE id=?", (iid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    row = dict(row)
+    if row["status"] != "taklif" or not (user["name"] == row["created_by"] or user["role"] == "ceo"):
+        conn.close()
+        return {"error": "Faqat ko'rib chiqilmagan g'oyani muallif yoki CEO o'chira oladi"}, 403
+    conn.execute("DELETE FROM creative_ideas WHERE id=?", (iid,))
+    log_audit(conn, user["name"], "kreativ g'oya o'chirildi", f"#{iid} {row['project']} · {row['title']}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 def api_my_salary_history(user):
@@ -8623,6 +8890,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._forbid()
             ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
             return self._json(api_payroll(user, ym))
+        if path == "/api/creative":
+            return self._json(api_creative(user))
         if path == "/api/admin/monthly-report-preview":
             if role != "ceo":
                 return self._forbid()
@@ -8745,6 +9014,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_archive_month(user, b))
         if path == "/api/admin/monthly-report-send":
             return self._json(api_admin_monthly_report_send(user, (b or {}).get("ym")))
+        if path == "/api/creative/ideas":
+            return self._json(api_creative_submit(user, b or {}))
+        if len(seg) == 5 and seg[1] == "creative" and seg[2] == "ideas" and seg[4] in ("decide", "used", "delete"):
+            iid = self._int(seg[3])
+            if not iid:
+                return self._json({"error": "Topilmadi"}, 404)
+            if seg[4] == "decide":
+                return self._json(api_creative_decide(user, iid, b or {}))
+            if seg[4] == "used":
+                return self._json(api_creative_used(user, iid, b or {}))
+            return self._json(api_creative_delete(user, iid))
         if path == "/api/debug/send-message":
             return self._forbid() if r != "ceo" else self._json(api_debug_send_message(b))
         if path == "/api/editors/recompute":
