@@ -1961,7 +1961,11 @@ const IDEA_STATUS = {
   ishlatildi: ['🚀 Ishlatildi', 'st-blue'], rad: ['❌ Rad etildi', 'st-red'],
 };
 async function viewGoals() {
-  const d = await api('/api/promo');
+  let d;
+  try { d = await api('/api/promo'); } catch (e) {
+    if (e.message === '401') throw e;
+    $('#content').innerHTML = emptyState('Shartlarni yuklab bo\'lmadi: ' + esc(e.message)); return;
+  }
   if (!d || d.error) { $('#content').innerHTML = emptyState(esc((d && d.error) || 'Xatolik')); return; }
   const fmtV = (c, v) => (c.unit === "so'm" ? money(v) : `${(v || 0).toLocaleString('ru-RU').replace(/,/g, ' ')} ${c.unit || ''}`);
   const bar = (c) => `<div class="rank-meter" style="margin:6px 0"><div class="rank-fill" style="width:${c.pct}%"></div></div>`;
@@ -2006,6 +2010,7 @@ async function viewGoals() {
       ${blocksHtml(c)}${extra}</div>`;
   };
   const personHtml = (p) => {
+    if (p.error) return `<div class="panel"><h3>🎯 ${esc(p.person)} — Safari tanlovi</h3><div class="muted">⚠️ Hisoblashda xato: ${esc(p.error)}</div></div>`;
     const head = `<h3>🎯 ${esc(p.person)} — Safari tanlovi ${p.allOk ? '· 🏆 HAMMA SHART BAJARILDI' : `· ${p.okCount}/${p.conditions.length} shart`}</h3>`;
     const info = `<div class="muted" style="line-height:1.6;margin-bottom:8px">Davr: <b>${fmtDate(p.start)} — ${fmtDate(p.end)}</b> (${p.started ? `${Math.min(p.dayNo, p.totalDays)}-kun, qolgan ${p.daysLeft} kun` : 'hali boshlanmagan'}). Hisob 3 oylik JAMI bo'yicha, har shart 100% bajarilganda yutiladi.</div>`;
     return `<div class="panel">${head}${info}<div class="cards-grid">${p.conditions.map((c) => condHtml(c, p)).join('')}</div></div>`;
@@ -2014,7 +2019,7 @@ async function viewGoals() {
   if (d.isCeo) {
     summary = `<div class="panel"><h3>🏁 Umumiy holat (faqat CEO)</h3><div class="ceo-list">${d.people.map((p) =>
       `<div class="ceo-item" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><div style="flex:1;min-width:120px"><div class="ci-name">${esc(p.person)}</div></div>
-        <div class="ci-sub">${p.allOk ? '🏆 ' : ''}${p.okCount}/${p.conditions.length} shart bajarilgan · o'rtacha ${Math.round(p.conditions.reduce((a, c) => a + c.pct, 0) / (p.conditions.length || 1))}%${p.conditions.some((c) => c.behind) ? ' · ⚠️ orqada: ' + p.conditions.filter((c) => c.behind).map((c) => esc(c.label.split(' — ').slice(0, 2).join(' — '))).join(', ') : ''}</div></div>`).join('')}</div></div>`;
+        <div class="ci-sub">${p.error ? '⚠️ xato: ' + esc(p.error) : ''}${p.allOk ? '🏆 ' : ''}${p.error ? '' : p.okCount + '/' + p.conditions.length} shart bajarilgan · o'rtacha ${Math.round(p.conditions.reduce((a, c) => a + c.pct, 0) / (p.conditions.length || 1))}%${p.conditions.some((c) => c.behind) ? ' · ⚠️ orqada: ' + p.conditions.filter((c) => c.behind).map((c) => esc(c.label.split(' — ').slice(0, 2).join(' — '))).join(', ') : ''}</div></div>`).join('')}</div></div>`;
   }
   let credit = '';
   if (d.isCeo) {
@@ -2027,7 +2032,12 @@ async function viewGoals() {
         <input type="date" data-gd="${p.id}" value="${esc(p.sourced_at || d.today)}">
         <button class="mini-btn blue" data-gsave="${p.id}">Saqlash</button></div>`).join('')}</div></div>`;
   }
-  $('#content').innerHTML = summary + d.people.map(personHtml).join('') + credit;
+  let html;
+  try { html = summary + d.people.map(personHtml).join('') + credit; } catch (e) {
+    html = emptyState('Ko\'rsatishda xato: ' + esc(e.message));
+  }
+  if (d.ceoError) html = `<div class="panel"><div class="muted">⚠️ CEO ma'lumotlari: ${esc(d.ceoError)}</div></div>` + html;
+  $('#content').innerHTML = html;
   const post = async (url, body, ok) => {
     const r = await api(url, { method: 'POST', body: JSON.stringify(body || {}) });
     if (r && r.error) { toast(r.error); return false; }

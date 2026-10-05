@@ -6689,17 +6689,40 @@ def api_promo(user):
     people = list(PROMO_PEOPLE) if role == "ceo" else ([name] if name in PROMO_GOALS else [])
     if not people:
         return {"error": "Ruxsat yo'q"}, 403
+    import traceback
     conn = get_db()
     today = uz_today()
-    res = {"people": [_promo_progress(conn, p, today) for p in people], "isCeo": role == "ceo",
+    out = []
+    for p in people:
+        try:
+            out.append(_promo_progress(conn, p, today))
+        except Exception as e:   # bitta xodimdagi xato qolganlarini buzmasin
+            traceback.print_exc()
+            try:
+                conn.raw.rollback()   # Postgres: xatodan keyingi tranzaksiyani tiklash
+            except Exception:
+                pass
+            out.append({"person": p, "conditions": [], "error": f"{type(e).__name__}: {str(e)[:300]}",
+                        "start": PROMO_START, "end": PROMO_END, "okCount": 0, "allOk": False,
+                        "started": True, "finished": False, "dayNo": 0, "totalDays": 0, "daysLeft": 0})
+    res = {"people": out, "isCeo": role == "ceo",
            "start": PROMO_START, "end": PROMO_END, "today": today.isoformat()}
     if role == "ceo":
-        res["projects"] = [{"id": r["id"], "name": r["name"], "fee": r["monthly_fee"] or 0,
-                            "sourced_by": r["sourced_by"] or "", "sourced_at": r["sourced_at"] or ""}
-                           for r in conn.execute("SELECT id, name, monthly_fee, sourced_by, sourced_at FROM projects ORDER BY name").fetchall()]
+        try:
+            res["projects"] = [{"id": r["id"], "name": r["name"], "fee": r["monthly_fee"] or 0,
+                                "sourced_by": r["sourced_by"] or "", "sourced_at": r["sourced_at"] or ""}
+                               for r in conn.execute("SELECT id, name, monthly_fee, sourced_by, sourced_at FROM projects ORDER BY name").fetchall()]
+            res["pendingManual"] = [dict(r) for r in conn.execute(
+                "SELECT * FROM promo_manual WHERE status='kutilmoqda' ORDER BY id").fetchall()]
+        except Exception as e:
+            traceback.print_exc()
+            try:
+                conn.raw.rollback()
+            except Exception:
+                pass
+            res["projects"], res["pendingManual"] = [], []
+            res["ceoError"] = f"{type(e).__name__}: {str(e)[:300]}"
         res["creditPeople"] = list(NEWCLIENT_GOALS)
-        res["pendingManual"] = [dict(r) for r in conn.execute(
-            "SELECT * FROM promo_manual WHERE status='kutilmoqda' ORDER BY id").fetchall()]
     conn.close()
     return res
 
