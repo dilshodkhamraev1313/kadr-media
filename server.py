@@ -871,12 +871,13 @@ class Conn:
 
     def execute(self, sql, params=()):
         if IS_PG:
-            sql = sql.replace("?", "%s")
+            # psycopg3: parametrli so'rovdagi literal '%' (masalan LIKE '%abc%') '%%' bo'lishi shart
+            sql = sql.replace("%", "%%").replace("?", "%s")
         return self.raw.execute(sql, params)
 
     def executemany(self, sql, seq):
         if IS_PG:
-            sql = sql.replace("?", "%s")
+            sql = sql.replace("%", "%%").replace("?", "%s")
         cur = self.raw.cursor()
         cur.executemany(sql, seq)
         return cur
