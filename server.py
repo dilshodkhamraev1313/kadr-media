@@ -520,6 +520,17 @@ CREATIVE_PROJECTS = {
     "Shirina Xalitova":       {"usd": 30, "ideas": 4},
     "MEDLAYT klinika":        {"usd": 30, "ideas": 4},
 }
+# YANGI MIJOZ JALB QILISH SHARTI (Safari promoushn). Har oy (blok) `points_per_month`
+# ball: katta mijoz (oylik to'lov >= big_fee) = 2 ball, kichik (min_fee..big_fee) = 1 ball.
+# Ball FAQAT mijoz haqiqatan to'lagandan keyin hisoblanadi (kredit sanasidan beri kassaga
+# tushgan pul >= paid_ratio x oylik to'lov) va loyiha muzlatilmagan bo'lsa. Kim jalb
+# qilganini CEO belgilaydi (projects.sourced_by / sourced_at). Blok sanalari `start`dan
+# boshlab har oy. `pass_blocks` ta blok bajarilsa — shart bajarilgan.
+NEWCLIENT_GOALS = {
+    "Shodiya": {"start": "2026-10-06", "months": 3, "points_per_month": 2, "pass_blocks": 2,
+                "big_fee": 10000000, "min_fee": 5000000, "paid_ratio": 1.0},
+}
+
 # G'oya shabloni: barcha maydon to'ldirilmasa g'oya qabul qilinmaydi.
 CREATIVE_TEMPLATE = (
     ("goal", "Maqsad (nimaga erishamiz)"),
@@ -1150,6 +1161,16 @@ def init_db():
     # xarajatlar: qayerdan pul chiqdi — usul (naqt/plastik) + kim to'ladi (Dilshod/Gulmira)
     add_column_if_missing(conn, "studio_expenses", "method", "TEXT DEFAULT 'naqt'")
     add_column_if_missing(conn, "studio_expenses", "paid_by", "TEXT DEFAULT ''")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS promo_manual (
+        id {pk}, person TEXT, goal_key TEXT, month_idx INTEGER DEFAULT 0, value INTEGER DEFAULT 0,
+        note TEXT DEFAULT '', status TEXT DEFAULT 'kutilmoqda', entered_by TEXT, entered_at {ts},
+        decided_by TEXT DEFAULT '', decided_at TEXT DEFAULT '')""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS promo_credits (
+        id {pk}, person TEXT, kind TEXT, label TEXT DEFAULT '', project_id INTEGER, price INTEGER DEFAULT 0,
+        credited_at TEXT, paid_amount INTEGER DEFAULT 0, status TEXT DEFAULT 'active',
+        created_by TEXT, created_at {ts})""")
+    add_column_if_missing(conn, "projects", "sourced_by", "TEXT DEFAULT ''")   # yangi mijozni kim jalb qilgan (CEO belgilaydi)
+    add_column_if_missing(conn, "projects", "sourced_at", "TEXT DEFAULT ''")   # kredit sanasi (YYYY-MM-DD)
     # jamoa maosh to'lovlari: qaysi hisobdan (Dilshod/Gulmira) + usul (naqt/plastik)
     add_column_if_missing(conn, "payments", "paid_from", "TEXT DEFAULT ''")
     add_column_if_missing(conn, "payments", "method", "TEXT DEFAULT 'naqt'")
@@ -2418,6 +2439,9 @@ def api_video_action(user, vid, b):
         amount, rk = editor_pay(eff_count(ex["editor"], prev_points), vt)
         rk_label = next((r["label"] for r in RANKS if r["key"] == rk), rk)
         now_s = now_local()
+        if ex["editor"] in PROMO_UNPAID_EDITORS and _internal_kind(ex.get("project")) and vt != "podcast" \
+                and now_local()[:10] >= PROMO_START:
+            amount = 0   # Safari tanlovi: Studio/Media montaji — puli hisoblanmaydi
         # Deadline: kechiksa reels — pul yo'q, podcast/youtube — yarim.
         # Reelsda rejalashtirilgan due_at (3/kun taqsimot), aks holda assigned_at + soat.
         _dl = _video_deadline_dt(ex)
@@ -2636,7 +2660,7 @@ def editor_summary(conn, name):
     # Oylik hajm bonusi — barcha turdagi video birga, MONTHLY_VOLUME_BONUS_TARGET
     # tagacha yetsa bir martalik qo'shimcha (compute_salary ichida SALARY
     # xodimlar uchun ham hisoblanadi — bu yerda faqat ko'rsatish/piece-rate uchun).
-    vb_count = len(accepted_m)
+    vb_count = len([v for v in accepted_m if not _internal_kind(v.get("project"))])
     vb_bonus = MONTHLY_VOLUME_BONUS_AMOUNT if (
         ym >= MONTHLY_VOLUME_BONUS_START_DATE[:7] and vb_count >= MONTHLY_VOLUME_BONUS_TARGET) else 0
     # Salaried montajchi (SALARYda bor) uchun "ishlagan" = TO'LIQ oylik maosh
@@ -3626,6 +3650,12 @@ def _op_pay(operator, shoot_type):
     return OPERATOR_PAY.get(st, 0)
 
 
+def _promo_unpaid_shoot(operator, label, date_str):
+    """Safari tanlovi: Umid'ning Kadr Studio/Media (ichki) syomkasi uchun operator puli hisoblanmaydi."""
+    return bool(operator in PROMO_UNPAID_OPERATORS and _internal_kind(label)
+                and (date_str or "") >= PROMO_START)
+
+
 def _external_video_rate(operator):
     """Tashqi syomkada bitta video uchun operator puli (shogird — yarim)."""
     return EXTERNAL_VIDEO_PAY_TRAINEE if operator in OPERATOR_RATES else EXTERNAL_VIDEO_PAY
@@ -3647,13 +3677,13 @@ def _backfill_operator_pay(conn):
     mavjud bron/syomkalaridagi operator_pay ni joriy _op_pay bo'yicha qayta hisoblaydi.
     Idempotent: har boshlanishda kanonik qiymatga keltiradi."""
     for op in OPERATOR_RATES:
-        for r in conn.execute("SELECT id, shoot_type FROM studio_bookings WHERE operator=?", (op,)).fetchall():
-            conn.execute("UPDATE studio_bookings SET operator_pay=? WHERE id=?",
-                         (_op_pay(op, r["shoot_type"]), r["id"]))
+        for r in conn.execute("SELECT id, shoot_type, client_name, bdate FROM studio_bookings WHERE operator=?", (op,)).fetchall():
+            pay = 0 if _promo_unpaid_shoot(op, r["client_name"], r["bdate"]) else _op_pay(op, r["shoot_type"])
+            conn.execute("UPDATE studio_bookings SET operator_pay=? WHERE id=?", (pay, r["id"]))
         # Faqat studio (white/black) syomkalar — tashqi (per-video) pulga TEGMAYMIZ
-        for r in conn.execute("SELECT id, shoot_type FROM shoots WHERE operator=? AND room IN ('white','black')", (op,)).fetchall():
-            conn.execute("UPDATE shoots SET operator_pay=? WHERE id=?",
-                         (_op_pay(op, r["shoot_type"]), r["id"]))
+        for r in conn.execute("SELECT id, shoot_type, project, sdate FROM shoots WHERE operator=? AND room IN ('white','black')", (op,)).fetchall():
+            pay = 0 if _promo_unpaid_shoot(op, r["project"], r["sdate"]) else _op_pay(op, r["shoot_type"])
+            conn.execute("UPDATE shoots SET operator_pay=? WHERE id=?", (pay, r["id"]))
 
 
 def _calc_hours(start, end):
@@ -4197,6 +4227,8 @@ def api_create_studio_booking(user, b):
     operator = b.get("operator") if b.get("operator") in STUDIO_OPERATORS else ""
     shoot_type = b.get("shoot_type") if b.get("shoot_type") in SHOOT_TYPES else "reels"
     operator_pay = _op_pay(operator, shoot_type)
+    if _promo_unpaid_shoot(operator, b.get("client_name"), b.get("bdate") or uz_today().isoformat()):
+        operator_pay = 0   # Safari tanlovi ichki syomka — operator puli yo'q
     # Umumiy to'lov va to'langan (avans) qo'lda kiritiladi
     try:
         amount = int(b.get("amount") or 0)
@@ -4459,6 +4491,8 @@ def api_update_studio_booking(user, bid, b):
         operator = ""
     shoot_type = b.get("shoot_type") if b.get("shoot_type") in SHOOT_TYPES else (ex.get("shoot_type") or "reels")
     operator_pay = _op_pay(operator, shoot_type)
+    if _promo_unpaid_shoot(operator, b.get("client_name") or ex.get("client_name"), b.get("bdate") or ex.get("bdate")):
+        operator_pay = 0
 
     def iv(key, default):
         v = b.get(key)
@@ -4798,6 +4832,8 @@ def api_create_shoot(user, b):
     # Tashqi syomka — operator puli video soniga qarab (dastlab 0, rahbar keyin kiritadi)
     video_count = int(b.get("video_count") or 0)
     operator_pay = _shoot_op_pay(operator, room, shoot_type, video_count)
+    if _promo_unpaid_shoot(operator, b.get("project"), sdate):
+        operator_pay = 0   # Safari tanlovi ichki syomka — operator puli yo'q
     conn = get_db()
     # Xona bandligi (white/black) — Kadr Studio + Kadr Media birga
     conflict = _room_conflict(conn, room, sdate, start_time, end_time)
@@ -4854,6 +4890,8 @@ def api_shoot_videos(user, sid, b):
         count = 0
     room = ex.get("room") or "tashqi"
     pay = _shoot_op_pay(ex.get("operator"), room, ex.get("shoot_type"), count)
+    if _promo_unpaid_shoot(ex.get("operator"), ex.get("project"), ex.get("sdate")):
+        pay = 0
     conn.execute("UPDATE shoots SET video_count=?, operator_pay=? WHERE id=?", (count, pay, sid))
     log_audit(conn, user["name"], "syomka video soni kiritdi",
               f"#{sid} {ex.get('project')} · {count} video · {pay} so'm ({ex.get('operator')})")
@@ -5959,7 +5997,7 @@ def compute_salary(conn, name, rate, ym=None):
         if ym >= MONTHLY_VOLUME_BONUS_START_DATE[:7]:
             vb_count = conn.execute(
                 "SELECT COUNT(*) AS c FROM videos WHERE editor=? AND approved_at LIKE ? "
-                "AND status IN ('qabul_qilindi','joylandi')", (name, ym + "%")).fetchone()["c"] or 0
+                "AND status IN ('qabul_qilindi','joylandi') AND " + _INTERNAL_SQL, (name, ym + "%")).fetchone()["c"] or 0
             if vb_count >= MONTHLY_VOLUME_BONUS_TARGET:
                 comps.append({"label": f"Oylik hajm bonusi ({vb_count}/{MONTHLY_VOLUME_BONUS_TARGET}+ video)",
                               "amount": MONTHLY_VOLUME_BONUS_AMOUNT, "kind": "bonus"})
@@ -6253,6 +6291,535 @@ def api_admin_monthly_report_send(user, ym=None):
     result = _send_monthly_report(conn, ym, mark_sent=False)
     conn.close()
     return result
+
+
+def _add_months(d, n):
+    from calendar import monthrange
+    y = d.year + (d.month - 1 + n) // 12
+    m = (d.month - 1 + n) % 12 + 1
+    return datetime.date(y, m, min(d.day, monthrange(y, m)[1]))
+
+
+def _newclient_progress(conn, person, today):
+    """Yangi mijoz jalb qilish sharti bo'yicha blok-blok progress (NEWCLIENT_GOALS)."""
+    cfg = NEWCLIENT_GOALS.get(person)
+    if not cfg:
+        return None
+    start0 = datetime.date.fromisoformat(cfg["start"])
+    blocks, ok_blocks = [], 0
+    for i in range(cfg["months"]):
+        bs = _add_months(start0, i)
+        be = _add_months(start0, i + 1) - datetime.timedelta(days=1)
+        items, pts, pend = [], 0, 0
+        for r in conn.execute(
+                "SELECT id, name, monthly_fee, sourced_at, frozen FROM projects "
+                "WHERE sourced_by=? AND sourced_at>=? AND sourced_at<=? ORDER BY sourced_at",
+                (person, bs.isoformat(), be.isoformat())).fetchall():
+            fee = r["monthly_fee"] or 0
+            big = fee >= cfg["big_fee"]
+            p = 2 if big else (1 if fee >= cfg["min_fee"] else 0)
+            paid = conn.execute(
+                "SELECT COALESCE(SUM(amount),0) AS s FROM income_ledger "
+                "WHERE source_type='client' AND source_label=? AND pdate>=?",
+                (r["name"], r["sourced_at"])).fetchone()["s"] or 0
+            paid_ok = fee > 0 and paid >= cfg["paid_ratio"] * fee
+            counted = p if (paid_ok and not r["frozen"]) else 0
+            pts += counted
+            pend += p - counted
+            items.append({"id": r["id"], "name": r["name"], "fee": fee,
+                          "size": "katta" if big else ("kichik" if p else "juda kichik (sanalmaydi)"),
+                          "points": p, "counted": counted, "paid": paid, "paidOk": paid_ok,
+                          "frozen": bool(r["frozen"]), "sourcedAt": r["sourced_at"]})
+        ok = pts >= cfg["points_per_month"]
+        ok_blocks += 1 if ok else 0
+        blocks.append({"start": bs.isoformat(), "end": be.isoformat(), "points": pts, "pending": pend,
+                       "need": cfg["points_per_month"], "ok": ok, "items": items,
+                       "current": bs <= today <= be, "past": today > be})
+    end = datetime.date.fromisoformat(blocks[-1]["end"])
+    return {"person": person, "bigFee": cfg["big_fee"], "minFee": cfg["min_fee"],
+            "paidRatio": cfg["paid_ratio"], "blocks": blocks, "okBlocks": ok_blocks,
+            "needBlocks": cfg["pass_blocks"], "totalPoints": sum(b["points"] for b in blocks),
+            "needPoints": cfg["points_per_month"] * cfg["months"],
+            "passed": sum(b["points"] for b in blocks) >= cfg["points_per_month"] * cfg["months"],
+            "windowStart": cfg["start"], "windowEnd": blocks[-1]["end"], "finished": today > end}
+
+
+def api_goals(user):
+    """Yangi mijoz sharti: xodim o'zinikini, CEO hammasini + kredit berish ma'lumotlarini ko'radi."""
+    name, role = user["name"], user["role"]
+    people = list(NEWCLIENT_GOALS) if role == "ceo" else ([name] if name in NEWCLIENT_GOALS else [])
+    if not people:
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    today = uz_today()
+    res = {"goals": [_newclient_progress(conn, p, today) for p in people], "isCeo": role == "ceo"}
+    if role == "ceo":
+        res["projects"] = [{"id": r["id"], "name": r["name"], "fee": r["monthly_fee"] or 0,
+                            "sourced_by": r["sourced_by"] or "", "sourced_at": r["sourced_at"] or ""}
+                           for r in conn.execute(
+                               "SELECT id, name, monthly_fee, sourced_by, sourced_at FROM projects ORDER BY name").fetchall()]
+        res["people"] = list(NEWCLIENT_GOALS)
+        res["today"] = today.isoformat()
+    conn.close()
+    return res
+
+
+def api_goal_credit(user, pid, b):
+    """CEO — yangi mijozni kim jalb qilganini belgilaydi (yoki person='' bilan bekor qiladi)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    person = (b.get("person") or "").strip()
+    if person and person not in NEWCLIENT_GOALS:
+        return {"error": "Bu xodimda yangi mijoz sharti yo'q"}, 400
+    date = (b.get("date") or uz_today().isoformat()).strip()
+    try:
+        datetime.date.fromisoformat(date)
+    except ValueError:
+        return {"error": "Sana noto'g'ri (YYYY-MM-DD)"}, 400
+    conn = get_db()
+    row = conn.execute("SELECT name FROM projects WHERE id=?", (pid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Loyiha topilmadi"}, 404
+    conn.execute("UPDATE projects SET sourced_by=?, sourced_at=? WHERE id=?",
+                 (person, date if person else "", pid))
+    log_audit(conn, user["name"], "yangi mijoz kreditini " + ("berdi" if person else "bekor qildi"),
+              f"{row['name']} -> {person or '—'} ({date})")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ============================================================
+#  SAFARI TANLOVI (promoushn) — barcha xodimlar shartlari, bitta mexanizm
+#  Davr: PROMO_START..PROMO_END (3 oy), hisob JAMI bo'yicha, har shart 100% bajarilsa yutadi.
+# ============================================================
+PROMO_START = "2026-10-06"
+PROMO_END = "2027-01-06"
+PROMO_MONTHS = 3
+PROMO_UNPAID_EDITORS = ("Sardor", "Xayrulloh")   # Studio/Media montaji puli hisoblanmaydi
+PROMO_UNPAID_OPERATORS = ("Umid",)               # Studio/Media ichki syomkasi operator puli hisoblanmaydi
+
+_M3 = lambda n: [n, n, n]
+PROMO_GOALS = {
+    "Xonzoda": [
+        {"key": "amarkets", "kind": "videos", "label": "AMARKETS — reels", "project": "Amarkets (Bekzod Treding)", "vtype": "reels", "targets": _M3(10)},
+        {"key": "fidda", "kind": "videos", "label": "FIDDA — reels (to'liq)", "project": "Fidda kumush taqinchoqlar", "vtype": "reels", "targets": _M3(20)},
+        {"key": "irs_followers", "kind": "manual", "label": "IRS — yangi obunachi (sof o'sish)", "targets": _M3(3000)},
+    ],
+    "Gulmira": [
+        {"key": "studio_income", "kind": "studio_income", "label": "Kadr Studio tushumi (kassaga)", "targets": _M3(33000000)},
+        {"key": "lead_full", "kind": "lead_projects", "label": "Rahbarlik loyihalari — oylik reja to'liq topshirilsin"},
+    ],
+    "Shodiya": [
+        {"key": "new_clients", "kind": "newclient", "label": "Yangi mijoz jalb qilish (ball)"},
+    ],
+    "Samandar": [],   # pastda to'ldiriladi
+    "Umid": [
+        {"key": "montaj", "kind": "montaj", "label": "Montaj (reels va boshqa, Studio/Media'siz)", "targets": [60, 65, 70], "exclude_vtypes": []},
+        {"key": "studio_shoots", "kind": "shoots_internal", "label": "Kadr Studio uchun syomka", "which": "studio", "targets": _M3(4)},
+        {"key": "media_shoots", "kind": "shoots_internal", "label": "Kadr Media uchun syomka", "which": "media", "targets": _M3(4)},
+    ],
+    "Sardor": [
+        {"key": "montaj", "kind": "montaj", "label": "Montaj (podcast va Studio/Media'siz)", "targets": [60, 65, 70], "exclude_vtypes": ["podcast"]},
+        {"key": "podcast", "kind": "podcast", "label": "Podcast montaji", "targets": _M3(2)},
+        {"key": "studio_vids", "kind": "internal_vids", "label": "Kadr Studio uchun montaj", "which": "studio", "targets": _M3(3)},
+        {"key": "media_vids", "kind": "internal_vids", "label": "Kadr Media uchun montaj", "which": "media", "targets": _M3(3)},
+    ],
+    "Oygul": [
+        {"key": "montaj", "kind": "montaj", "label": "Montaj (Studio/Media'siz)", "targets": [70, 75, 80], "exclude_vtypes": []},
+    ],
+    "Xayrulloh": [
+        {"key": "montaj", "kind": "montaj", "label": "Montaj (podcast va Studio/Media'siz)", "targets": [60, 65, 70], "exclude_vtypes": ["podcast"]},
+        {"key": "podcast", "kind": "podcast", "label": "Podcast montaji", "targets": _M3(2)},
+        {"key": "studio_vids", "kind": "internal_vids", "label": "Kadr Studio uchun montaj", "which": "studio", "targets": _M3(3)},
+        {"key": "media_vids", "kind": "internal_vids", "label": "Kadr Media uchun montaj", "which": "media", "targets": _M3(3)},
+    ],
+    "Nodira": [
+        {"key": "paket300", "kind": "credits", "credit_kind": "paket300", "label": "$300 li paket — yangi mijoz (to'liq to'langan)", "targets": _M3(2)},
+        {"key": "podcast_pkg", "kind": "credits", "credit_kind": "podcast_pkg", "label": "Podcast paketi sotuvi (to'liq to'langan)", "targets": _M3(2)},
+    ],
+}
+_SAMANDAR_PROJECTS = [
+    ("MEDLAYT klinika", 1200, [2000, 3000, 4000]),
+    ("Dr Temur Nizamov", 900, [3000, 4000, 5000]),
+    ("Rohatoy Murodullayevna", 900, [3000, 4000, 5000]),
+    ("Nodirbek Primqulov (arab tili)", 900, [3000, 4000, 5000]),
+]
+for _pn, _usd, _fol in _SAMANDAR_PROJECTS:
+    _k = _pn.split()[0].lower()
+    PROMO_GOALS["Samandar"] += [
+        {"key": _k + "_video", "kind": "proj_video", "label": _pn + " — video reja to'liq", "project": _pn},
+        {"key": _k + "_income", "kind": "proj_income", "label": _pn + " — tushum (to'liq)", "project": _pn, "usd": _usd},
+        {"key": _k + "_followers", "kind": "manual", "label": _pn + " — yangi obunachi (sof o'sish)", "targets": _fol},
+    ]
+PROMO_PEOPLE = tuple(PROMO_GOALS)
+PROMO_DONE = ("qabul_qilindi", "joylandi")
+
+
+def _internal_kind(label):
+    """Loyiha/mijoz nomi ichki Kadr Studio yoki Kadr Media'mi."""
+    t = (label or "").lower()
+    if "kadr studio" in t or "kadr studiya" in t:
+        return "studio"
+    if "kadr media" in t:
+        return "media"
+    return None
+
+
+_INTERNAL_SQL = ("lower(COALESCE(project,'')) NOT LIKE '%kadr studio%' AND lower(COALESCE(project,'')) NOT LIKE '%kadr studiya%' "
+                 "AND lower(COALESCE(project,'')) NOT LIKE '%kadr media%'")
+
+
+def _promo_blocks(start0, end_inc):
+    blocks = []
+    for i in range(PROMO_MONTHS):
+        bs = _add_months(start0, i)
+        be = _add_months(start0, i + 1) - datetime.timedelta(days=1)
+        if i == PROMO_MONTHS - 1:
+            be = end_inc
+        blocks.append((bs.isoformat(), be.isoformat()))
+    return blocks
+
+
+def _promo_proj(projects, name):
+    p = _find_project(projects, name)
+    return p
+
+
+def _pm_videos(conn, p, lo, hi, vtype=None):
+    if not p:
+        return 0
+    sql = ("SELECT COUNT(*) AS c FROM videos WHERE (project_id=? OR lower(COALESCE(project,''))=lower(?)) "
+           "AND status IN ('qabul_qilindi','joylandi') AND substr(approved_at,1,10) BETWEEN ? AND ?")
+    args = [p["id"], p["name"], lo, hi]
+    if vtype:
+        sql += " AND COALESCE(vtype,'reels')=?"
+        args.append(vtype)
+    return conn.execute(sql, args).fetchone()["c"] or 0
+
+
+def _pm_income(conn, source_type, label, lo, hi):
+    sql = "SELECT COALESCE(SUM(amount),0) AS s FROM income_ledger WHERE source_type=? AND pdate BETWEEN ? AND ?"
+    args = [source_type, lo, hi]
+    if label:
+        sql += " AND source_label=?"
+        args.append(label)
+    return conn.execute(sql, args).fetchone()["s"] or 0
+
+
+def _pm_editor(conn, person, lo, hi, mode, excl=(), which=None):
+    base = ("SELECT COUNT(*) AS c FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi') "
+            "AND substr(approved_at,1,10) BETWEEN ? AND ?")
+    args = [person, lo, hi]
+    if mode == "montaj":
+        base += " AND " + _INTERNAL_SQL
+        for vt in excl:
+            base += " AND COALESCE(vtype,'reels')<>?"
+            args.append(vt)
+    elif mode == "podcast":
+        base += " AND COALESCE(vtype,'reels')='podcast'"
+    elif mode == "internal":
+        base += " AND COALESCE(vtype,'reels')<>'podcast' AND lower(COALESCE(project,'')) LIKE ?"
+        args.append("%kadr studio%" if which == "studio" else "%kadr media%")
+    return conn.execute(base, args).fetchone()["c"] or 0
+
+
+def _pm_shoots(conn, person, lo, hi, which):
+    if which == "studio":
+        a = conn.execute("SELECT COUNT(*) AS c FROM shoots WHERE operator=? AND sdate BETWEEN ? AND ? "
+                         "AND (status IS NULL OR status<>'bekor_qilindi') AND lower(COALESCE(project,'')) LIKE '%kadr stud%'",
+                         (person, lo, hi)).fetchone()["c"] or 0
+        b = conn.execute("SELECT COUNT(*) AS c FROM studio_bookings WHERE operator=? AND bdate BETWEEN ? AND ? "
+                         "AND (status IS NULL OR status<>'bekor_qilindi') AND lower(COALESCE(client_name,'')) LIKE '%kadr stud%'",
+                         (person, lo, hi)).fetchone()["c"] or 0
+    else:
+        a = conn.execute("SELECT COUNT(*) AS c FROM shoots WHERE operator=? AND sdate BETWEEN ? AND ? "
+                         "AND (status IS NULL OR status<>'bekor_qilindi') AND (lower(COALESCE(project,'')) LIKE '%kadr media%' OR shoot_type='kadr_media')",
+                         (person, lo, hi)).fetchone()["c"] or 0
+        b = conn.execute("SELECT COUNT(*) AS c FROM studio_bookings WHERE operator=? AND bdate BETWEEN ? AND ? "
+                         "AND (status IS NULL OR status<>'bekor_qilindi') AND lower(COALESCE(client_name,'')) LIKE '%kadr media%'",
+                         (person, lo, hi)).fetchone()["c"] or 0
+    return a + b
+
+
+def _credit_paid(conn, c):
+    paid = c["paid_amount"] or 0
+    if c["project_id"]:
+        pr = conn.execute("SELECT name FROM projects WHERE id=?", (c["project_id"],)).fetchone()
+        if pr:
+            led = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM income_ledger "
+                               "WHERE source_type='client' AND source_label=? AND pdate>=?",
+                               (pr["name"], c["credited_at"] or PROMO_START)).fetchone()["s"] or 0
+            paid = max(paid, led)
+    return paid
+
+
+def _promo_cond(key, label, kind, target, current, blocks=None, **extra):
+    c = {"key": key, "label": label, "kind": kind, "target": target, "current": current,
+         "pct": min(100, int(100 * current / target)) if target else 0,
+         "ok": bool(target) and current >= target, "blocks": blocks or []}
+    c.update(extra)
+    return c
+
+
+def _promo_progress(conn, person, today):
+    goals = PROMO_GOALS.get(person)
+    if goals is None:
+        return None
+    start0 = datetime.date.fromisoformat(PROMO_START)
+    end_inc = datetime.date.fromisoformat(PROMO_END)
+    blocks = _promo_blocks(start0, end_inc)
+    lo, hi = PROMO_START, PROMO_END
+    rate = get_usd_rate()
+    projects = [dict(r) for r in conn.execute("SELECT * FROM projects").fetchall()]
+    total_days = (end_inc - start0).days + 1
+    elapsed = max(0, min(total_days, (today - start0).days + 1))
+    frac = elapsed / total_days if total_days else 0
+    conds = []
+    for g in goals:
+        k, kind, label = g["key"], g["kind"], g["label"]
+        t = g.get("targets")
+        if kind in ("videos", "montaj", "podcast", "internal_vids", "shoots_internal", "studio_income"):
+            if kind == "videos":
+                p = _promo_proj(projects, g["project"])
+                f = lambda a, b: _pm_videos(conn, p, a, b, g.get("vtype"))
+            elif kind == "montaj":
+                f = lambda a, b: _pm_editor(conn, person, a, b, "montaj", g.get("exclude_vtypes") or [])
+            elif kind == "podcast":
+                f = lambda a, b: _pm_editor(conn, person, a, b, "podcast")
+            elif kind == "internal_vids":
+                f = lambda a, b: _pm_editor(conn, person, a, b, "internal", which=g["which"])
+            elif kind == "shoots_internal":
+                f = lambda a, b: _pm_shoots(conn, person, a, b, g["which"])
+            else:
+                f = lambda a, b: _pm_income(conn, "studio", None, a, b)
+            cur = f(lo, hi)
+            bl = [{"label": f"{i + 1}-oy", "start": a, "end": b, "target": t[i], "current": f(a, b)} for i, (a, b) in enumerate(blocks)]
+            c = _promo_cond(k, label, kind, sum(t), cur, bl, unit="so'm" if kind == "studio_income" else "ta")
+            c["behind"] = (not c["ok"]) and cur < c["target"] * frac * 0.85
+            conds.append(c)
+        elif kind == "lead_projects":
+            items, tt, cc = [], 0, 0
+            for p in projects:
+                if p.get("responsible") != person or p.get("frozen"):
+                    continue
+                need = (p.get("plan") or 0) * PROMO_MONTHS
+                if need <= 0:
+                    continue
+                got = _pm_videos(conn, p, lo, hi)
+                tt += need
+                cc += min(got, need)
+                items.append({"name": p["name"], "target": need, "current": got, "ok": got >= need})
+            c = _promo_cond(k, label, kind, tt, cc, unit="ta", items=items)
+            c["ok"] = bool(items) and all(i["ok"] for i in items)
+            c["behind"] = (not c["ok"]) and cc < tt * frac * 0.85
+            conds.append(c)
+        elif kind == "proj_video":
+            p = _promo_proj(projects, g["project"])
+            need = ((p or {}).get("plan") or 0) * PROMO_MONTHS
+            got = _pm_videos(conn, p, lo, hi)
+            c = _promo_cond(k, label, kind, need, got, unit="ta", missing=p is None)
+            c["behind"] = (not c["ok"]) and got < need * frac * 0.85
+            conds.append(c)
+        elif kind == "proj_income":
+            p = _promo_proj(projects, g["project"])
+            exp = g["usd"] * rate
+            fee = (p or {}).get("monthly_fee") or 0
+            warn = ""
+            if fee < exp * 0.7:
+                warn = f"Dashboardda narx {fee:,} so'm, haqiqiy {g['usd']}$ (~{int(exp):,} so'm) — loyiha narxini to'g'rilang".replace(",", " ")
+                fee = exp
+            need = int(fee) * PROMO_MONTHS
+            got = _pm_income(conn, "client", (p or {}).get("name"), lo, hi) if p else 0
+            c = _promo_cond(k, label, kind, need, got, unit="so'm", warn=warn, missing=p is None)
+            c["behind"] = (not c["ok"]) and got < need * frac * 0.85
+            conds.append(c)
+        elif kind == "manual":
+            rows = [dict(r) for r in conn.execute(
+                "SELECT * FROM promo_manual WHERE person=? AND goal_key=? ORDER BY month_idx, id", (person, k)).fetchall()]
+            bl = []
+            for i, (a, b) in enumerate(blocks):
+                conf = sum(r["value"] for r in rows if r["month_idx"] == i and r["status"] == "tasdiqlandi")
+                pend = sum(r["value"] for r in rows if r["month_idx"] == i and r["status"] == "kutilmoqda")
+                bl.append({"label": f"{i + 1}-oy", "start": a, "end": b, "target": t[i], "current": conf, "pending": pend})
+            cur = sum(x["current"] for x in bl)
+            c = _promo_cond(k, label, kind, sum(t), cur, bl, unit="ta", manual=True,
+                            pending=sum(x["pending"] for x in bl),
+                            entries=[{"id": r["id"], "month": r["month_idx"], "value": r["value"], "note": r["note"], "status": r["status"]} for r in rows])
+            c["behind"] = (not c["ok"]) and cur < c["target"] * frac * 0.85
+            conds.append(c)
+        elif kind == "credits":
+            rows = [dict(r) for r in conn.execute(
+                "SELECT * FROM promo_credits WHERE person=? AND kind=? AND status='active' ORDER BY id",
+                (person, g["credit_kind"])).fetchall()]
+            items, bl = [], [{"label": f"{i + 1}-oy", "start": a, "end": b, "target": t[i], "current": 0} for i, (a, b) in enumerate(blocks)]
+            cnt = 0
+            for r in rows:
+                paid = _credit_paid(conn, r)
+                ok = (r["price"] or 0) > 0 and paid >= r["price"]
+                items.append({"id": r["id"], "label": r["label"], "price": r["price"], "paid": paid, "ok": ok,
+                              "date": r["credited_at"], "projectId": r["project_id"]})
+                if ok:
+                    cnt += 1
+                    for x in bl:
+                        if x["start"] <= (r["credited_at"] or "") <= x["end"]:
+                            x["current"] += 1
+            c = _promo_cond(k, label, kind, sum(t), cnt, bl, unit="ta", items=items)
+            c["behind"] = (not c["ok"]) and cnt < c["target"] * frac * 0.85
+            conds.append(c)
+        elif kind == "newclient":
+            nc = _newclient_progress(conn, person, today)
+            c = _promo_cond(k, label, kind, nc["needPoints"], nc["totalPoints"],
+                            [{"label": f"{i + 1}-oy", "start": b["start"], "end": b["end"], "target": b["need"], "current": b["points"]}
+                             for i, b in enumerate(nc["blocks"])], unit="ball", clients=nc["blocks"],
+                            bigFee=nc["bigFee"], minFee=nc["minFee"])
+            c["behind"] = (not c["ok"]) and nc["totalPoints"] < nc["needPoints"] * frac * 0.85
+            conds.append(c)
+    return {"person": person, "conditions": conds, "start": PROMO_START, "end": PROMO_END,
+            "daysLeft": max(0, (end_inc - today).days), "dayNo": elapsed, "totalDays": total_days,
+            "started": today >= start0, "finished": today > end_inc,
+            "allOk": bool(conds) and all(c["ok"] for c in conds),
+            "okCount": sum(1 for c in conds if c["ok"])}
+
+
+def api_promo(user):
+    name, role = user["name"], user["role"]
+    people = list(PROMO_PEOPLE) if role == "ceo" else ([name] if name in PROMO_GOALS else [])
+    if not people:
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    today = uz_today()
+    res = {"people": [_promo_progress(conn, p, today) for p in people], "isCeo": role == "ceo",
+           "start": PROMO_START, "end": PROMO_END, "today": today.isoformat()}
+    if role == "ceo":
+        res["projects"] = [{"id": r["id"], "name": r["name"], "fee": r["monthly_fee"] or 0,
+                            "sourced_by": r["sourced_by"] or "", "sourced_at": r["sourced_at"] or ""}
+                           for r in conn.execute("SELECT id, name, monthly_fee, sourced_by, sourced_at FROM projects ORDER BY name").fetchall()]
+        res["creditPeople"] = list(NEWCLIENT_GOALS)
+        res["pendingManual"] = [dict(r) for r in conn.execute(
+            "SELECT * FROM promo_manual WHERE status='kutilmoqda' ORDER BY id").fetchall()]
+    conn.close()
+    return res
+
+
+def api_promo_manual_submit(user, b):
+    name, role = user["name"], user["role"]
+    person = (b.get("person") or name).strip() if role == "ceo" else name
+    goals = {g["key"]: g for g in PROMO_GOALS.get(person, []) if g["kind"] == "manual"}
+    key = (b.get("goal_key") or "").strip()
+    if key not in goals:
+        return {"error": "Bu shart qo'lda kiritilmaydi yoki sizga tegishli emas"}, 400
+    try:
+        month = int(b.get("month_idx"))
+        value = int(b.get("value"))
+    except (TypeError, ValueError):
+        return {"error": "Oy va qiymat raqam bo'lsin"}, 400
+    if not 0 <= month < PROMO_MONTHS or value < 0:
+        return {"error": "Oy yoki qiymat noto'g'ri"}, 400
+    note = (b.get("note") or "").strip()
+    if len(note) < 5 and role != "ceo":
+        return {"error": "Dalil (Insights skrinshot havolasi yoki izoh) kamida 5 belgi bo'lsin"}, 400
+    status = "tasdiqlandi" if role == "ceo" else "kutilmoqda"
+    conn = get_db()
+    conn.execute("INSERT INTO promo_manual (person, goal_key, month_idx, value, note, status, entered_by, entered_at, decided_by, decided_at) "
+                 "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                 (person, key, month, value, note, status, name, now_local(),
+                  name if role == "ceo" else "", now_local() if role == "ceo" else ""))
+    log_audit(conn, name, "tanlov: qo'lda natija kiritdi", f"{person} · {key} · {month + 1}-oy · {value}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_promo_manual_decide(user, mid, b):
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    action = b.get("action")
+    if action not in ("accept", "reject"):
+        return {"error": "Noto'g'ri amal"}, 400
+    conn = get_db()
+    row = conn.execute("SELECT person, goal_key FROM promo_manual WHERE id=?", (mid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    conn.execute("UPDATE promo_manual SET status=?, decided_by=?, decided_at=? WHERE id=?",
+                 ("tasdiqlandi" if action == "accept" else "rad", user["name"], now_local(), mid))
+    log_audit(conn, user["name"], "tanlov: natijani " + ("tasdiqladi" if action == "accept" else "rad etdi"),
+              f"{row['person']} · {row['goal_key']} · #{mid}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_promo_credit_add(user, b):
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    person = (b.get("person") or "").strip()
+    kind = (b.get("kind") or "").strip()
+    cks = {g.get("credit_kind") for g in PROMO_GOALS.get(person, []) if g["kind"] == "credits"}
+    if kind not in cks:
+        return {"error": "Bu xodim uchun bunday kredit turi yo'q"}, 400
+    label = (b.get("label") or "").strip()
+    if not label:
+        return {"error": "Mijoz/paket nomini yozing"}, 400
+    date = (b.get("date") or uz_today().isoformat()).strip()
+    try:
+        datetime.date.fromisoformat(date)
+    except ValueError:
+        return {"error": "Sana noto'g'ri"}, 400
+    pid = b.get("project_id")
+    pid = int(pid) if pid not in (None, "", 0, "0") else None
+    try:
+        price = int(b.get("price") or 0)
+    except (TypeError, ValueError):
+        price = 0
+    conn = get_db()
+    if pid:
+        pr = conn.execute("SELECT monthly_fee FROM projects WHERE id=?", (pid,)).fetchone()
+        if not pr:
+            conn.close()
+            return {"error": "Loyiha topilmadi"}, 404
+        if price <= 0:
+            price = pr["monthly_fee"] or 0
+    if kind == "podcast_pkg" and price <= 0:
+        price = 2000000
+    if kind == "paket300" and price <= 0:
+        price = 300 * get_usd_rate()
+    conn.execute("INSERT INTO promo_credits (person, kind, label, project_id, price, credited_at, paid_amount, status, created_by, created_at) "
+                 "VALUES (?,?,?,?,?,?,0,'active',?,?)", (person, kind, label, pid, int(price), date, user["name"], now_local()))
+    log_audit(conn, user["name"], "tanlov: kredit berdi", f"{person} · {kind} · {label} · {int(price)}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_promo_credit_update(user, cid, b):
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    action = b.get("action")
+    conn = get_db()
+    row = conn.execute("SELECT person, label FROM promo_credits WHERE id=?", (cid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if action == "paid":
+        try:
+            amt = max(0, int(b.get("amount") or 0))
+        except (TypeError, ValueError):
+            conn.close()
+            return {"error": "Summa raqam bo'lsin"}, 400
+        conn.execute("UPDATE promo_credits SET paid_amount=? WHERE id=?", (amt, cid))
+        log_audit(conn, user["name"], "tanlov: to'lovni tasdiqladi", f"{row['person']} · {row['label']} · {amt}")
+    elif action == "delete":
+        conn.execute("UPDATE promo_credits SET status='bekor' WHERE id=?", (cid,))
+        log_audit(conn, user["name"], "tanlov: kreditni bekor qildi", f"{row['person']} · {row['label']}")
+    else:
+        conn.close()
+        return {"error": "Noto'g'ri amal"}, 400
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 def _creative_can_decide(user, project_responsible, author):
@@ -8917,6 +9484,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_payroll(user, ym))
         if path == "/api/creative":
             return self._json(api_creative(user))
+        if path == "/api/goals":
+            return self._json(api_goals(user))
+        if path == "/api/promo":
+            return self._json(api_promo(user))
         if path == "/api/admin/monthly-report-preview":
             if role != "ceo":
                 return self._forbid()
@@ -9039,6 +9610,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_archive_month(user, b))
         if path == "/api/admin/monthly-report-send":
             return self._json(api_admin_monthly_report_send(user, (b or {}).get("ym")))
+        if path == "/api/promo/manual":
+            return self._json(api_promo_manual_submit(user, b or {}))
+        if path == "/api/promo/credit":
+            return self._json(api_promo_credit_add(user, b or {}))
+        if len(seg) == 4 and seg[1] == "promo" and seg[2] == "manual" and seg[3].isdigit():
+            return self._json(api_promo_manual_decide(user, int(seg[3]), b or {}))
+        if len(seg) == 4 and seg[1] == "promo" and seg[2] == "credit" and seg[3].isdigit():
+            return self._json(api_promo_credit_update(user, int(seg[3]), b or {}))
+        if len(seg) == 4 and seg[1] == "goals" and seg[2] == "credit":
+            gid = self._int(seg[3])
+            return self._json(api_goal_credit(user, gid, b or {})) if gid else self._json({"error": "Topilmadi"}, 404)
         if path == "/api/creative/ideas":
             return self._json(api_creative_submit(user, b or {}))
         if len(seg) == 5 and seg[1] == "creative" and seg[2] == "ideas" and seg[4] in ("decide", "used", "delete"):

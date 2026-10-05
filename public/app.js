@@ -289,6 +289,7 @@ const NAV_ITEMS = [
   { view: 'studio',    icon: '🎥', label: 'Kadr Studio',   roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Gulmira', 'Xonzoda', 'Samandar'] },
   { view: 'myscripts', icon: '✍️', label: 'Ssenariylarim', roles: ['coordinator', 'editor', 'lead'], names: ['Xonzoda'] },
   // Kreativ strateg (Shodiya) g'oyalari + qabul qiluvchilar (CEO, koordinator, loyiha rahbarlari)
+  { view: 'goals',     icon: '🎯', label: 'Mening shartim', roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Xonzoda', 'Gulmira', 'Shodiya', 'Samandar', 'Umid', 'Sardor', 'Oygul', 'Xayrulloh', 'Nodira'] },
   { view: 'creative',  icon: '💡', label: 'G\'oyalar',     roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Xonzoda', 'Gulmira', 'Samandar', 'Shodiya'] },
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
@@ -355,6 +356,7 @@ function setActiveNav() {
 //  RENDER ROUTER
 // ============================================================
 const TITLES = {
+  goals:     ['Mening shartim', 'Safari tanlovi — shartlar va natijalar'],
   creative:  ['G\'oyalar', 'Kreativ strategiya — taklif, qabul, ishlatilgan'],
   dashboard: ['Boshqaruv paneli', 'Bugungi holat — bir qarashda'],
   projects:  ['Loyihalar', 'Barcha loyihalar'],
@@ -412,6 +414,7 @@ async function render() {
     else if (VIEW === 'myscripts') await viewScenarist();
     else if (VIEW === 'salary') await viewSalary();
     else if (VIEW === 'creative') await viewCreative();
+    else if (VIEW === 'goals') await viewGoals();
     else if (VIEW === 'daily') await viewDaily();
     else if (VIEW === 'stats') await viewStats();
     else if (VIEW === 'reyting') await viewLeaderboard();
@@ -1957,6 +1960,109 @@ const IDEA_STATUS = {
   taklif: ['⏳ Kutilmoqda', 'st-orange'], qabul: ['✅ Qabul qilindi', 'st-green'],
   ishlatildi: ['🚀 Ishlatildi', 'st-blue'], rad: ['❌ Rad etildi', 'st-red'],
 };
+async function viewGoals() {
+  const d = await api('/api/promo');
+  if (!d || d.error) { $('#content').innerHTML = emptyState(esc((d && d.error) || 'Xatolik')); return; }
+  const fmtV = (c, v) => (c.unit === "so'm" ? money(v) : `${(v || 0).toLocaleString('ru-RU').replace(/,/g, ' ')} ${c.unit || ''}`);
+  const bar = (c) => `<div class="rank-meter" style="margin:6px 0"><div class="rank-fill" style="width:${c.pct}%"></div></div>`;
+  const stBadge = (c, p) => c.ok ? '<span class="pill st-green">✅ Bajarildi</span>'
+    : (p.finished ? '<span class="pill st-red">❌ Bajarilmadi</span>'
+      : (c.behind ? '<span class="pill st-orange">⚠️ Orqada</span>' : '<span class="pill st-gray">⏳ Jarayonda</span>'));
+  const blocksHtml = (c) => (c.blocks && c.blocks.length) ? `<div class="ec-stats" style="flex-wrap:wrap;margin-top:4px">${c.blocks.map((x) =>
+    `<span title="${fmtDate(x.start)} → ${fmtDate(x.end)}">${esc(x.label)}: ${c.unit === "so'm" ? money(x.current) : x.current}/${c.unit === "so'm" ? money(x.target) : x.target}${x.pending ? ` (+${x.pending} kutilmoqda)` : ''}</span>`).join('')}</div>` : '';
+  const condHtml = (c, p) => {
+    let extra = '';
+    if (c.warn) extra += `<div class="muted" style="color:var(--orange,#c80);margin-top:4px">⚠️ ${esc(c.warn)}</div>`;
+    if (c.missing) extra += '<div class="muted" style="margin-top:4px">⚠️ Loyiha dashboardda topilmadi — nomini tekshiring</div>';
+    if (c.items && c.kind === 'lead_projects') extra += c.items.map((i) => `<div class="ci-sub" style="padding:2px 0">${i.ok ? '✅' : '▫️'} ${esc(i.name)} · ${i.current}/${i.target}</div>`).join('') || '<div class="muted">Faol rahbarlik loyihasi topilmadi</div>';
+    if (c.kind === 'credits') {
+      extra += (c.items || []).map((i) => `<div class="ci-sub" style="padding:2px 0;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        ${i.ok ? '✅' : '⏳'} <b>${esc(i.label)}</b> · ${fmtDate(i.date)} · ${money(i.paid)}/${money(i.price)}
+        ${d.isCeo ? `<button class="mini-btn blue" data-cpaid="${i.id}" data-cprice="${i.price}">To'lov kiritish</button><button class="mini-btn gray" data-cdelp="${i.id}">🗑</button>` : ''}</div>`).join('');
+      if (d.isCeo) extra += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+        <input placeholder="Mijoz/paket nomi" data-crl="${p.person}|${c.key}" style="flex:1;min-width:140px">
+        <input type="number" placeholder="Narx (so'm)" data-crp="${p.person}|${c.key}" style="width:120px">
+        <input type="date" data-crd="${p.person}|${c.key}" value="${esc(d.today)}">
+        <button class="mini-btn green" data-cradd="${p.person}|${c.key}" data-ckind="${c.key}">＋ Kredit</button></div>`;
+    }
+    if (c.kind === 'newclient') {
+      extra += (c.clients || []).map((b, i) => `<div style="margin-top:6px"><b>${i + 1}-blok · ${fmtDate(b.start)} → ${fmtDate(b.end)}</b> · ${b.points}/${b.need} ball${b.pending ? ` (kutilayotgan ${b.pending})` : ''}
+        ${b.items.map((it) => `<div class="ci-sub" style="padding:2px 0">${it.counted ? '✅' : (it.points ? '⏳' : '▫️')} ${esc(it.name)} · ${money(it.fee)}/oy · ${esc(it.size)} (${it.points} ball) · ${it.frozen ? '🧊 muzlatilgan' : (it.paidOk ? "to'langan" : `to'lov kutilmoqda (${money(it.paid)})`)}</div>`).join('')}</div>`).join('');
+      extra += `<div class="muted" style="margin-top:4px">Katta mijoz (oyiga ≥ ${money(c.bigFee)}) = 2 ball, kichik (≥ ${money(c.minFee)}) = 1 ball. Mijoz birinchi oylik to'lovini to'liq to'lagach sanaladi. Kredit CEO tomonidan beriladi.</div>`;
+    }
+    if (c.manual) {
+      extra += (c.entries || []).map((e) => `<div class="ci-sub" style="padding:2px 0;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        ${e.status === 'tasdiqlandi' ? '✅' : (e.status === 'rad' ? '❌' : '⏳')} ${e.month + 1}-oy: <b>${e.value}</b> · ${esc(e.note)}
+        ${d.isCeo && e.status === 'kutilmoqda' ? `<button class="mini-btn green" data-mdec="accept" data-id="${e.id}">Tasdiq</button><button class="mini-btn red" data-mdec="reject" data-id="${e.id}">Rad</button>` : ''}</div>`).join('');
+      extra += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+        <select data-mm="${p.person}|${c.key}">${c.blocks.map((x, i) => `<option value="${i}">${esc(x.label)}</option>`).join('')}</select>
+        <input type="number" placeholder="Sof o'sish" data-mv="${p.person}|${c.key}" style="width:110px">
+        <input placeholder="Dalil: Insights skrinshot havolasi/izoh" data-mn="${p.person}|${c.key}" style="flex:1;min-width:160px">
+        <button class="mini-btn blue" data-msub="${p.person}|${c.key}" data-gk="${c.key}">Yuborish</button></div>`;
+    }
+    return `<div class="team-card"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div class="team-name">${esc(c.label)}</div>${stBadge(c, p)}</div>
+      ${bar(c)}<div class="ec-stats"><span>${fmtV(c, c.current)} / ${fmtV(c, c.target)}</span><span>${c.pct}%</span></div>
+      ${blocksHtml(c)}${extra}</div>`;
+  };
+  const personHtml = (p) => {
+    const head = `<h3>🎯 ${esc(p.person)} — Safari tanlovi ${p.allOk ? '· 🏆 HAMMA SHART BAJARILDI' : `· ${p.okCount}/${p.conditions.length} shart`}</h3>`;
+    const info = `<div class="muted" style="line-height:1.6;margin-bottom:8px">Davr: <b>${fmtDate(p.start)} — ${fmtDate(p.end)}</b> (${p.started ? `${Math.min(p.dayNo, p.totalDays)}-kun, qolgan ${p.daysLeft} kun` : 'hali boshlanmagan'}). Hisob 3 oylik JAMI bo'yicha, har shart 100% bajarilganda yutiladi.</div>`;
+    return `<div class="panel">${head}${info}<div class="cards-grid">${p.conditions.map((c) => condHtml(c, p)).join('')}</div></div>`;
+  };
+  let summary = '';
+  if (d.isCeo) {
+    summary = `<div class="panel"><h3>🏁 Umumiy holat (faqat CEO)</h3><div class="ceo-list">${d.people.map((p) =>
+      `<div class="ceo-item" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><div style="flex:1;min-width:120px"><div class="ci-name">${esc(p.person)}</div></div>
+        <div class="ci-sub">${p.allOk ? '🏆 ' : ''}${p.okCount}/${p.conditions.length} shart bajarilgan · o'rtacha ${Math.round(p.conditions.reduce((a, c) => a + c.pct, 0) / (p.conditions.length || 1))}%${p.conditions.some((c) => c.behind) ? ' · ⚠️ orqada: ' + p.conditions.filter((c) => c.behind).map((c) => esc(c.label.split(' — ').slice(0, 2).join(' — '))).join(', ') : ''}</div></div>`).join('')}</div></div>`;
+  }
+  let credit = '';
+  if (d.isCeo) {
+    const opt = (v, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(v || '—')}</option>`;
+    credit = `<div class="panel"><h3>🧾 Yangi mijoz kreditini belgilash (Shodiya)</h3>
+      <div class="muted" style="margin-bottom:8px">Yangi mijozni kim jalb qilgan bo'lsa tanlang va sana qo'ying (sana = kredit boshlanishi).</div>
+      <div class="ceo-list">${d.projects.map((p) => `<div class="ceo-item" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <div style="flex:1;min-width:160px"><div class="ci-name">${esc(p.name)}</div><div class="ci-sub">${money(p.fee)}/oy</div></div>
+        <select data-gp="${p.id}" class="gsel">${opt('', p.sourced_by)}${d.creditPeople.map((x) => opt(x, p.sourced_by)).join('')}</select>
+        <input type="date" data-gd="${p.id}" value="${esc(p.sourced_at || d.today)}">
+        <button class="mini-btn blue" data-gsave="${p.id}">Saqlash</button></div>`).join('')}</div></div>`;
+  }
+  $('#content').innerHTML = summary + d.people.map(personHtml).join('') + credit;
+  const post = async (url, body, ok) => {
+    const r = await api(url, { method: 'POST', body: JSON.stringify(body || {}) });
+    if (r && r.error) { toast(r.error); return false; }
+    toast(ok); render(); return true;
+  };
+  document.querySelectorAll('[data-gsave]').forEach((b) => b.addEventListener('click', async () => {
+    const id = b.dataset.gsave;
+    await post(`/api/goals/credit/${id}`, { person: document.querySelector(`[data-gp="${id}"]`).value, date: document.querySelector(`[data-gd="${id}"]`).value }, 'Saqlandi');
+  }));
+  document.querySelectorAll('[data-msub]').forEach((b) => b.addEventListener('click', async () => {
+    const k = b.dataset.msub, person = k.split('|')[0];
+    await post('/api/promo/manual', { person, goal_key: b.dataset.gk,
+      month_idx: document.querySelector(`[data-mm="${k}"]`).value, value: document.querySelector(`[data-mv="${k}"]`).value,
+      note: document.querySelector(`[data-mn="${k}"]`).value }, 'Yuborildi');
+  }));
+  document.querySelectorAll('[data-mdec]').forEach((b) => b.addEventListener('click', async () => {
+    await post(`/api/promo/manual/${b.dataset.id}`, { action: b.dataset.mdec }, b.dataset.mdec === 'accept' ? '✅ Tasdiqlandi' : '❌ Rad etildi');
+  }));
+  document.querySelectorAll('[data-cradd]').forEach((b) => b.addEventListener('click', async () => {
+    const k = b.dataset.cradd, person = k.split('|')[0];
+    await post('/api/promo/credit', { person, kind: b.dataset.ckind,
+      label: document.querySelector(`[data-crl="${k}"]`).value, price: document.querySelector(`[data-crp="${k}"]`).value,
+      date: document.querySelector(`[data-crd="${k}"]`).value }, 'Kredit berildi');
+  }));
+  document.querySelectorAll('[data-cpaid]').forEach((b) => b.addEventListener('click', async () => {
+    const v = prompt(`Haqiqatan kelgan to'lov summasi (so'm). Narx: ${b.dataset.cprice}`);
+    if (v === null) return;
+    await post(`/api/promo/credit/${b.dataset.cpaid}`, { action: 'paid', amount: v }, "To'lov kiritildi");
+  }));
+  document.querySelectorAll('[data-cdelp]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Kreditni bekor qilasizmi?')) return;
+    await post(`/api/promo/credit/${b.dataset.cdelp}`, { action: 'delete' }, 'Bekor qilindi');
+  }));
+}
+
 async function viewCreative() {
   const d = await api('/api/creative');
   if (!d || d.error) { $('#content').innerHTML = emptyState(esc((d && d.error) || 'Xatolik')); return; }
