@@ -5678,18 +5678,36 @@ def _reels_quota_penalty(conn, name, today):
         dstr = (r["montaj_at"] or "")[:10]
         done_by_day[dstr] = done_by_day.get(dstr, 0) + 1
     shortfalls = []
-    d = first
     # MUHIM: bugungi (hali tugamagan) kun jarimaga kiritilmaydi — faqat
     # o'tgan, allaqachon yakunlangan kunlar uchun hisoblanadi. Aks holda
     # ertalabdan, kun hali tugamay turib, "norma bajarilmadi" deb jarima
     # yozilib qolar edi (CEO bilan 2026-10-01 kelishilgan tuzatish).
+    # MUHIM 2 (2026-10-06): muddatidan OLDIN tugatilgan video ham normani yopadi.
+    # Avval faqat o'sha kuni tugatilganlar sanalar edi — shuning uchun oldindan
+    # (masalan 30-sentabrda) tugatilgan, muddati 1-2 oktabrdagi videolar uchun
+    # ham jarima yozilar edi. Endi ortiqcha tugatilganlar keyingi kunlarga
+    # "zaxira" bo'lib o'tadi (qarz esa ko'chmaydi). Bir video ikki marta sanalmaydi.
+    all_days = [x for x in list(due_by_day) + list(done_by_day) if x]
+    start = first
+    if all_days:
+        try:
+            start = min(first, datetime.date.fromisoformat(min(all_days)))
+        except ValueError:
+            start = first
+    surplus = 0
+    d = start
     while d < today:
         iso = d.isoformat()
-        if d.weekday() != 6 and iso not in otpusk and iso not in offsite and iso not in forgiven:
-            required = min(REELS_QUOTA_PER_DAY, due_by_day.get(iso, 0))
-            short = max(required - done_by_day.get(iso, 0), 0)
-            if short > 0:
+        avail = surplus + done_by_day.get(iso, 0)
+        applicable = d.weekday() != 6 and iso not in otpusk and iso not in offsite and iso not in forgiven
+        required = min(REELS_QUOTA_PER_DAY, due_by_day.get(iso, 0)) if applicable else 0
+        if required:
+            short = max(required - avail, 0)
+            surplus = max(avail - required, 0)
+            if short > 0 and d >= first:
                 shortfalls.append((iso, short))
+        else:
+            surplus = avail
         d += datetime.timedelta(days=1)
     total_short = sum(s for _, s in shortfalls)
     return total_short * REELS_QUOTA_PENALTY_PER_VIDEO, shortfalls
