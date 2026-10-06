@@ -281,7 +281,7 @@ TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
     "pardaboyev_samandar": "Samandar", "nbyva_929": "Nodira",
-    "murad_nasullayev": "Murod", "uzbawr": "Xayrulloh",
+    "murad_nasullayev": "Murod", "uzbawr": "Xayrulloh", "fx4040": "Fazliddin",
 }
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
