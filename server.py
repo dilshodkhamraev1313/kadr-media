@@ -276,7 +276,7 @@ DEFAULT_CHECKLIST = {
 }
 
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
-ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar", "Nodira", "Murod", "Xayrulloh")
+ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar", "Nodira", "Murod", "Xayrulloh", "Fazliddin")
 TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
@@ -312,6 +312,7 @@ GEOFENCE_TOKENS = {
     "Y0s0M8Bu9qJc4DrFNXmSRbdQ": "Nodira",
     "LsQj6NqHNSQgoXoMx-WTJDdT": "Murod",
     "eAIZP-tE3CmbMzN_cDTm8RlJ": "Xayrulloh",  # iPhone, 2026-10-01'dan boshlab
+    "oZzkrA4sgSz71YmvhOHZtVDu": "Fazliddin",  # 2026-10-06 dan boshlab
 }
 
 # Xodim OYNING O'RTASIDA tizimga qo'shilsa (masalan yangi ishga olingan/rol
@@ -324,6 +325,7 @@ JOIN_DATE = {
     "Murod": "2026-09-19",     # ATTENDANCE_USERS'ga shu sanada qo'shildi (tizim shu kundan kuzata boshladi)
     "Nodira": "2026-09-11",    # ATTENDANCE_USERS'ga shu sanada qo'shildi (tizim shu kundan kuzata boshladi)
     "Xayrulloh": "2026-10-01",  # yangi ishga olindi
+    "Fazliddin": "2026-10-06",  # yangi ishga olindi (Xayrulloh bilan bir xil sharoit)
 }
 
 
@@ -373,7 +375,7 @@ LATENESS_PENALTY_PER_DAY = 20000  # 4-martadan boshlab har kechikkan kun uchun q
 # dumaloq video Fiksa uchun ishlatiladi), lekin umuman kelmagan kunlar
 # baribir jarima limitiga kiradi. Murod, Xayrulloh — kun yarmidan (taxminan
 # tushdan keyin) keladi.
-LATE_SCHEDULE_EXEMPT = ("Xonzoda", "Shodiya", "Murod", "Xayrulloh")
+LATE_SCHEDULE_EXEMPT = ("Xonzoda", "Shodiya", "Murod", "Xayrulloh", "Fazliddin")
 PERFECT_ATTENDANCE_BONUS = 500000  # butun oy (yakshanbadan tashqari) 100% vaqtida kelsa bonus
 OTPUSK_DAYS = 2                   # bir martalik otpusk davomiyligi (kun)
 OTPUSK_COOLDOWN_MONTHS = 1        # otpuskdan otpuskgacha eng kam oraliq (har oyda 1 marta)
@@ -425,6 +427,7 @@ SALARY = {
     # uchun). Intizom yo'q — faqat Fiksa (kunlik) + montaj puli.
     "Murod": {"title": "Montajchi", "som": {"Fiksa": 500000}, "montaj": True},
     "Xayrulloh": {"title": "Montajchi", "som": {"Fiksa": 500000}, "montaj": True},
+    "Fazliddin": {"title": "Montajchi", "som": {"Fiksa": 500000}, "montaj": True},   # Xayrulloh bilan bir xil
 }
 
 # Rol='lead' bo'lsa ham montaj qiladigan rahbarlar (Shodiya): montajchi ro'yxatiga
@@ -470,7 +473,7 @@ RANK_PRICES = {
 # Ba'zi montajyorlar yuqori lavozimdan boshlanadi — qabul soniga qo'shiladigan bonus.
 # Oygul Elite lavozimidan boshlanib hisoblanadi (2 lavozim = 2×RANK_STEP qabul).
 # Xayrulloh — yangi qabul qilingan, lekin tajribasi uchun Pro'dan boshlanadi.
-EDITOR_RANK_BASE = {"Oygul": 2 * RANK_STEP, "Xayrulloh": 1 * RANK_STEP}
+EDITOR_RANK_BASE = {"Oygul": 2 * RANK_STEP, "Xayrulloh": 1 * RANK_STEP, "Fazliddin": 1 * RANK_STEP}
 
 
 def eff_count(name, accepted):
@@ -716,6 +719,8 @@ TEAM = [
     ("Murod",            "murod",   "murod2026","editor",      "Montajchi",               "#00C7BE", None),
     # Yangi qabul qilindi 2026-10-01, Pro lavozimidan boshlanadi (EDITOR_RANK_BASE). Telegram: @uzbawr
     ("Xayrulloh",        "xayrulloh","xayr2026","editor",      "Montajchi",               "#6E6E73", None),
+    # Yangi qabul qilindi 2026-10-06, Xayrulloh bilan bir xil sharoit (Pro, Fiksa 500k, kun yarmidan keladi)
+    ("Fazliddin",        "fazliddin","fazl2026","editor",      "Montajchi",               "#8E8E93", None),
     # AI kreator — AI video va AI karusel post yasaydi. Fiksa/Intizom yo'q,
     # daromadi montajchilar kabi (RANK_PRICES ai_video/ai_karusel, 25.000dan
     # boshlab, tasdiqlangan ish soniga qarab o'sadi). Telegram: @raxmatjanov_m
