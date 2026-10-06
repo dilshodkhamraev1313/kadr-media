@@ -1167,6 +1167,12 @@ def init_db():
     # xarajatlar: qayerdan pul chiqdi — usul (naqt/plastik) + kim to'ladi (Dilshod/Gulmira)
     add_column_if_missing(conn, "studio_expenses", "method", "TEXT DEFAULT 'naqt'")
     add_column_if_missing(conn, "studio_expenses", "paid_by", "TEXT DEFAULT ''")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS project_period_log (
+        id {pk}, project_id INTEGER, project TEXT DEFAULT '', period_from TEXT DEFAULT '', period_to TEXT DEFAULT '',
+        plan INTEGER DEFAULT 0, done_ssenariy INTEGER DEFAULT 0, done_syomka INTEGER DEFAULT 0,
+        done_montaj INTEGER DEFAULT 0, done_tasdiq INTEGER DEFAULT 0, done_joylash INTEGER DEFAULT 0,
+        approx INTEGER DEFAULT 0, self_post INTEGER DEFAULT 0, self_script INTEGER DEFAULT 0,
+        closed_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS promo_manual (
         id {pk}, person TEXT, goal_key TEXT, month_idx INTEGER DEFAULT 0, value INTEGER DEFAULT 0,
         note TEXT DEFAULT '', status TEXT DEFAULT 'kutilmoqda', entered_by TEXT, entered_at {ts},
@@ -1219,6 +1225,7 @@ def init_db():
     _seed_playbooks(conn)
     _backfill_studio_ledger(conn)
     _backfill_operator_pay(conn)
+    _backfill_period_log(conn)
     conn.commit()
 
     # Seed (faqat bo'sh bo'lsa)
@@ -1427,6 +1434,52 @@ def api_get_project(pid):
     return decorate(row) if row else None
 
 
+def _row_val(row, key, default=0):
+    try:
+        v = row[key]
+    except (KeyError, IndexError):
+        return default
+    return default if v is None else v
+
+
+def _log_project_period(conn, pid, row, approx=False):
+    """Tugayotgan davr natijasini (reja + har bosqichdagi bajarilgan son) arxiv jadvaliga yozadi.
+    Davr natijasi = done_X − prev_done_X (approx=True bo'lsa — jamlangan prev_done_X)."""
+    cols = ("done_ssenariy", "done_syomka", "done_montaj", "done_tasdiq", "done_joylash")
+    vals = {}
+    for c in cols:
+        v = _row_val(row, "prev_" + c) if approx else max(_row_val(row, c) - _row_val(row, "prev_" + c), 0)
+        vals[c] = v
+    if not any(vals.values()):
+        return False
+    plan = _row_val(row, "prev_plan") if approx else _row_val(row, "plan")
+    if approx:
+        pto = (_row_val(row, "prev_period", "") or _row_val(row, "prev_reset_at", "") or "")[:10]
+        pfrom = ""
+    else:
+        pto = uz_today().isoformat()
+        pfrom = (_row_val(row, "prev_period", "") or "")[:10]
+    conn.execute(
+        "INSERT INTO project_period_log (project_id, project, period_from, period_to, plan, done_ssenariy, done_syomka, "
+        "done_montaj, done_tasdiq, done_joylash, approx, self_post, self_script) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (pid, _row_val(row, "name", ""), pfrom, pto, plan, vals["done_ssenariy"], vals["done_syomka"], vals["done_montaj"],
+         vals["done_tasdiq"], vals["done_joylash"], 1 if approx else 0,
+         1 if _row_val(row, "self_post") else 0, 1 if _row_val(row, "self_script") else 0))
+    return True
+
+
+def _backfill_period_log(conn):
+    """Bir martalik: loyiha avval yangilangan bo'lsa-yu arxivi bo'sh bo'lsa, o'sha davrni
+    (jamlangan prev_done_X bo'yicha, 'taxminiy') arxivga ko'chiradi. Idempotent."""
+    if conn.execute("SELECT 1 FROM settings WHERE skey='period_log_backfilled'").fetchone():
+        return   # faqat BIR MARTA (keyin prev_* yangi chegarani bildiradi, qayta ko'chirilmaydi)
+    for r in conn.execute("SELECT * FROM projects WHERE prev_reset_at IS NOT NULL AND prev_reset_at<>''").fetchall():
+        if conn.execute("SELECT 1 FROM project_period_log WHERE project_id=?", (r["id"],)).fetchone():
+            continue
+        _log_project_period(conn, r["id"], r, approx=True)
+    conn.execute("INSERT INTO settings (skey, svalue) VALUES ('period_log_backfilled', '1')")
+
+
 def _freeze_and_reset_project(conn, pid, row):
     """Loyihaning JORIY (hozirgacha jamlangan) bosqich sonlarini 'muzlatish
     chegarasi' sifatida prev_* ustunlarga belgilaydi — bu chegaragacha bo'lgan
@@ -1442,6 +1495,7 @@ def _freeze_and_reset_project(conn, pid, row):
     from calendar import monthrange
     today = uz_today()
     new_deadline = datetime.date(today.year, today.month, monthrange(today.year, today.month)[1]).isoformat()
+    _log_project_period(conn, pid, row)   # tugayotgan davr natijasi arxivga (kartadan ketadi)
     conn.execute(
         """UPDATE projects SET
              prev_done_ssenariy=done_ssenariy, prev_done_syomka=done_syomka,
@@ -1452,6 +1506,34 @@ def _freeze_and_reset_project(conn, pid, row):
              tasdiq='kutilmoqda', joylash='kutilmoqda', updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
         (today.isoformat(), now_local(), new_deadline, pid))
+
+
+def api_project_periods(user, pid=None):
+    """Loyiha davrlari arxivi (har yangilashda yopilgan davr natijasi).
+    pid berilsa — o'sha loyiha (CEO/koordinator hamma, rahbar faqat o'zinikini);
+    berilmasa — hamma (faqat CEO)."""
+    role, name = user["role"], user["name"]
+    conn = get_db()
+    if pid:
+        pr = conn.execute("SELECT name, responsible FROM projects WHERE id=?", (pid,)).fetchone()
+        if not pr:
+            conn.close()
+            return {"error": "Topilmadi"}, 404
+        if role not in ("ceo", "coordinator") and not (role == "lead" and pr["responsible"] == name):
+            conn.close()
+            return {"error": "Ruxsat yo'q"}, 403
+        rows = conn.execute("SELECT * FROM project_period_log WHERE project_id=? ORDER BY period_to DESC, id DESC", (pid,)).fetchall()
+    else:
+        if role != "ceo":
+            conn.close()
+            return {"error": "Ruxsat yo'q"}, 403
+        rows = conn.execute("SELECT * FROM project_period_log ORDER BY period_to DESC, id DESC").fetchall()
+    out = [{"id": r["id"], "projectId": r["project_id"], "project": r["project"], "from": r["period_from"], "to": r["period_to"],
+            "plan": r["plan"], "approx": bool(r["approx"]), "selfPost": bool(r["self_post"]), "selfScript": bool(r["self_script"]),
+            "done": {"ssenariy": r["done_ssenariy"], "syomka": r["done_syomka"], "montaj": r["done_montaj"],
+                     "tasdiq": r["done_tasdiq"], "joylash": r["done_joylash"]}} for r in rows]
+    conn.close()
+    return {"periods": out}
 
 
 def api_reset_project_stats(user):
@@ -9501,6 +9583,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._forbid() if role != "ceo" else self._json(api_late_videos(user))
         if path == "/api/archives":
             return self._forbid() if role != "ceo" else self._json(api_archives(user))
+        if path == "/api/project-periods":
+            pid = self._int((parse_qs(urlparse(self.path).query).get("pid") or [""])[0])
+            return self._json(api_project_periods(user, pid))
         if path == "/api/archive":
             ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
             return self._forbid() if role != "ceo" else self._json(api_archive_get(user, ym))

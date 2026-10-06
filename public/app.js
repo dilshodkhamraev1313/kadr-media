@@ -757,26 +757,17 @@ function projectCard(p) {
       <div class="plan-box">
         <div class="plan-head"><span>📅 Oylik reja (${p.plan} ta/oy)</span><b>${p.planDone}/${p.planTotal} · ${p.planPct}%</b></div>
         <div class="plan-grid">${STAGES.filter((s) => !(p.selfPost && s.key === 'joylash')).map((s) => {
-          // Eski (muzlatilgan, allaqachon hisoblangan) qism kulrang, undan keyingi
-          // YANGI ish esa shu chiziqning davomida rangli bo'lib o'sadi.
-          const prevV = p['prev_done_' + s.key] || 0;
+          // Faqat JORIY davr ko'rinadi (yangi davr 0 dan). Eski davrlar — loyiha ichida
+          // "Oldingi davrlar" va Arxiv bo'limida.
           const curV = p['cur_done_' + s.key] || 0;
-          const total = prevV + (p.plan || 0);
-          const prevPct = total ? Math.min(Math.round(prevV / total * 100), 100) : 0;
-          const curPct = total ? Math.min(Math.round(curV / total * 100), 100 - prevPct) : 0;
+          const curPct = p.plan ? Math.min(Math.round(curV / p.plan * 100), 100) : 0;
           const full = curV >= p.plan;
-          return `<div class="plan-stage"><div class="pl-top"><span>${s.label}</span><b class="${full ? 'full' : ''}">${curV}/${p.plan}${prevV ? ` <span class="muted">(+${prevV} eski)</span>` : ''}</b></div>
-            <div class="pl-bar">${prevV ? `<div class="pl-fill-prev" style="width:${prevPct}%"></div>` : ''}<div class="pl-fill ${full ? 'done' : ''}" style="width:${curPct}%"></div></div></div>`;
+          return `<div class="plan-stage"><div class="pl-top"><span>${s.label}</span><b class="${full ? 'full' : ''}">${curV}/${p.plan}</b></div>
+            <div class="pl-bar"><div class="pl-fill ${full ? 'done' : ''}" style="width:${curPct}%"></div></div></div>`;
         }).join('')}</div>
       </div>` : `
       <div class="pc-progress"><div class="progress-bar"><div class="progress-fill" style="width:${p.progress}%"></div></div>
         <div class="pc-progress-label"><span>${p.doneCount}/5 bosqich</span><span>${p.progress}%</span></div></div>`}
-      ${(p.prev_reset_at && !p.fullyDone) ? `
-      <div class="prev-box" title="Bu — o'tgan davrning muzlatilgan holati, qayta hisoblanmaydi (daromadi allaqachon hisoblangan)">
-        <div class="prev-head">🕘 Oxirgi davr (${fmtDate(p.prev_reset_at)} holatida) — tarixiy</div>
-        <div class="prev-grid">${STAGES.filter((s) => !(p.selfPost && s.key === 'joylash')).map((s) =>
-          `<span class="prev-chip">${s.label}: ${p['prev_done_' + s.key] || 0}/${p.prev_plan || 0}</span>`).join('')}</div>
-      </div>` : ''}
       ${p.muammo ? `<div class="pc-problem">⚠ ${esc(p.muammo)}</div>` : ''}
       ${(p.scriptDebt > 0) ? `<div class="pc-problem soft" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
           <span>✍️ Ssenariy qarzi: <b>${money(p.scriptDebt)}</b></span>
@@ -795,7 +786,7 @@ function bindProjectCards() {
   }
   document.querySelectorAll('.proj-reset').forEach((b) => b.addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (!confirm(`«${b.dataset.name}» loyihasini yangilaysizmi?\n\nJoriy sonlar tarixiy (kulrang) bo'lib qoladi, yangi davr 0 dan boshlanadi.`)) return;
+    if (!confirm(`«${b.dataset.name}» loyihasini yangilaysizmi?\n\nJoriy sonlar arxivga yoziladi (Oldingi davrlar), yangi davr 0 dan boshlanadi.`)) return;
     const r = await api(`/api/projects/${b.dataset.resetproj}/reset`, { method: 'POST', body: '{}' });
     if (r && r.error) { toast(r.error); return; }
     toast('🔄 Loyiha yangilandi'); render();
@@ -3819,8 +3810,19 @@ async function viewArchive() {
       ${snapCard(cur)}
     </div>
     <div class="sec-label" style="margin-bottom:10px">🗄 Muzlatilgan oylar</div>
-    <div class="fin-months">${archList}</div>`;
+    <div class="fin-months">${archList}</div>
+    <div class="sec-label" style="margin:16px 0 10px">📁 Loyiha davrlari (har yangilashda yopilgan)</div>
+    <div class="panel" id="arc_periods"><div class="muted">Yuklanmoqda...</div></div>`;
   bindSnapCard();
+  api('/api/project-periods').then((r) => {
+    const el = $('#arc_periods');
+    if (!el) return;
+    if (!r || !r.periods) { el.innerHTML = '<div class="muted">Ko\'rib bo\'lmadi</div>'; return; }
+    const groups = {};
+    r.periods.forEach((x) => { const ym = (x.to || '').slice(0, 7); (groups[ym] = groups[ym] || []).push(x); });
+    const yms = Object.keys(groups).sort().reverse();
+    el.innerHTML = yms.length ? yms.map((ym) => `<div style="margin-bottom:10px"><b>${esc(UZ_YM(ym))}</b> <span class="muted">· ${groups[ym].length} ta davr</span>${periodsHtml(groups[ym], true)}</div>`).join('') : '<div class="muted">Hali yopilgan davr yo\'q</div>';
+  }).catch(() => {});
   $('#arc_save').addEventListener('click', async () => {
     if (!confirm(`${UZ_YM(cur.ym)} oyini arxivlaysizmi? (hozirgi holat muzlatiladi)`)) return;
     const r = await api('/api/archive', { method: 'POST', body: '{}' });
@@ -4007,6 +4009,19 @@ $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') clos
 
 // ---- Project modal (mavjud) ----
 let EDIT_P = null, PDRAFT = {};
+// Joriy davr (done - prev_done): jamlanuvchi hisoblagich emas, "bu oy bajarilgani" ko'rinadi
+const curDone = (p, k) => Math.max((p['done_' + k] || 0) - (p['prev_done_' + k] || 0), 0);
+function periodsHtml(list, showProject) {
+  if (!list || !list.length) return '<div class="muted">Hali yopilgan davr yo\'q</div>';
+  return list.map((x) => {
+    const stages = STAGES.filter((s) => !(x.selfPost && s.key === 'joylash') && !(x.selfScript && s.key === 'ssenariy'));
+    return `<div class="ceo-item" style="display:block;padding:8px 0">
+      <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div>${showProject ? `<b>${esc(x.project)}</b> · ` : ''}<span class="muted">${x.from ? fmtDate(x.from) : '…'} → ${fmtDate(x.to)}</span>${x.approx ? ' <span class="pill st-gray" title="Birinchi yangilashgacha jamlangan son">taxminiy</span>' : ''}</div>
+        <span class="muted">reja: ${x.plan}/oy</span></div>
+      <div class="ec-stats" style="flex-wrap:wrap;margin-top:4px">${stages.map((s) => `<span>${s.label}: ${x.done[s.key] || 0}/${x.plan}</span>`).join('')}</div></div>`;
+  }).join('');
+}
 async function openProjectModal(project) {
   if (!DATA.clients) DATA.clients = await api('/api/clients');
   if (!DATA.team) DATA.team = await api('/api/team');
@@ -4033,8 +4048,8 @@ async function openProjectModal(project) {
     <div class="field"><label>Oyiga nechta video</label><div class="muted" style="padding:8px 0">${PDRAFT.plan || 0} (faqat CEO o'zgartira oladi)</div></div>`}
     <div class="sec-label" style="margin-top:12px">Bu oy bajarilgani (har bosqich):</div>
     ${(ME.role === 'ceo' || PDRAFT.responsible === ME.name) ? `
-    <div class="plan-inputs">${STAGES.map((s) => `<div class="field"><label>${s.label}</label><input id="pf_done_${s.key}" type="number" min="0" value="${PDRAFT['done_' + s.key] || 0}" /></div>`).join('')}</div>` : `
-    <div class="plan-inputs">${STAGES.map((s) => `<div class="field"><label>${s.label}</label><div class="muted" style="padding:8px 0">${PDRAFT['done_' + s.key] || 0}</div></div>`).join('')}</div>`}
+    <div class="plan-inputs">${STAGES.map((s) => `<div class="field"><label>${s.label}</label><input id="pf_done_${s.key}" type="number" min="0" value="${curDone(PDRAFT, s.key)}" /></div>`).join('')}</div>` : `
+    <div class="plan-inputs">${STAGES.map((s) => `<div class="field"><label>${s.label}</label><div class="muted" style="padding:8px 0">${curDone(PDRAFT, s.key)}</div></div>`).join('')}</div>`}
     <div class="divider"></div><div class="sec-label">Jarayon bosqichlari (umumiy holat)</div>
     <div class="stage-editor">${STAGES.map((s) => `<div class="stage-edit-row"><span class="sname">${s.label}</span>
       <div class="seg" data-stage="${s.key}">
@@ -4048,6 +4063,7 @@ async function openProjectModal(project) {
       <span>✍️ Mijoz o'zi ssenariy beradi — bu loyihada <b>ssenariy bosqichi/deadline yo'q</b> (biz yozmaymiz)</span></label>
     <div class="field"><label>⚠ Muammo</label><textarea id="pf_muammo">${esc(PDRAFT.muammo)}</textarea></div>
     <div class="field"><label>Izoh</label><textarea id="pf_izoh">${esc(PDRAFT.izoh)}</textarea></div>
+    ${project ? '<div class="divider"></div><div class="sec-label">🕘 Oldingi davrlar</div><div id="pf_periods" class="muted">Yuklanmoqda...</div>' : ''}
     <div class="modal-actions">${project ? '<button class="btn-del" id="pf_del">O\'chirish</button>' : ''}<button class="btn-save" id="pf_save">${project ? 'Saqlash' : 'Qo\'shish'}</button></div>`,
   () => {
     $('#modalBody').querySelectorAll('.seg').forEach((seg) => seg.querySelectorAll('button').forEach((btn) => btn.addEventListener('click', () => {
@@ -4057,6 +4073,10 @@ async function openProjectModal(project) {
     })));
     $('#pf_save').addEventListener('click', saveProject);
     if (project) $('#pf_del').addEventListener('click', deleteProject);
+    if (project) api(`/api/project-periods?pid=${project.id}`).then((r) => {
+      const el = $('#pf_periods');
+      if (el) el.innerHTML = r && r.periods ? periodsHtml(r.periods, false) : '<div class="muted">Ko\'rib bo\'lmadi</div>';
+    }).catch(() => {});
   });
 }
 async function saveProject() {
@@ -4070,7 +4090,8 @@ async function saveProject() {
   if (planEl) body.plan = parseInt(planEl.value || '0', 10);
   ['ssenariy', 'syomka', 'montaj', 'tasdiq', 'joylash'].forEach((k) => {
     const el = $('#pf_done_' + k);
-    if (el) body['done_' + k] = parseInt(el.value || '0', 10);
+    // Ekranda joriy davr ko'rsatiladi; bazada jamlanuvchi son saqlanadi (eski chegara + joriy)
+    if (el) body['done_' + k] = (EDIT_P ? (EDIT_P['prev_done_' + k] || 0) : 0) + Math.max(parseInt(el.value || '0', 10) || 0, 0);
   });
   const fee = $('#pf_fee');
   if (fee) body.monthly_fee = parseInt(fee.value || '0', 10);
