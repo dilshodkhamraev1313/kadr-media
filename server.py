@@ -276,12 +276,12 @@ DEFAULT_CHECKLIST = {
 }
 
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
-ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar", "Nodira", "Murod", "Xayrulloh", "Fazliddin")
+ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar", "Nodira", "Xayrulloh", "Fazliddin")
 TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
     "pardaboyev_samandar": "Samandar", "nbyva_929": "Nodira",
-    "murad_nasullayev": "Murod", "uzbawr": "Xayrulloh", "fx4040": "Fazliddin",
+    "uzbawr": "Xayrulloh", "fx4040": "Fazliddin",
 }
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
@@ -300,7 +300,7 @@ VIDEO_CHECKIN_ENABLED = False  # 2026-09-24: WiFi-geofence pilot davrida vaqtinc
 # 2026-09-28: Murodning Android'ida WiFi-avtomatlashtiruv ishonchli ishlamagani
 # uchun, FAQAT unga dumaloq video hali ham "keldi" deb hisoblanadi (boshqalarga
 # tegishli emas — ular hali ham faqat WiFi orqali belgilanadi).
-VIDEO_CHECKIN_EXEMPT = ("Murod",)
+VIDEO_CHECKIN_EXEMPT = ()
 GEOFENCE_TOKENS = {
     "xM8uvINfcyixJ8BXBwNuTeXq": "Dilshod Khamraev",  # pilot/sinov uchun
     "aNQSgSVZPXJjnFs0Mfj4EGFh": "Gulmira",
@@ -310,7 +310,6 @@ GEOFENCE_TOKENS = {
     "YSvOOe6Rsbl_5Mq61SkrimF-": "Shodiya",
     "F3441WHP4AJ8REXQoVhoLL2C": "Samandar",
     "Y0s0M8Bu9qJc4DrFNXmSRbdQ": "Nodira",
-    "LsQj6NqHNSQgoXoMx-WTJDdT": "Murod",
     "eAIZP-tE3CmbMzN_cDTm8RlJ": "Xayrulloh",  # iPhone, 2026-10-01'dan boshlab
     "oZzkrA4sgSz71YmvhOHZtVDu": "Fazliddin",  # 2026-10-06 dan boshlab
 }
@@ -322,7 +321,6 @@ GEOFENCE_TOKENS = {
 # butunlay chiqadi (na foyda, na zarar) — xuddi otpusk kabi.
 JOIN_DATE = {
     "Samandar": "2026-08-25",  # Saidning o'rniga shu sanada qo'shildi
-    "Murod": "2026-09-19",     # ATTENDANCE_USERS'ga shu sanada qo'shildi (tizim shu kundan kuzata boshladi)
     "Nodira": "2026-09-11",    # ATTENDANCE_USERS'ga shu sanada qo'shildi (tizim shu kundan kuzata boshladi)
     "Xayrulloh": "2026-10-01",  # yangi ishga olindi
     "Fazliddin": "2026-10-06",  # yangi ishga olindi (Xayrulloh bilan bir xil sharoit)
@@ -375,7 +373,7 @@ LATENESS_PENALTY_PER_DAY = 20000  # 4-martadan boshlab har kechikkan kun uchun q
 # dumaloq video Fiksa uchun ishlatiladi), lekin umuman kelmagan kunlar
 # baribir jarima limitiga kiradi. Murod, Xayrulloh — kun yarmidan (taxminan
 # tushdan keyin) keladi.
-LATE_SCHEDULE_EXEMPT = ("Xonzoda", "Shodiya", "Murod", "Xayrulloh", "Fazliddin")
+LATE_SCHEDULE_EXEMPT = ("Xonzoda", "Shodiya", "Xayrulloh", "Fazliddin")
 PERFECT_ATTENDANCE_BONUS = 500000  # butun oy (yakshanbadan tashqari) 100% vaqtida kelsa bonus
 OTPUSK_DAYS = 2                   # bir martalik otpusk davomiyligi (kun)
 OTPUSK_COOLDOWN_MONTHS = 1        # otpuskdan otpuskgacha eng kam oraliq (har oyda 1 marta)
@@ -425,7 +423,7 @@ SALARY = {
     # Kun yarmidan keladi — ATTENDANCE_USERS'da (Fiksa kunlik hisoblansin
     # uchun) va LATE_SCHEDULE_EXEMPT'da (kech kelishi jarima keltirmasin
     # uchun). Intizom yo'q — faqat Fiksa (kunlik) + montaj puli.
-    "Murod": {"title": "Montajchi", "som": {"Fiksa": 500000}, "montaj": True},
+    # Murod: 2026-10-06 dan online ishlaydi, fiksa yo'q — Oygul kabi faqat montaj puli (piece-rate)
     "Xayrulloh": {"title": "Montajchi", "som": {"Fiksa": 500000}, "montaj": True},
     "Fazliddin": {"title": "Montajchi", "som": {"Fiksa": 500000}, "montaj": True},   # Xayrulloh bilan bir xil
 }
