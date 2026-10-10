@@ -346,9 +346,14 @@ def _backfill_attendance(conn):
         for d in dates:
             if conn.execute("SELECT 1 FROM attendance WHERE person=? AND adate=?", (person, d)).fetchone():
                 continue
+            # on_time=0: kun yarmidan keladigan xodim (LATE_SCHEDULE_EXEMPT) — kech-jarima yo'q, Intizom ham yo'q
             conn.execute("INSERT INTO attendance (person, adate, checkin_time, on_time, source) VALUES (?,?,?,?,?)",
-                         (person, d, "", 1, "ceo"))
+                         (person, d, "", 0, "ceo"))
             log_audit(conn, "Tizim", "davomat qo'lda tasdiqlandi (CEO)", f"{person} · {d}")
+    # Avval on_time=1 bilan yozilgan qo'lda tasdiqlangan yozuvlarni to'g'rilash (bir martalik, idempotent)
+    for person, dates in ATTENDANCE_BACKFILL.items():
+        for d in dates:
+            conn.execute("UPDATE attendance SET on_time=0 WHERE person=? AND adate=? AND source='ceo' AND on_time=1", (person, d))
 
 
 def _effective_month_end(name, today):
@@ -512,7 +517,7 @@ RANK_PRICES = {
 # Ba'zi montajyorlar yuqori lavozimdan boshlanadi — qabul soniga qo'shiladigan bonus.
 # Oygul Elite lavozimidan boshlanib hisoblanadi (2 lavozim = 2×RANK_STEP qabul).
 # Xayrulloh — yangi qabul qilingan, lekin tajribasi uchun Pro'dan boshlanadi.
-EDITOR_RANK_BASE = {"Oygul": 2 * RANK_STEP, "Xayrulloh": 1 * RANK_STEP, "Fazliddin": 1 * RANK_STEP}
+EDITOR_RANK_BASE = {"Oygul": 2 * RANK_STEP, "Xayrulloh": 1 * RANK_STEP}   # Fazliddin — Junior (0 dan)
 
 
 def eff_count(name, accepted):
@@ -9313,6 +9318,8 @@ def _attend_month(conn, name, today):
     att_pen, _ = _attendance_penalty(conn, name, today)
     warn_color, warn_text = _lateness_alert(conn, name, today)
     brief_missed = _brief_missing_days(conn, name, today) if name in ATTENDANCE_USERS else []
+    # Intizom maoshda faqat SALARY'da "Intizom" komponenti bor xodimlarda (Xayrulloh, Fazliddin kabilarda yo'q)
+    has_intizom = "Intizom" in ((SALARY.get(name) or {}).get("som") or {})
     # Intizom — faqat brifi yozilgan o'z vaqtidagi kunlar (maosh bilan bir xil qoida)
     intizom_days = len([x for x in d["on_time"] if x not in set(brief_missed)])
     brief_raw = [dict(r) for r in conn.execute(
@@ -9323,7 +9330,8 @@ def _attend_month(conn, name, today):
         "otpuskDays": otpusk, "pct": pct,
         "todayIn": bool(t), "todayTime": (t["checkin_time"] if t else None),
         "todayOnTime": (bool(t["on_time"]) if t else None),
-        "intizom": min(intizom_days * INTIZOM_PER_DAY, INTIZOM_FULL),
+        "intizom": min(intizom_days * INTIZOM_PER_DAY, INTIZOM_FULL) if has_intizom else 0,
+        "hasIntizom": has_intizom,
         "attendancePenalty": att_pen,
         "warnColor": warn_color, "warnText": warn_text,
         "briefMissedDates": brief_missed,

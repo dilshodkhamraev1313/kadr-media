@@ -2284,7 +2284,7 @@ async function viewDaily() {
         <div style="display:flex;gap:8px">${pendingOffsite ? `<button class="btn-ghost" id="offsite_review_btn">📍 Tashqarida so'rovlari (${pendingOffsite})</button>` : ''}${pendingOtpusk ? `<button class="btn-ghost" id="otpusk_review_btn">🏖 Otpusk so'rovlari (${pendingOtpusk})</button>` : ''}<button class="btn-ghost" id="hook_btn">🤖 Botni ulash</button></div></div><div class="ceo-list">` +
       att.overview.map((o) => `
         <div class="ceo-item"><div class="ci-left"><div class="mini-av" style="background:${colorFor(o.name)}">${initials(o.name)}</div>
-          <div><div class="ci-name">${esc(o.name)}</div><div class="ci-sub">Shu oy: ${o.onTimeDays} vaqtida · ${o.lateDays} kech · ${o.absentDays} kelmadi · ${o.pct}% davomat · ${money(o.intizom)}${o.attendancePenalty ? ` · <span style="color:var(--red)">−${money(o.attendancePenalty)} jarima</span>` : ''}</div></div></div>
+          <div><div class="ci-name">${esc(o.name)}</div><div class="ci-sub">Shu oy: ${o.onTimeDays} vaqtida · ${o.lateDays} kech · ${o.absentDays} kelmadi · ${o.pct}% davomat${o.hasIntizom ? ' · ' + money(o.intizom) : ''}${o.attendancePenalty ? ` · <span style="color:var(--red)">−${money(o.attendancePenalty)} jarima</span>` : ''}</div></div></div>
           <div style="display:flex;align-items:center;gap:6px">
           ${o.attendancePenalty ? `<button class="mini-btn" data-forgive-attend="${esc(o.name)}" title="Shu vaqtgacha to'plangan davomat jarimasini kechirish (bundan keyingisiga ta'sir qilmaydi)">🤝 Kechirish</button>` : ''}
           <span class="pill ${o.todayIn ? (o.todayOnTime ? 'green' : 'orange') : 'red'}">${o.todayIn ? (o.todayOnTime ? '🌅 ' + o.todayTime : '🟡 ' + o.todayTime) : '⏳ yo\'q'}</span></div></div>`).join('') +
@@ -2961,7 +2961,7 @@ async function attendanceCardHTML() {
         <div class="rh-sub">${inn ? ('Bugun ' + m.todayTime + ' da') : (att.limit + ' gacha kelsangiz — o\'z vaqtida')}</div></div></div>
     <div class="rh-prog">
       <div class="muted">Shu oy o'z vaqtida: <b style="color:var(--green)">${m.onTimeDays}</b> · kech: <b style="color:var(--orange)">${m.lateDays}</b> · kelmadi: <b style="color:var(--red)">${m.absentDays}</b>${m.otpuskDays ? ` · otpuskda: <b>${m.otpuskDays}</b>` : ''} · davomat: <b>${m.pct}%</b></div>
-      <div class="muted">Intizom: <b>${money(m.intizom)}</b>${m.attendancePenalty ? ` · <span style="color:var(--red)">davomat jarimasi: −${money(m.attendancePenalty)}</span>` : ''}</div>
+      <div class="muted">${m.hasIntizom ? `Intizom: <b>${money(m.intizom)}</b>` : ''}${m.attendancePenalty ? `${m.hasIntizom ? ' · ' : ''}<span style="color:var(--red)">davomat jarimasi: −${money(m.attendancePenalty)}</span>` : ''}</div>
       ${warnBox}
       ${!inn ? `<div class="muted" style="margin-top:6px">📹 "ish vaqti" guruhiga dumaloq video (kruzhok) tashlang — davomat shundan avtomatik belgilanadi</div>` : ''}
       ${offsiteLine}
