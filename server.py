@@ -327,6 +327,28 @@ JOIN_DATE = {
 }
 
 
+# Ishdan ketgan xodimlar: shu sanagacha (shu kun ham) hisoblanadi, undan keyingi kunlar uchun
+# Fiksa/Intizom/jarima/eslatma yo'q. Oldingi oylar (to'lanmagan maosh) o'z holicha qoladi.
+LEFT_DATE = {"Nodira": "2026-09-30"}
+
+
+def _effective_month_end(name, today):
+    """Hisob-kitob tugaydigan kun: bugun yoki (ishdan ketgan bo'lsa) ketgan sana."""
+    ld = LEFT_DATE.get(name)
+    if ld:
+        try:
+            return min(today, datetime.date.fromisoformat(ld))
+        except ValueError:
+            pass
+    return today
+
+
+def _attendance_roster(today=None):
+    """Hozir ishlayotgan (ketmagan) davomat xodimlari — eslatma/ogohlantirishlar uchun."""
+    t = (today or uz_today()).isoformat()
+    return [n for n in ATTENDANCE_USERS if not (LEFT_DATE.get(n) and LEFT_DATE[n] < t)]
+
+
 def _effective_month_start(name, today):
     """Oy boshi — yoki xodim shu oyning o'rtasida qo'shilgan bo'lsa, o'sha kun."""
     first = datetime.date(today.year, today.month, 1)
@@ -747,7 +769,7 @@ TEAM = [
 # Jamoadan ketgan, tizimda MUZLATILGAN xodimlar — login qila olmaydi, hech qanday
 # eslatma/ogohlantirish/vazifa/daromad ularga tegishli bo'lmaydi. Tarixiy ma'lumotlari
 # (o'tgan oylardagi to'lovlar, arxiv) o'chirilmaydi — faqat bundan keyingi faollik to'xtaydi.
-FROZEN_USERS = ("Said", "Umida")
+FROZEN_USERS = ("Said", "Umida", "Nodira")   # Nodira 2026-10-10: ishdan ketdi (keyingi sotuv menejerga o'tkaziladi)
 
 
 def make_salt():
@@ -5692,7 +5714,8 @@ def _brief_missing_days(conn, name, today):
         submitted[r["for_date"]] = r["submitted_at"]
     missed = []
     d = _effective_month_start(name, today)
-    while d <= today:
+    end = _effective_month_end(name, today)
+    while d <= end:
         iso = d.isoformat()
         if d.weekday() != 6 and iso >= BRIEF_START_DATE and iso not in otpusk:
             if d < today or now_time >= BRIEF_DEADLINE:
@@ -5980,6 +6003,9 @@ def compute_salary(conn, name, rate, ym=None):
     cfg = SALARY.get(name)
     if not cfg:
         return None
+    _ld = LEFT_DATE.get(name)
+    if _ld and _ld[:7] < (ym or uz_today().strftime("%Y-%m")):
+        return None   # ishdan ketgan oydan KEYINGI oylar — maosh ro'yxatida yo'q
     comps = []
     real_today = uz_today()
     if ym:
@@ -6006,20 +6032,30 @@ def compute_salary(conn, name, rate, ym=None):
         kind = "fixed"
         if label == "Fiksa" and name in ATTENDANCE_USERS:
             wd = _workdays_in_month(today.year, today.month)
-            came = max(0, _attended_days(conn, name, today) - len(brief_missed))
+            # FAQAT brifi yozilgan KELGAN kunlar sanaladi (kelgan kunlar ∩ brifli kunlar).
+            # Avval "kelgan kunlar − brifsiz kunlar SONI" edi: kelmagan kunlar ham brifsiz
+            # bo'lgani uchun ular ikkinchi marta ayrilib, kelgan kunlar ham yo'qolardi.
+            _dd = _month_attendance_days(conn, name, today)
+            _miss = set(brief_missed)
+            _att = [x for x in _dd["on_time"] + _dd["late"]]
+            came = len([x for x in _att if x not in _miss])
+            lost_brief = len([x for x in _att if x in _miss])
             daily = amt / wd if wd else 0
             full_fmt = "{:,}".format(amt).replace(",", " ")
             amt = min(int(round(daily * came)), amt)  # oylikdan hech qachon oshmasin
             lbl = f"Fiksa (oylik {full_fmt}) · {came}/{wd} kun kelgan"
-            if brief_missed:
-                lbl += f" (brif yozilmagan {len(brief_missed)} kun hisobga kirmadi)"
+            if lost_brief:
+                lbl += f" (brif yozilmagan {lost_brief} kun hisobga kirmadi)"
             kind = "auto"
         elif label == "Intizom" and name in ATTENDANCE_USERS:
-            ot = max(0, _ontime_days(conn, name, today) - len(brief_missed))
+            _dd = _month_attendance_days(conn, name, today)
+            _miss = set(brief_missed)
+            ot = len([x for x in _dd["on_time"] if x not in _miss])
+            lost_brief_ot = len([x for x in _dd["on_time"] if x in _miss])
             amt = min(ot * INTIZOM_PER_DAY, INTIZOM_FULL)
             lbl = f"Intizom · {ot} kun o'z vaqtida"
-            if brief_missed:
-                lbl += f" (brif yozilmagan {len(brief_missed)} kun hisobga kirmadi)"
+            if lost_brief_ot:
+                lbl += f" (brif yozilmagan {lost_brief_ot} kun hisobga kirmadi)"
             kind = "auto"
         elif label in close_links and is_close:
             amt, closed, wd = _kpi_after_discipline(conn, name, amt, today)
@@ -7736,7 +7772,7 @@ def api_leaderboard(user):
                             "AND status IN ('qabul_qilindi','joylandi')", (mo + "%",)),
             "posted": cnt("SELECT COUNT(*) AS n FROM videos WHERE posted_at LIKE ? AND status='joylandi'", (mo + "%",)),
         })
-    attendance = [_attend_month(conn, nm, uz_today()) for nm in ATTENDANCE_USERS]
+    attendance = [_attend_month(conn, nm, uz_today()) for nm in _attendance_roster()]
     attendance.sort(key=lambda x: -x["pct"])
     conn.close()
     return {"month": ym, "montaj": montaj, "scenarists": scen, "operators": ops, "trend": trend,
@@ -8668,7 +8704,7 @@ def api_cron_brief_check():
     submitted = {r["person"] for r in conn.execute(
         "SELECT person FROM daily_briefs WHERE for_date=?", (tomorrow,)).fetchall()}
     conn.close()
-    missing = [p for p in ATTENDANCE_USERS if p not in submitted]
+    missing = [p for p in _attendance_roster() if p not in submitted]
     if not missing:
         return {"ok": True, "missing": []}
     mentions = ", ".join(_telegram_mention(p) for p in missing)
@@ -8706,7 +8742,7 @@ def api_cron_absence_check():
     already_warned = {r["person"] for r in conn.execute(
         "SELECT person FROM absence_warned WHERE adate=?", (today_iso,)).fetchall()}
     missing = []
-    for p in ATTENDANCE_USERS:
+    for p in _attendance_roster():
         if p in checked_in or p in already_warned:
             continue
         if today_iso in _otpusk_dates_set(conn, p, ym):
@@ -8996,7 +9032,8 @@ def _month_attendance_days(conn, name, today):
         "SELECT * FROM attendance WHERE person=? AND adate LIKE ?", (name, ym + "%")).fetchall()}
     on_time, late, absent, otp = [], [], [], []
     d = first
-    while d <= today:
+    end = _effective_month_end(name, today)
+    while d <= end:
         if d.weekday() != 6:
             iso = d.isoformat()
             if iso in otpusk:
@@ -9042,7 +9079,7 @@ def _sunday_worked_days(conn, name, today):
     ym = today.strftime("%Y-%m")
     rows = conn.execute(
         "SELECT adate FROM attendance WHERE person=? AND adate LIKE ? AND adate<=?",
-        (name, ym + "%", today.isoformat())).fetchall()
+        (name, ym + "%", _effective_month_end(name, today).isoformat())).fetchall()
     return [r["adate"] for r in rows if datetime.date.fromisoformat(r["adate"]).weekday() == 6]
 
 
@@ -9252,10 +9289,11 @@ def _attend_month(conn, name, today):
     on_time, late, absent, otpusk = len(d["on_time"]), len(d["late"]), len(d["absent"]), len(d["otpusk"])
     denom = on_time + late + absent  # otpusk kunlari % hisobiga kirmaydi (jarimasiz)
     pct = round(100 * on_time / denom) if denom else 100
-    intizom_days = _ontime_days(conn, name, today)
     att_pen, _ = _attendance_penalty(conn, name, today)
     warn_color, warn_text = _lateness_alert(conn, name, today)
     brief_missed = _brief_missing_days(conn, name, today) if name in ATTENDANCE_USERS else []
+    # Intizom — faqat brifi yozilgan o'z vaqtidagi kunlar (maosh bilan bir xil qoida)
+    intizom_days = len([x for x in d["on_time"] if x not in set(brief_missed)])
     brief_raw = [dict(r) for r in conn.execute(
         "SELECT for_date, submitted_at FROM daily_briefs WHERE person=? AND for_date LIKE ? ORDER BY for_date",
         (name, ym[:4] + "%")).fetchall()] if name in ATTENDANCE_USERS else []
@@ -9279,7 +9317,7 @@ def api_attendance(user):
     if is_attend_user(user):
         res["me"] = _attend_month(conn, user["name"], today)
     if user["role"] == "ceo":
-        res["overview"] = [_attend_month(conn, nm, today) for nm in ATTENDANCE_USERS]
+        res["overview"] = [_attend_month(conn, nm, today) for nm in _attendance_roster(today)]
     conn.close()
     return res
 
