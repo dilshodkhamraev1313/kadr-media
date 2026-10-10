@@ -331,6 +331,25 @@ JOIN_DATE = {
 # Fiksa/Intizom/jarima/eslatma yo'q. Oldingi oylar (to'lanmagan maosh) o'z holicha qoladi.
 LEFT_DATE = {"Nodira": "2026-09-30"}
 
+# CEO tasdiqlagan, lekin dumaloq video/WiFi orqali belgilanmagan kelgan kunlar (bir martalik,
+# idempotent — har serverda faqat YO'Q kunlar yoziladi). Manba: 'ceo'.
+ATTENDANCE_BACKFILL = {
+    # Fazliddin kabineti 2026-10-06 da ochilgan, har kuni kelgan, lekin Android'da dumaloq video tashlanmagan
+    "Fazliddin": ["2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10"],
+}
+# Brif (ertangi reja) talabi shu sanagacha (shu kun ham) qo'llanmaydi — yangi xodim tizimni bilmagan davr.
+BRIEF_GRACE_UNTIL = {"Fazliddin": "2026-10-09"}
+
+
+def _backfill_attendance(conn):
+    for person, dates in ATTENDANCE_BACKFILL.items():
+        for d in dates:
+            if conn.execute("SELECT 1 FROM attendance WHERE person=? AND adate=?", (person, d)).fetchone():
+                continue
+            conn.execute("INSERT INTO attendance (person, adate, checkin_time, on_time, source) VALUES (?,?,?,?,?)",
+                         (person, d, "", 1, "ceo"))
+            log_audit(conn, "Tizim", "davomat qo'lda tasdiqlandi (CEO)", f"{person} · {d}")
+
 
 def _effective_month_end(name, today):
     """Hisob-kitob tugaydigan kun: bugun yoki (ishdan ketgan bo'lsa) ketgan sana."""
@@ -1246,6 +1265,7 @@ def init_db():
     _backfill_studio_ledger(conn)
     _backfill_operator_pay(conn)
     _backfill_period_log(conn)
+    _backfill_attendance(conn)
     conn.commit()
 
     # Seed (faqat bo'sh bo'lsa)
@@ -5717,7 +5737,8 @@ def _brief_missing_days(conn, name, today):
     end = _effective_month_end(name, today)
     while d <= end:
         iso = d.isoformat()
-        if d.weekday() != 6 and iso >= BRIEF_START_DATE and iso not in otpusk:
+        if d.weekday() != 6 and iso >= BRIEF_START_DATE and iso not in otpusk \
+                and iso > BRIEF_GRACE_UNTIL.get(name, ""):
             if d < today or now_time >= BRIEF_DEADLINE:
                 for_date = (d + datetime.timedelta(days=1)).isoformat()
                 sub = submitted.get(for_date)
