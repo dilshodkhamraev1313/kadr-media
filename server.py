@@ -300,7 +300,8 @@ VIDEO_CHECKIN_ENABLED = False  # 2026-09-24: WiFi-geofence pilot davrida vaqtinc
 # 2026-09-28: Murodning Android'ida WiFi-avtomatlashtiruv ishonchli ishlamagani
 # uchun, FAQAT unga dumaloq video hali ham "keldi" deb hisoblanadi (boshqalarga
 # tegishli emas — ular hali ham faqat WiFi orqali belgilanadi).
-VIDEO_CHECKIN_EXEMPT = ()
+# 2026-10-10: shu qoida Fazliddin (Android) uchun — dumaloq video bilan keldi deb belgilanadi.
+VIDEO_CHECKIN_EXEMPT = ("Fazliddin",)
 GEOFENCE_TOKENS = {
     "xM8uvINfcyixJ8BXBwNuTeXq": "Dilshod Khamraev",  # pilot/sinov uchun
     "aNQSgSVZPXJjnFs0Mfj4EGFh": "Gulmira",
@@ -311,7 +312,6 @@ GEOFENCE_TOKENS = {
     "F3441WHP4AJ8REXQoVhoLL2C": "Samandar",
     "Y0s0M8Bu9qJc4DrFNXmSRbdQ": "Nodira",
     "eAIZP-tE3CmbMzN_cDTm8RlJ": "Xayrulloh",  # iPhone, 2026-10-01'dan boshlab
-    "oZzkrA4sgSz71YmvhOHZtVDu": "Fazliddin",  # 2026-10-06 dan boshlab
 }
 
 # Xodim OYNING O'RTASIDA tizimga qo'shilsa (masalan yangi ishga olingan/rol
