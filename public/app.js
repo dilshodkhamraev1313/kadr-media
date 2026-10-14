@@ -289,7 +289,7 @@ const NAV_ITEMS = [
   { view: 'studio',    icon: '🎥', label: 'Kadr Studio',   roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Gulmira', 'Xonzoda', 'Samandar'] },
   { view: 'myscripts', icon: '✍️', label: 'Ssenariylarim', roles: ['coordinator', 'editor', 'lead'], names: ['Xonzoda'] },
   // Kreativ strateg (Shodiya) g'oyalari + qabul qiluvchilar (CEO, koordinator, loyiha rahbarlari)
-  { view: 'goals',     icon: '🎯', label: 'Mening shartim', roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Xonzoda', 'Gulmira', 'Shodiya', 'Samandar', 'Umid', 'Sardor', 'Oygul', 'Xayrulloh', 'Nodira'] },
+  { view: 'goals',     icon: '🎯', label: 'Mening shartim', roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Xonzoda', 'Gulmira', 'Shodiya', 'Samandar', 'Umid', 'Sardor', 'Oygul', 'Xayrulloh'] },
   { view: 'creative',  icon: '💡', label: 'G\'oyalar',     roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Xonzoda', 'Gulmira', 'Samandar', 'Shodiya'] },
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
   { view: 'finance',   icon: '₿', label: 'Moliya',        roles: ['ceo'] },
@@ -2107,7 +2107,7 @@ async function viewCreative() {
       ${showPay && d.closedDays != null ? statTile('🌙', `${d.closedDays}/${d.workdays}`, 'Yopilgan kunlar (haqqa ta\'sir qiladi)', 'purple') : ''}
     </div>
     ${d.isStrategist ? `<div class="panel"><button class="btn-save" id="idea_new">＋ Yangi g'oya taklif qilish</button>
-      <div class="muted" style="margin-top:6px">G'oya faqat loyiha rahbari/koordinator/CEO qabul qilgandan keyin hisobga o'tadi. Shablonning barcha maydoni to'ldirilishi shart. Yakuniy haq = qabul qilingan g'oyalar bo'yicha haq × yopilgan kunlar ulushi (kunni har kuni yoping va ertangi rejani yozing).</div></div>` : ''}
+      <div class="muted" style="margin-top:6px">G'oya faqat loyiha rahbari/koordinator/CEO qabul qilgandan keyin hisobga o'tadi. Shablonning barcha maydoni to'ldirilishi shart. Haq faqat qabul qilingan g'oyalar bo'yicha hisoblanadi (har loyihada 4 ta g'oya = to'liq stavka).</div></div>` : ''}
     <div class="cards-grid">${prog || emptyState()}</div>
     <div class="panel"><h3>⏳ Ko'rib chiqish kutilmoqda (${pend.length})</h3><div class="ceo-list">${pend.map(ideaCard).join('') || '<div class="muted">Yo\'q ✓</div>'}</div></div>
     <div class="panel"><h3>📚 G'oyalar tarixi</h3><div class="ceo-list">${rest.map(ideaCard).join('') || '<div class="muted">Hozircha yo\'q</div>'}</div></div>`;

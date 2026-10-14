@@ -5470,15 +5470,11 @@ def _creative_pay(conn, name, rate, ym=None):
 
 
 def _creative_pay_final(conn, name, rate, ym, today):
-    """Kreativ strateg YAKUNIY haqi: qabul qilingan g'oyalar bo'yicha haq ×
-    (yopilgan kunlar / oy ish kunlari) — kun yopadigan boshqa rahbarlar KPI'si
-    bilan bir xil mantiq (_kpi_after_discipline). Kun yopmaydigan bo'lsa — to'liq.
-    Qaytaradi: (summa, tafsilot, yopilgan kunlar yoki None, oy ish kunlari yoki None)."""
+    """Kreativ strateg YAKUNIY haqi: faqat qabul qilingan g'oyalar bo'yicha haq.
+    2026-10-14: kun yopishga BOG'LANMAGAN (avval yopilgan kunlar ulushiga ko'paytirilardi) —
+    qabul qilingan g'oya puli to'liq hisoblanadi. Qaytaradi: (summa, tafsilot, None, None)."""
     cp, det = _creative_pay(conn, name, rate, ym)
-    closed = wd = None
-    if cp > 0 and name in DAILY_CLOSE_USERS:
-        cp, closed, wd = _kpi_after_discipline(conn, name, cp, today)
-    return cp, det, closed, wd
+    return cp, det, None, None
 
 
 def _studio_client_bonus(conn):
@@ -6601,10 +6597,7 @@ PROMO_GOALS = {
         {"key": "studio_vids", "kind": "internal_vids", "label": "Kadr Studio uchun montaj", "which": "studio", "targets": _M3(3)},
         {"key": "media_vids", "kind": "internal_vids", "label": "Kadr Media uchun montaj", "which": "media", "targets": _M3(3)},
     ],
-    "Nodira": [
-        {"key": "paket300", "kind": "credits", "credit_kind": "paket300", "label": "$300 li paket — yangi mijoz (to'liq to'langan)", "targets": _M3(2)},
-        {"key": "podcast_pkg", "kind": "credits", "credit_kind": "podcast_pkg", "label": "Podcast paketi sotuvi (to'liq to'langan)", "targets": _M3(2)},
-    ],
+    # Nodira 2026-10-10 da ishdan ketdi — tanlovdan chiqarildi (yangi sotuv menejer uchun alohida shart qo'yiladi)
 }
 _SAMANDAR_PROJECTS = [
     ("MEDLAYT klinika", 1200, [2000, 3000, 4000]),
