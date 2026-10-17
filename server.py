@@ -1271,6 +1271,7 @@ def init_db():
     _backfill_operator_pay(conn)
     _backfill_period_log(conn)
     _backfill_attendance(conn)
+    _zero_promo_unpaid_shoots(conn)
     conn.commit()
 
     # Seed (faqat bo'sh bo'lsa)
@@ -3803,6 +3804,21 @@ def _shoot_op_pay(operator, room, shoot_type, video_count):
     if room == "tashqi" and shoot_type == "reels":
         return int(video_count or 0) * _external_video_rate(operator)
     return _op_pay(operator, shoot_type)
+
+
+def _zero_promo_unpaid_shoots(conn):
+    """PROMO_UNPAID_OPERATORS ning tanlov davridagi (PROMO_START dan) Kadr Studio/Media ichki syomkalari
+    uchun avval hisoblangan operator pulini 0 ga tushiradi (idempotent)."""
+    for op in PROMO_UNPAID_OPERATORS:
+        for r in conn.execute("SELECT id, project, sdate FROM shoots WHERE operator=? AND operator_pay>0 AND sdate>=?",
+                              (op, PROMO_START)).fetchall():
+            if _promo_unpaid_shoot(op, r["project"], r["sdate"]):
+                conn.execute("UPDATE shoots SET operator_pay=0 WHERE id=?", (r["id"],))
+                log_audit(conn, "Tizim", "ichki syomka operator puli 0 ga tushirildi (tanlov qoidasi)", f"#{r['id']} {op} · {r['project']} · {r['sdate']}")
+        for r in conn.execute("SELECT id, client_name, bdate FROM studio_bookings WHERE operator=? AND operator_pay>0 AND bdate>=?",
+                              (op, PROMO_START)).fetchall():
+            if _promo_unpaid_shoot(op, r["client_name"], r["bdate"]):
+                conn.execute("UPDATE studio_bookings SET operator_pay=0 WHERE id=?", (r["id"],))
 
 
 def _backfill_operator_pay(conn):
@@ -6560,7 +6576,7 @@ PROMO_START = "2026-10-06"
 PROMO_END = "2027-01-06"
 PROMO_MONTHS = 3
 PROMO_UNPAID_EDITORS = ("Sardor", "Xayrulloh")   # Studio/Media montaji puli hisoblanmaydi
-PROMO_UNPAID_OPERATORS = ("Umid",)               # Studio/Media ichki syomkasi operator puli hisoblanmaydi
+PROMO_UNPAID_OPERATORS = ("Umid", "Samandar")    # Studio/Media ichki syomkasi operator puli hisoblanmaydi (Samandar — 2026-10-17 dan)
 
 _M3 = lambda n: [n, n, n]
 PROMO_GOALS = {
