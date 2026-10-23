@@ -1056,6 +1056,9 @@ def init_db():
         category TEXT PRIMARY KEY, monthly INTEGER DEFAULT 0, responsible TEXT DEFAULT '')""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS daily_close (
         id {pk}, person TEXT, cdate TEXT, closed_at TEXT)""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS safari_wallet (
+        id {pk}, kind TEXT DEFAULT 'in', amount INTEGER DEFAULT 0, wdate TEXT, note TEXT DEFAULT '',
+        cash_expense_id INTEGER, created_by TEXT, created_at {ts})""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS charity_ledger (
         id {pk}, kind TEXT, amount INTEGER DEFAULT 0, note TEXT DEFAULT '',
         cdate TEXT, created_by TEXT, created_at {ts})""")
@@ -3413,6 +3416,9 @@ def api_cash_expense_update(user, eid, b):
     if not row:
         conn.close()
         return {"error": "Topilmadi"}, 404
+    if (row["category"] or "") == SAFARI_WALLET_CATEGORY:
+        conn.close()
+        return {"error": "Bu yozuv kashelyokdan boshqariladi (CEO kashelyok bo'limida o'zgartiriladi)"}, 400
     try:
         amount = int(b.get("amount")) if b.get("amount") not in (None, "") else row["amount"]
     except (ValueError, TypeError):
@@ -3454,6 +3460,9 @@ def api_cash_expense_delete(user, eid):
     if not row:
         conn.close()
         return {"error": "Topilmadi"}, 404
+    if (row["category"] or "") == SAFARI_WALLET_CATEGORY:
+        conn.close()
+        return {"error": "Bu yozuv kashelyokdan boshqariladi (CEO kashelyok bo'limida o'chiriladi)"}, 400
     conn.execute("DELETE FROM cash_expense WHERE id=?", (eid,))
     log_audit(conn, user["name"], "kassa xarajatini o'chirdi",
               f"#{eid} {row['amount']} so'm · {row['category'] or ''}")
@@ -7645,6 +7654,101 @@ def api_charity_add(user, b):
 
 
 # ------------------------------------------------------------
+#  SAFARI KASHELYOK (faqat CEO) — sayohat uchun alohida yig'iladigan pul
+# ------------------------------------------------------------
+SAFARI_WALLET_CATEGORY = "CEO kashelyok"   # Kassada oddiy xarajat kabi ko'rinadigan nom (maqsad ochilmaydi)
+
+
+def _wallet_totals(conn):
+    dep = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM safari_wallet WHERE kind='in'").fetchone()["s"] or 0
+    out = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM safari_wallet WHERE kind='out'").fetchone()["s"] or 0
+    return dep, out
+
+
+def api_safari_wallet(user):
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    dep, out = _wallet_totals(conn)
+    ledger = [dict(r) for r in conn.execute("SELECT * FROM safari_wallet ORDER BY id DESC LIMIT 200").fetchall()]
+    conn.close()
+    return {"balance": dep - out, "deposited": dep, "spent": out, "ledger": ledger, "today": uz_today().isoformat()}
+
+
+def api_safari_wallet_add(user, b):
+    """kind='in' — kashelyokka pul surish: Kassada oddiy xarajat (kategoriya 'CEO kashelyok') bo'lib yoziladi,
+    xayriya hisobiga ta'sir qilmaydi. kind='out' — kashelyokdan sarflash/olish (qo'shimcha xarajat yozilmaydi,
+    chunki pul kashelyokka o'tganda allaqachon xarajat bo'lgan)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    kind = "out" if b.get("kind") == "out" else "in"
+    try:
+        amount = int(b.get("amount") or 0)
+    except (ValueError, TypeError):
+        amount = 0
+    if amount <= 0:
+        return {"error": "Summani kiriting"}, 400
+    wdate = (b.get("date") or uz_today().isoformat()).strip()
+    try:
+        datetime.date.fromisoformat(wdate)
+    except ValueError:
+        return {"error": "Sana noto'g'ri"}, 400
+    note = (b.get("note") or "").strip()
+    conn = get_db()
+    dep, out = _wallet_totals(conn)
+    if kind == "out" and amount > dep - out:
+        conn.close()
+        return {"error": f"Kashelyokda yetarli pul yo'q (balans {dep - out:,} so'm)".replace(",", " ")}, 400
+    ce_id = None
+    if kind == "in":
+        sql = ("INSERT INTO cash_expense (edate, amount, category, paid_to, method, paid_by, note, img, ai_amount, ai_note, created_by, created_at) "
+               "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+        params = (wdate, amount, SAFARI_WALLET_CATEGORY, "", "naqt", user["name"], note or "kashelyokka surildi",
+                  None, None, "", user["name"], now_local())
+        if IS_PG:
+            ce_id = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+        else:
+            ce_id = conn.execute(sql, params).lastrowid
+        _flag_stale_close(conn, wdate)
+    wsql = "INSERT INTO safari_wallet (kind, amount, wdate, note, cash_expense_id, created_by, created_at) VALUES (?,?,?,?,?,?,?)"
+    wparams = (kind, amount, wdate, note, ce_id, user["name"], now_local())
+    if IS_PG:
+        wid = conn.execute(wsql + " RETURNING id", wparams).fetchone()["id"]
+    else:
+        wid = conn.execute(wsql, wparams).lastrowid
+    log_audit(conn, user["name"], "safari kashelyok: " + ("qo'shdi" if kind == "in" else "sarfladi"), f"{amount} so'm · {note}")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "id": wid}
+
+
+def api_safari_wallet_delete(user, wid):
+    """Xato yozuvni o'chiradi (kirim bo'lsa Kassadagi bog'langan xarajat ham o'chadi)."""
+    if user["role"] != "ceo":
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT * FROM safari_wallet WHERE id=?", (wid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if row["kind"] == "in":
+        dep, out = _wallet_totals(conn)
+        if (dep - row["amount"]) < out:
+            conn.close()
+            return {"error": "Bu kirimni o'chirib bo'lmaydi: undan keyin sarflangan pul bor (avval sarfni o'chiring)"}, 400
+        if row["cash_expense_id"]:
+            ce = conn.execute("SELECT edate FROM cash_expense WHERE id=?", (row["cash_expense_id"],)).fetchone()
+            conn.execute("DELETE FROM cash_expense WHERE id=?", (row["cash_expense_id"],))
+            if ce:
+                _flag_stale_close(conn, ce["edate"])
+    conn.execute("DELETE FROM safari_wallet WHERE id=?", (wid,))
+    log_audit(conn, user["name"], "safari kashelyok yozuvi o'chirildi", f"#{wid} {row['kind']} {row['amount']} so'm")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------
 #  OYLIK STATISTIKA (har oy noldan; o'tgan oylar faqat ko'rish)
 # ------------------------------------------------------------
 def _shoot_stats(conn, ym):
@@ -9744,6 +9848,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_leaderboard(user))
         if path == "/api/charity":
             return self._forbid() if not is_charity_user(user) else self._json(api_charity(user))
+        if path == "/api/safari-wallet":
+            return self._forbid() if role != "ceo" else self._json(api_safari_wallet(user))
         if path == "/api/attendance":
             if not is_attend_user(user) and role != "ceo":
                 return self._forbid()
@@ -10007,6 +10113,10 @@ class Handler(BaseHTTPRequestHandler):
             if r != "ceo":
                 return self._forbid()
             return self._json(api_charity_add(user, b))
+        if path == "/api/safari-wallet":
+            return self._forbid() if r != "ceo" else self._json(api_safari_wallet_add(user, b or {}))
+        if len(seg) == 4 and seg[1] == "safari-wallet" and seg[3] == "delete" and seg[2].isdigit():
+            return self._forbid() if r != "ceo" else self._json(api_safari_wallet_delete(user, int(seg[2])))
         if path == "/api/telegram/setup-webhook":
             if r != "ceo":
                 return self._forbid()

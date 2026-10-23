@@ -289,6 +289,7 @@ const NAV_ITEMS = [
   { view: 'studio',    icon: '🎥', label: 'Kadr Studio',   roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Gulmira', 'Xonzoda', 'Samandar'] },
   { view: 'myscripts', icon: '✍️', label: 'Ssenariylarim', roles: ['coordinator', 'editor', 'lead'], names: ['Xonzoda'] },
   // Kreativ strateg (Shodiya) g'oyalari + qabul qiluvchilar (CEO, koordinator, loyiha rahbarlari)
+  { view: 'safariwallet', icon: '💼', label: 'Safari kashelyok', roles: ['ceo'], names: ['Dilshod Khamraev'] },
   { view: 'goals',     icon: '🎯', label: 'Mening shartim', roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Xonzoda', 'Gulmira', 'Shodiya', 'Samandar', 'Umid', 'Sardor', 'Oygul', 'Xayrulloh'] },
   { view: 'creative',  icon: '💡', label: 'G\'oyalar',     roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Xonzoda', 'Gulmira', 'Samandar', 'Shodiya'] },
   { view: 'editors',   icon: '◍', label: 'Montajchilar',  roles: ['ceo'] },
@@ -356,6 +357,7 @@ function setActiveNav() {
 //  RENDER ROUTER
 // ============================================================
 const TITLES = {
+  safariwallet: ['Safari kashelyok', 'Sayohat uchun alohida yig\'iladigan pul (faqat CEO)'],
   goals:     ['Mening shartim', 'Safari tanlovi — shartlar va natijalar'],
   creative:  ['G\'oyalar', 'Kreativ strategiya — taklif, qabul, ishlatilgan'],
   dashboard: ['Boshqaruv paneli', 'Bugungi holat — bir qarashda'],
@@ -415,6 +417,7 @@ async function render() {
     else if (VIEW === 'salary') await viewSalary();
     else if (VIEW === 'creative') await viewCreative();
     else if (VIEW === 'goals') await viewGoals();
+    else if (VIEW === 'safariwallet') await viewSafariWallet();
     else if (VIEW === 'daily') await viewDaily();
     else if (VIEW === 'stats') await viewStats();
     else if (VIEW === 'reyting') await viewLeaderboard();
@@ -1951,6 +1954,47 @@ const IDEA_STATUS = {
   taklif: ['⏳ Kutilmoqda', 'st-orange'], qabul: ['✅ Qabul qilindi', 'st-green'],
   ishlatildi: ['🚀 Ishlatildi', 'st-blue'], rad: ['❌ Rad etildi', 'st-red'],
 };
+async function viewSafariWallet() {
+  const d = await api('/api/safari-wallet');
+  if (!d || d.error) { $('#content').innerHTML = emptyState(esc((d && d.error) || 'Xatolik')); return; }
+  const rows = d.ledger.map((r) => `<div class="ceo-item" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <div style="flex:1;min-width:160px"><div class="ci-name">${r.kind === 'in' ? '➕ Kashelyokka qo\'shildi' : '➖ Kashelyokdan sarflandi'}</div>
+        <div class="ci-sub">${fmtDate(r.wdate)}${r.note ? ' · ' + esc(r.note) : ''}</div></div>
+      <b style="color:${r.kind === 'in' ? 'var(--green)' : 'var(--red)'}">${r.kind === 'in' ? '+' : '−'}${money(r.amount)}</b>
+      <button class="mini-btn gray" data-wdel="${r.id}">🗑</button></div>`).join('');
+  $('#content').innerHTML = `
+    <div class="stats-grid">
+      ${statTile('💼', money(d.balance), 'Kashelyok balansi', 'green')}
+      ${statTile('➕', money(d.deposited), 'Jami qo\'shilgan', 'blue')}
+      ${statTile('➖', money(d.spent), 'Jami sarflangan', 'orange')}
+    </div>
+    <div class="panel"><h3>Pul surish</h3>
+      <div class="muted" style="margin-bottom:8px">«Qo'shish» — pul Kassada oddiy xarajat bo'lib yoziladi (xayriya hisobiga ta'sir qilmaydi), shu summa kashelyokda alohida turadi. «Sarflash» — kashelyokdan olingan pul (qo'shimcha xarajat yozilmaydi).</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="sw_amount" type="number" inputmode="numeric" min="1" placeholder="Summa (so'm)" style="width:160px">
+        <input id="sw_date" type="date" value="${esc(d.today)}">
+        <input id="sw_note" placeholder="Izoh (ixtiyoriy)" style="flex:1;min-width:160px">
+        <button class="btn-save" id="sw_in">➕ Qo'shish</button>
+        <button class="mini-btn orange" id="sw_out">➖ Sarflash</button>
+      </div></div>
+    <div class="panel"><h3>Tarix</h3><div class="ceo-list">${rows || '<div class="muted">Hali yozuv yo\'q</div>'}</div></div>`;
+  const send = async (kind) => {
+    const amount = parseInt($('#sw_amount').value || '0', 10);
+    if (!amount || amount <= 0) { toast('Summani kiriting'); return; }
+    const r = await api('/api/safari-wallet', { method: 'POST', body: JSON.stringify({ kind, amount, date: $('#sw_date').value, note: $('#sw_note').value }) });
+    if (r && r.error) { toast(r.error); return; }
+    toast(kind === 'in' ? '✅ Kashelyokka qo\'shildi' : '✅ Sarflandi'); render();
+  };
+  $('#sw_in').addEventListener('click', () => send('in'));
+  $('#sw_out').addEventListener('click', () => send('out'));
+  document.querySelectorAll('[data-wdel]').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Bu yozuv o\'chirilsinmi? (Kirim bo\'lsa Kassadagi xarajat ham o\'chadi)')) return;
+    const r = await api(`/api/safari-wallet/${b.dataset.wdel}/delete`, { method: 'POST', body: '{}' });
+    if (r && r.error) { toast(r.error); return; }
+    toast('O\'chirildi'); render();
+  }));
+}
+
 async function viewGoals() {
   let d;
   try { d = await api('/api/promo'); } catch (e) {
