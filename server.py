@@ -6628,7 +6628,7 @@ _SAMANDAR_PROJECTS = [
     ("MEDLAYT klinika", 1200, [2000, 3000, 4000]),
     ("Dr Temur Nizamov", 900, [3000, 4000, 5000]),
     ("Rohatoy Murodullayevna", 900, [3000, 4000, 5000]),
-    ("Nodirbek Primqulov (arab tili)", 900, [3000, 4000, 5000]),
+    ("Arab tili o\u2019qtuvchi", 900, [3000, 4000, 5000]),   # Nodirbek Primqulov (arab tili) — dashboarddagi haqiqiy loyiha nomi
 ]
 for _pn, _usd, _fol in _SAMANDAR_PROJECTS:
     _k = _pn.split()[0].lower()
