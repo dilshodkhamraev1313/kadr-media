@@ -2994,8 +2994,8 @@ def api_finance():
         e["amount"] += v["amount"] or 0
     # Kadr Media P&L: loyiha daromadi − jamoa maoshi
     rate = get_usd_rate()
-    fee_rows = [dict(r) for r in conn.execute("SELECT name, monthly_fee FROM projects WHERE monthly_fee>0 ORDER BY monthly_fee DESC").fetchall()]
-    media_income = sum(p["monthly_fee"] or 0 for p in fee_rows)
+    fee_rows = [dict(r) for r in conn.execute("SELECT name, monthly_fee FROM projects WHERE monthly_fee>0 AND COALESCE(frozen,0)=0 ORDER BY monthly_fee DESC").fetchall()]
+    media_income = sum(p["monthly_fee"] or 0 for p in fee_rows)   # muzlatilgan loyiha daromadga kirmaydi
     payroll_total = 0
     for n in SALARY:
         s = compute_salary(conn, n, rate)
@@ -3034,7 +3034,7 @@ def api_cashflow(user):
 
     # --- Mijoz oylik to'lovlari (loyihalar) ---
     fee_rows = [dict(r) for r in conn.execute(
-        "SELECT name, monthly_fee, responsible FROM projects WHERE monthly_fee>0 ORDER BY monthly_fee DESC").fetchall()]
+        "SELECT name, monthly_fee, responsible FROM projects WHERE monthly_fee>0 AND COALESCE(frozen,0)=0 ORDER BY monthly_fee DESC").fetchall()]   # muzlatilgan — kutilayotgan pul emas
     paid_rows = conn.execute(
         "SELECT project, COALESCE(SUM(amount),0) AS s FROM client_payments WHERE ym=? GROUP BY project",
         (ym,)).fetchall()
@@ -7502,7 +7502,7 @@ def _month_snapshot(conn, ym, actor):
             payroll_total += s["total"]
             salaries.append({"name": n, "title": s.get("title", ""), "total": s["total"],
                              "paid": s["paid"], "remaining": s["remaining"]})
-    media_income = conn.execute("SELECT COALESCE(SUM(monthly_fee),0) AS s FROM projects WHERE monthly_fee>0").fetchone()["s"] or 0
+    media_income = conn.execute("SELECT COALESCE(SUM(monthly_fee),0) AS s FROM projects WHERE monthly_fee>0 AND COALESCE(frozen,0)=0").fetchone()["s"] or 0
     like = ym + "%"
     # Ssenariy — mijozdan ALOHIDA olingan to'lovlar (loyiha oylik puliga kirmagan holatlar)
     script_income = conn.execute(
@@ -7610,7 +7610,7 @@ def api_charity(user):
 
     # CEO (Dilshod) — to'liq hisob-kitob
     rate = get_usd_rate()
-    projects = [dict(r) for r in conn.execute("SELECT name, monthly_fee FROM projects WHERE monthly_fee>0 ORDER BY monthly_fee DESC").fetchall()]
+    projects = [dict(r) for r in conn.execute("SELECT name, monthly_fee FROM projects WHERE monthly_fee>0 AND COALESCE(frozen,0)=0 ORDER BY monthly_fee DESC").fetchall()]
     media_income = sum(p["monthly_fee"] or 0 for p in projects)
     studio_income = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM studio_bookings WHERE (status IS NULL OR status<>'bekor_qilindi')").fetchone()["s"] or 0
     studio_exp = conn.execute("SELECT COALESCE(SUM(amount),0) AS s FROM studio_expenses").fetchone()["s"] or 0
