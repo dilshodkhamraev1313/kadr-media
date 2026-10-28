@@ -9585,7 +9585,7 @@ def _db_error_info():
     except Exception as e:
         msg = re.sub(r"postgres(ql)?://\S+", "<url>", str(e))
         msg = re.sub(r"password=\S+", "password=***", msg)
-        info.update({"ok": False, "error": type(e).__name__, "message": msg[:300]})
+        info.update({"ok": False, "error": type(e).__name__, "message": msg[:1800]})
     info["ms"] = int((time.time() - t0) * 1000)
     return info
 
