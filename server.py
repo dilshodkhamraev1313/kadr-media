@@ -413,7 +413,7 @@ PENALTY_CAP_PCT = 0.20        # jarima fiksaning shu ulushidan oshmasin (maoshni
 # Pace-asosli jarima: loyiha reja (plan) bo'yicha oy davomida QANDAY SUR'ATDA
 # borishi kerakligini kuzatadi (masalan 15 video/oy = kuniga ~0.6). Yagona
 # deadline'dan farqli, bu oy oxirini kutmasdan, ORTDA QOLISHNI DARHOL ko'radi.
-PACE_PENALTY_PER_UNIT = 20000  # reja sur'atidan ortda qolgan har video uchun
+PACE_PENALTY_PER_UNIT = 30000  # reja sur'atidan ortda qolgan har video uchun (2026-10-28: 20 000 → 30 000)
 PACE_GRACE_UNITS = 2           # shuncha videogacha ortda qolish jarimasiz
 PACE_START_DATE = "2026-09-02"  # bu jarima shu sanadan boshlab qo'llaniladi (retroaktiv emas)
 
