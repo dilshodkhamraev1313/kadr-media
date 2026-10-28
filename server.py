@@ -339,6 +339,13 @@ ATTENDANCE_BACKFILL = {
     # Fazliddin kabineti 2026-10-06 da ochilgan, har kuni kelgan, lekin Android'da dumaloq video tashlanmagan
     "Fazliddin": ["2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10"],
 }
+# Tizim ishlamay turgan kunda (baza kvotasi tugagan, 2026-10-28) vaqtida kelganlar — CEO tasdiqlagan,
+# "vaqtida keldi" (on_time=1) deb yoziladi. Faqat YO'Q kunlar yoziladi (idempotent).
+ATTENDANCE_ONTIME_BACKFILL = {
+    "Samandar": ["2026-10-28"],
+    "Sardor": ["2026-10-28"],
+    "Gulmira": ["2026-10-28"],
+}
 # Brif (ertangi reja) talabi shu sanagacha (shu kun ham) qo'llanmaydi — yangi xodim tizimni bilmagan davr.
 BRIEF_GRACE_UNTIL = {"Fazliddin": "2026-10-09"}
 
@@ -352,6 +359,13 @@ def _backfill_attendance(conn):
             conn.execute("INSERT INTO attendance (person, adate, checkin_time, on_time, source) VALUES (?,?,?,?,?)",
                          (person, d, "", 0, "ceo"))
             log_audit(conn, "Tizim", "davomat qo'lda tasdiqlandi (CEO)", f"{person} · {d}")
+    for person, dates in ATTENDANCE_ONTIME_BACKFILL.items():
+        for d in dates:
+            if conn.execute("SELECT 1 FROM attendance WHERE person=? AND adate=?", (person, d)).fetchone():
+                continue
+            conn.execute("INSERT INTO attendance (person, adate, checkin_time, on_time, source) VALUES (?,?,?,?,?)",
+                         (person, d, "", 1, "ceo"))
+            log_audit(conn, "Tizim", "davomat qo'lda tasdiqlandi (CEO, vaqtida)", f"{person} · {d}")
     # Avval on_time=1 bilan yozilgan qo'lda tasdiqlangan yozuvlarni to'g'rilash (bir martalik, idempotent)
     for person, dates in ATTENDANCE_BACKFILL.items():
         for d in dates:
@@ -9576,10 +9590,19 @@ def _db_error_info():
             pass
         info["dbProvider"] = ("neon" if "neon.tech" in host else "render" if "render.com" in host else
                               "supabase" if "supabase" in host else "boshqa" if host else "noma'lum")
+    # Qaysi xizmat javob berayotgani va sozlamalar mavjudligi (qiymatlarsiz, faqat bor/yo'qligi)
+    info["service"] = os.environ.get("RENDER_SERVICE_NAME", "")
+    info["envPresent"] = {k: bool(os.environ.get(k)) for k in
+                          ("DATABASE_URL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "OPENAI_API_KEY", "CRM_TOPIC_ID")}
     t0 = time.time()
     try:
         conn = get_db()
         conn.execute("SELECT 1").fetchone()
+        # bazaga bitta so'rovning o'rtacha vaqti (server↔baza masofasi): Oregon↔Frankfurt ~150ms, bir regionda ~1-5ms
+        t1 = time.time()
+        for _ in range(3):
+            conn.execute("SELECT 1").fetchone()
+        info["queryMs"] = round((time.time() - t1) / 3 * 1000, 1)
         conn.close()
         info["ok"] = True
     except Exception as e:
