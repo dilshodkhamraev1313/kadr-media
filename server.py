@@ -9579,6 +9579,29 @@ CONTENT_TYPES = {
 }
 
 
+# PROXY REJIMI: PROXY_TARGET env o'rnatilsa (faqat ESKI Oregon xizmatda), bu xizmat hamma so'rovni
+# o'sha manzilga (Frankfurt'dagi asosiy xizmatga) uzatadi — eski havola (telefonlar, cron, webhook)
+# o'zgarmaydi, bazaga esa asosiy xizmat yaqin masofadan murojaat qiladi. Env bo'lmasa — oddiy ish rejimi.
+PROXY_TARGET = os.environ.get("PROXY_TARGET", "").strip().rstrip("/")
+_PROXY_SKIP = {"host", "connection", "content-length", "accept-encoding", "transfer-encoding", "keep-alive",
+               "upgrade", "te", "trailer", "proxy-authorization", "proxy-authenticate"}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None   # yo'naltirishni o'zimiz kuzatmaymiz — mijozga o'z holicha uzatamiz
+
+
+_PROXY_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def _ping_proxy_target():
+    try:
+        _PROXY_OPENER.open(urllib.request.Request(PROXY_TARGET + "/api/ping"), timeout=60).read()
+    except Exception:
+        pass
+
+
 def _db_error_info():
     """Bazaga ulanishni sinaydi. (ok, ma'lumot) — parol/maxfiy qismlarsiz."""
     info = {"engine": "postgres" if IS_PG else "sqlite", "databaseUrlSet": bool(DATABASE_URL)}
@@ -9634,16 +9657,50 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
     def do_GET(self):
-        self._guarded(self._do_GET)
+        self._guarded((lambda: self._proxy("GET")) if PROXY_TARGET else self._do_GET)
 
     def do_POST(self):
-        self._guarded(self._do_POST)
+        self._guarded((lambda: self._proxy("POST")) if PROXY_TARGET else self._do_POST)
 
     def do_PUT(self):
-        self._guarded(self._do_PUT)
+        self._guarded((lambda: self._proxy("PUT")) if PROXY_TARGET else self._do_PUT)
 
     def do_DELETE(self):
-        self._guarded(self._do_DELETE)
+        self._guarded((lambda: self._proxy("DELETE")) if PROXY_TARGET else self._do_DELETE)
+
+    def _proxy(self, method):
+        """Asosiy (Frankfurt) xizmatga to'liq shaffof uzatish: usul, yo'l, sarlavhalar, tana, status, javob."""
+        path = urlparse(self.path).path
+        if method == "GET" and path == "/api/ping":
+            # Keep-alive: o'zimiz javob beramiz; kunduzi (06:00–24:00 Toshkent) asosiy xizmatni ham uyg'otamiz,
+            # tunda esa uxlashiga yo'l qo'yamiz (bepul reja soatlarini tejash uchun)
+            if 6 <= uz_now().hour < 24:
+                threading.Thread(target=_ping_proxy_target, daemon=True).start()
+            return self._json({"ok": True, "proxy": True, "ts": now_local()})
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(n) if n > 0 else None
+        hdrs = {k: v for k, v in self.headers.items() if k.lower() not in _PROXY_SKIP}
+        hdrs["Accept-Encoding"] = "identity"
+        hdrs["X-Forwarded-For"] = self.client_address[0]
+        req = urllib.request.Request(PROXY_TARGET + self.path, data=body, headers=hdrs, method=method)
+        try:
+            resp = _PROXY_OPENER.open(req, timeout=95)
+        except urllib.error.HTTPError as e:
+            resp = e            # 4xx/5xx/3xx — o'z holicha uzatamiz
+        except Exception:
+            return self._json({"error": "Asosiy server vaqtincha javob bermayapti. Birozdan keyin urinib ko'ring.",
+                               "kind": "proxy_down"}, 502)
+        data = resp.read()
+        code = getattr(resp, "status", None) or resp.code
+        self.send_response(code)
+        for k, v in resp.headers.items():
+            if k.lower() in _PROXY_SKIP or k.lower() in ("server", "date"):
+                continue
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Proxied-By", "kadr-media")
+        self.end_headers()
+        self.wfile.write(data)
 
     def _json(self, data, code=200):
         # Funksiya ({...}, kod) tuple qaytarsa — statusni ajratamiz (xato javoblari uchun).
