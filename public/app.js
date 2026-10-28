@@ -218,13 +218,15 @@ $('#loginForm').addEventListener('submit', async (e) => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
-    if (!r.ok) throw new Error('bad');
+    if (!r.ok) { const e = new Error(r.status >= 500 ? 'server' : 'bad'); e.status = r.status; throw e; }
     const d = await r.json();
     TOKEN = d.token; ME = d.user;
     localStorage.setItem('km_token', TOKEN);
     startApp();
   } catch (err) {
-    $('#loginError').textContent = 'Login yoki parol noto\'g\'ri';
+    // Server/baza xatosi (502/503/500) — "parol xato" deb aldamaymiz
+    $('#loginError').textContent = (err && err.message === 'bad') ? 'Login yoki parol noto\'g\'ri'
+      : 'Server yoki baza vaqtincha ishlamayapti. Parolingiz to\'g\'ri bo\'lishi mumkin — birozdan keyin qayta urinib ko\'ring.';
     $('#loginError').classList.remove('hidden');
   }
   $('#loginBtn').textContent = 'Kirish';

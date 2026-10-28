@@ -11,6 +11,8 @@ import os
 import sqlite3
 import datetime
 import threading
+import re
+import time
 import urllib.request
 import hashlib
 import secrets
@@ -9563,7 +9565,63 @@ CONTENT_TYPES = {
 }
 
 
+def _db_error_info():
+    """Bazaga ulanishni sinaydi. (ok, ma'lumot) — parol/maxfiy qismlarsiz."""
+    info = {"engine": "postgres" if IS_PG else "sqlite", "databaseUrlSet": bool(DATABASE_URL)}
+    if IS_PG:
+        host = ""
+        try:
+            host = (urlparse(DATABASE_URL).hostname or "").lower()
+        except Exception:
+            pass
+        info["dbProvider"] = ("neon" if "neon.tech" in host else "render" if "render.com" in host else
+                              "supabase" if "supabase" in host else "boshqa" if host else "noma'lum")
+    t0 = time.time()
+    try:
+        conn = get_db()
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+        info["ok"] = True
+    except Exception as e:
+        msg = re.sub(r"postgres(ql)?://\S+", "<url>", str(e))
+        msg = re.sub(r"password=\S+", "password=***", msg)
+        info.update({"ok": False, "error": type(e).__name__, "message": msg[:300]})
+    info["ms"] = int((time.time() - t0) * 1000)
+    return info
+
+
 class Handler(BaseHTTPRequestHandler):
+    def _guarded(self, fn):
+        """Kutilmagan xato (masalan baza ulanmasa) — 502 emas, tushunarli JSON javob."""
+        try:
+            fn()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            name = type(e).__name__
+            db_down = name in ("OperationalError", "InterfaceError", "PoolTimeout") or "psycopg" in type(e).__module__
+            try:
+                if db_down:
+                    self._json({"error": "Baza vaqtincha ishlamayapti (ulanib bo'lmadi). Birozdan keyin urinib ko'ring.", "kind": "db_down"}, 503)
+                else:
+                    self._json({"error": "Server xatosi. Qayta urinib ko'ring.", "kind": name}, 500)
+            except Exception:
+                pass
+
+    def do_GET(self):
+        self._guarded(self._do_GET)
+
+    def do_POST(self):
+        self._guarded(self._do_POST)
+
+    def do_PUT(self):
+        self._guarded(self._do_PUT)
+
+    def do_DELETE(self):
+        self._guarded(self._do_DELETE)
+
     def _json(self, data, code=200):
         # Funksiya ({...}, kod) tuple qaytarsa — statusni ajratamiz (xato javoblari uchun).
         if isinstance(data, tuple) and len(data) == 2 and isinstance(data[1], int):
@@ -9615,12 +9673,14 @@ class Handler(BaseHTTPRequestHandler):
     def _forbid(self):
         return self._json({"error": "Ruxsat yo'q"}, 403)
 
-    def do_GET(self):
+    def _do_GET(self):
         path = urlparse(self.path).path
         # --- Ochiq (auth shart emas) ---
         if path == "/api/ping":
             # Serverni uxlatmaslik uchun yengil ping (bazaga tegmaydi)
             return self._json({"ok": True, "ts": now_local()})
+        if path == "/api/health":
+            return self._json(_db_error_info())
         if path == "/api/tiers":
             return self._json(api_tiers())
         if path == "/api/ranks":
@@ -9881,7 +9941,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(row) if row else self._json({"error": "Topilmadi"}, 404)
         return self._json({"error": "Topilmadi"}, 404)
 
-    def do_POST(self):
+    def _do_POST(self):
         path = urlparse(self.path).path
         if path == "/api/login":
             res = api_login(self._body())
@@ -10144,7 +10204,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_restore_video_pay(user, vid)) if vid else self._json({"error": "Topilmadi"}, 404)
         return self._json({"error": "Topilmadi"}, 404)
 
-    def do_PUT(self):
+    def _do_PUT(self):
         path = urlparse(self.path).path
         user = self._auth()
         if not user:
@@ -10196,7 +10256,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(row) if row else self._json({"error": "Topilmadi"}, 404)
         return self._json({"error": "Topilmadi"}, 404)
 
-    def do_DELETE(self):
+    def _do_DELETE(self):
         path = urlparse(self.path).path
         user = self._auth()
         if not user:
@@ -10269,8 +10329,32 @@ def local_ip():
         return "127.0.0.1"
 
 
+def _init_db_with_retry():
+    """Baza vaqtincha ishlamasa ham server o'chib qolmasin: xatoni yozib, har 60 soniyada qayta urinadi.
+    (Server tirik tursa /api/health aniq sababni ko'rsatadi, baza tiklanishi bilan o'zi ishga tushadi.)"""
+    try:
+        init_db()
+        return True
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"  ⚠️ init_db xato ({type(e).__name__}) — server baza'siz ishga tushdi, 60 soniyadan keyin qayta uriniladi")
+
+        def _retry():
+            while True:
+                time.sleep(60)
+                try:
+                    init_db()
+                    print("  ✅ init_db qayta urinishda muvaffaqiyatli")
+                    return
+                except Exception as e2:
+                    print(f"  ⚠️ init_db yana xato: {type(e2).__name__}")
+        threading.Thread(target=_retry, daemon=True).start()
+        return False
+
+
 if __name__ == "__main__":
-    init_db()
+    _init_db_with_retry()
     print("\n  ✅ Kadr Media Dashboard ishga tushdi")
     print(f"  \U0001F310 Shu kompyuterda:  http://localhost:{PORT}")
     print(f"  \U0001F4F1 Telefonda (bir Wi-Fi):  http://{local_ip()}:{PORT}")
