@@ -1203,7 +1203,7 @@ function openStudioBookingModal(presetDate, edit) {
   const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
   const operators = data.operators || ['Samandar', 'Umid', 'Shodiya'];
   const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
-  const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000, tadbir: 80000 };
+  const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 100000, tadbir: 80000 };
   const opRates = data.operatorRates || {};
   const opRate = (op, t) => (opRates[op] && opRates[op][t] != null) ? opRates[op][t] : (opPay[t] || 0);
   const e = edit || {};
@@ -1615,7 +1615,7 @@ async function openShootModal(presetDate) {
   const operators = data.operators || ['Samandar', 'Umid', 'Shodiya'];
   const shootTypes = data.shootTypes || SHOOT_TYPE_LABEL;
   const rooms = data.rooms || STUDIO_ROOMS_DEFAULT;
-  const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 200000, tadbir: 80000 };
+  const opPay = data.operatorPay || { reels: 50000, podcast: 100000, youtube: 50000, vebinar: 100000, tadbir: 80000 };
   const opRates = data.operatorRates || {};
   const opRate = (op, t) => (opRates[op] && opRates[op][t] != null) ? opRates[op][t] : (opPay[t] || 0);
   const extRate = (op) => (opRates[op] ? 10000 : 20000);  // tashqi: har video (shogird yarim)

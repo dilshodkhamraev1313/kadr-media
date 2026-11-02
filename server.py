@@ -96,7 +96,10 @@ STUDIO_TIMELAPSE_TOKEN = "y30Lxb841om3YvQYehn5S0XzjuxSrUN2"
 # Syomka turlari va OPERATORGA to'lanadigan pul (mijoz to'lovidan ALOHIDA).
 # Bu Kadr Studio bronlarida ham, Kadr Media loyiha syomkalarida ham ishlatiladi.
 SHOOT_TYPES = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video", "vebinar": "Vebinar", "tadbir": "Tadbir", "kadr_media": "Kadr Media (ichki)"}
-OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 200000, "tadbir": 80000, "kadr_media": 50000}
+OPERATOR_PAY = {"reels": 50000, "podcast": 100000, "youtube": 50000, "vebinar": 100000, "tadbir": 80000, "kadr_media": 50000}
+# Vebinar operator puli 2026-11-02'dan 200 000 → 100 000 (CEO qarori). Shu sanadan oldingi
+# (o'tgan) bron/syomkalar eski summada qoladi; undan keyingi barcha bronlar yangi stavkada.
+VEBINAR_RATE_CHANGE_DATE = "2026-11-02"
 # Operator syomka puli — SHAXSGA bog'liq override (shogird = past stavka).
 # Bu yerda yo'q operator OPERATOR_PAY (to'liq stavka) oladi.
 # Umid 2026-09-02'dan boshlab Samandar bilan bir xil (to'liq) stavkaga o'tkazildi
@@ -1288,6 +1291,7 @@ def init_db():
     _seed_playbooks(conn)
     _backfill_studio_ledger(conn)
     _backfill_operator_pay(conn)
+    _apply_vebinar_rate_change(conn)
     _backfill_period_log(conn)
     _backfill_attendance(conn)
     _zero_promo_unpaid_shoots(conn)
@@ -3858,6 +3862,18 @@ def _backfill_operator_pay(conn):
         for r in conn.execute("SELECT id, shoot_type, project, sdate FROM shoots WHERE operator=? AND room IN ('white','black')", (op,)).fetchall():
             pay = 0 if _promo_unpaid_shoot(op, r["project"], r["sdate"]) else _op_pay(op, r["shoot_type"])
             conn.execute("UPDATE shoots SET operator_pay=? WHERE id=?", (pay, r["id"]))
+
+
+def _apply_vebinar_rate_change(conn):
+    """Vebinar operator puli o'zgargach (VEBINAR_RATE_CHANGE_DATE) — shu sanadan keyingi, avval
+    eski summada yozilgan vebinar bron/syomkalarini joriy _op_pay bo'yicha yangilaydi.
+    Operator belgilanmagan yoki puli 0 (Safari ichki syomka) bo'lganlarga tegmaydi. Idempotent."""
+    for r in conn.execute("SELECT id, operator FROM studio_bookings WHERE shoot_type='vebinar' AND operator<>'' "
+                          "AND operator_pay>0 AND bdate>=?", (VEBINAR_RATE_CHANGE_DATE,)).fetchall():
+        conn.execute("UPDATE studio_bookings SET operator_pay=? WHERE id=?", (_op_pay(r["operator"], "vebinar"), r["id"]))
+    for r in conn.execute("SELECT id, operator FROM shoots WHERE shoot_type='vebinar' AND operator<>'' "
+                          "AND operator_pay>0 AND room IN ('white','black') AND sdate>=?", (VEBINAR_RATE_CHANGE_DATE,)).fetchall():
+        conn.execute("UPDATE shoots SET operator_pay=? WHERE id=?", (_op_pay(r["operator"], "vebinar"), r["id"]))
 
 
 def _calc_hours(start, end):
