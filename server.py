@@ -2806,8 +2806,10 @@ def api_restore_video_pay(user, vid):
 # ============================================================
 #  MONTAJCHILAR KABINETI + STATISTIKA
 # ============================================================
-def editor_summary(conn, name):
-    ym = uz_now().strftime("%Y-%m")
+def editor_summary(conn, name, ym=None):
+    """ym berilmasa — joriy oy. Arxiv uchun o'tgan oy ('2026-10') beriladi."""
+    cur_ym = uz_now().strftime("%Y-%m")
+    ym = ym or cur_ym
     vids = [dict(r) for r in conn.execute("SELECT * FROM videos WHERE editor=?", (name,)).fetchall()]
     accepted_all = [v for v in vids if v["status"] in DONE_STATUSES]
     # Daromad/to'lov — FAQAT shu oy (oylik birlik; qolgan = shu oy ishlagan − shu oy to'langan)
@@ -2824,13 +2826,19 @@ def editor_summary(conn, name):
     # (fiksa+intizom+montaj+...), aks holda (sof piece-rate) faqat montaj puli.
     reels_quota_penalty = 0
     if name in SALARY:
-        _sal = compute_salary(conn, name, get_usd_rate())
+        _sal = compute_salary(conn, name, get_usd_rate(), ym=ym)
         earned = _sal["total"] if _sal else montaj_earned
     else:
         # SALARYda yo'q (sof piece-rate) montajchilar uchun kunlik 2 reels
         # normasi jarimasi va oylik hajm bonusi compute_salary orqali emas,
         # shu yerda hisoblanadi.
-        reels_quota_penalty, _ = _reels_quota_penalty(conn, name, uz_today())
+        if ym < cur_ym:   # o'tgan oy — oxirgi kuni holatida
+            from calendar import monthrange
+            _yy, _mm = (int(x) for x in ym.split("-"))
+            _qday = datetime.date(_yy, _mm, monthrange(_yy, _mm)[1])
+        else:
+            _qday = uz_today()
+        reels_quota_penalty, _ = _reels_quota_penalty(conn, name, _qday)
         earned = montaj_earned - reels_quota_penalty + vb_bonus
     by_project = {}
     for v in accepted_m:
@@ -7534,6 +7542,17 @@ def _month_snapshot(conn, ym, actor):
             payroll_total += s["total"]
             salaries.append({"name": n, "title": s.get("title", ""), "total": s["total"],
                              "paid": s["paid"], "remaining": s["remaining"]})
+    # SALARY'da yo'q dona-hisobdagi montajchilar (Oygul, Muhammadyusuf, Murod...) —
+    # ular ham maosh oladi, arxivda va payroll'da ko'rinishi kerak.
+    _names, _editors = _all_employee_names(conn)
+    for n in sorted(_editors):
+        if n in SALARY:
+            continue
+        es = editor_summary(conn, n, ym)
+        if es["earned"] or es["paid"] or es["montajEarned"]:
+            payroll_total += es["earned"]
+            salaries.append({"name": n, "title": "Montajchi (dona-hisobda)", "total": es["earned"],
+                             "paid": es["paid"], "remaining": es["remaining"]})
     media_income = conn.execute("SELECT COALESCE(SUM(monthly_fee),0) AS s FROM projects WHERE monthly_fee>0 AND COALESCE(frozen,0)=0").fetchone()["s"] or 0
     like = ym + "%"
     # Ssenariy — mijozdan ALOHIDA olingan to'lovlar (loyiha oylik puliga kirmagan holatlar)
