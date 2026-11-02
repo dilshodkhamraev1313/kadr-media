@@ -3855,6 +3855,10 @@ async function viewArchive() {
       <p class="muted" style="margin-bottom:10px">Arxivlansa — shu oyning maoshi va moliyasi muzlaydi. Keyin ma'lumot o'zgarsa ham, arxiv o'zgarmaydi.</p>
       ${snapCard(cur)}
     </div>
+    ${d.prevYm && !d.prevArchived ? `<div class="panel" style="margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div><b>⚠️ ${esc(UZ_YM(d.prevYm))}</b> <span class="pill orange">hali arxivlanmagan</span></div>
+      <button class="btn-primary" id="arc_save_prev">🗄 ${esc(UZ_YM(d.prevYm))} oyini arxivlash</button>
+    </div>` : ''}
     <div class="sec-label" style="margin-bottom:10px">🗄 Muzlatilgan oylar</div>
     <div class="fin-months">${archList}</div>
     <div class="sec-label" style="margin:16px 0 10px">📁 Loyiha davrlari (har yangilashda yopilgan)</div>
@@ -3872,6 +3876,13 @@ async function viewArchive() {
   $('#arc_save').addEventListener('click', async () => {
     if (!confirm(`${UZ_YM(cur.ym)} oyini arxivlaysizmi? (hozirgi holat muzlatiladi)`)) return;
     const r = await api('/api/archive', { method: 'POST', body: '{}' });
+    if (r && r.error) { toast('⚠️ ' + r.error); return; }
+    toast('🗄 Oy arxivlandi'); render();
+  });
+  const arcPrev = $('#arc_save_prev');
+  if (arcPrev) arcPrev.addEventListener('click', async () => {
+    if (!confirm(`${UZ_YM(d.prevYm)} oyini arxivlaysizmi? (oyning oxirgi holati muzlatiladi)`)) return;
+    const r = await api('/api/archive', { method: 'POST', body: JSON.stringify({ ym: d.prevYm }) });
     if (r && r.error) { toast('⚠️ ' + r.error); return; }
     toast('🗄 Oy arxivlandi'); render();
   });

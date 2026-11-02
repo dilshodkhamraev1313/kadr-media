@@ -7595,9 +7595,12 @@ def api_archives(user):
     rows = [dict(r) for r in conn.execute(
         "SELECT ym, net, created_by, created_at FROM monthly_archive ORDER BY ym DESC").fetchall()]
     cur_ym = uz_now().strftime("%Y-%m")
+    prev_ym = (uz_today().replace(day=1) - datetime.timedelta(days=1)).strftime("%Y-%m")
     preview = _month_snapshot(conn, cur_ym, user["name"])
     conn.close()
     return {
+        "prevYm": prev_ym,
+        "prevArchived": any(r["ym"] == prev_ym for r in rows),
         "archived": [{"ym": r["ym"], "net": r["net"], "by": r["created_by"], "at": r["created_at"]} for r in rows],
         "current": preview,
         "currentArchived": any(r["ym"] == cur_ym for r in rows),
@@ -9039,8 +9042,34 @@ def _auto_rollover_completed_projects(actor="Tizim"):
     return renewed
 
 
+def _ensure_prev_month_archived():
+    """Oy almashgach (1–5-kunlar) o'tgan oy arxivlanmagan bo'lsa — avtomatik muzlatadi.
+    Avval faqat qo'lda tugma bor edi va `/api/cron/monthly-report` hech qayerda
+    rejalashtirilmagan edi, shuning uchun oktabr arxivsiz qolgan (2026-11-02)."""
+    today = uz_today()
+    if today.day > 5:
+        return
+    prev_ym = (today.replace(day=1) - datetime.timedelta(days=1)).strftime("%Y-%m")
+    conn = get_db()
+    try:
+        if conn.execute("SELECT 1 FROM monthly_archive WHERE ym=?", (prev_ym,)).fetchone():
+            return
+        snap = _month_snapshot(conn, prev_ym, "Tizim (avtomatik)")
+        conn.execute("INSERT INTO monthly_archive (ym, data, net, created_by, created_at) VALUES (?,?,?,?,?)",
+                     (prev_ym, json.dumps(snap, ensure_ascii=False), snap["companyNet"], "Tizim (avtomatik)", now_local()))
+        log_audit(conn, "Tizim", "oy avtomatik arxivlandi (muzlatildi)", prev_ym)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def api_cron_morning_digest():
     """~09:00 da tashqi cron chaqiradi — jamoaga bugungi kun uchun qisqa digest yuboradi."""
+    try:
+        _ensure_prev_month_archived()
+    except Exception:
+        import traceback
+        traceback.print_exc()
     try:
         return _api_cron_morning_digest_inner()
     except Exception as e:
