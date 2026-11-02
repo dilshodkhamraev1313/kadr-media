@@ -3029,6 +3029,7 @@ def api_finance():
         s = compute_salary(conn, n, rate)
         if s:
             payroll_total += s["total"]
+    payroll_total += sum(e for _n, e, _p, _s in _piece_rate_payroll(conn))
     conn.close()
     top = max(editors, key=lambda e: e["accepted"], default=None)
     return {
@@ -3101,6 +3102,9 @@ def api_cashflow(user):
         if s:
             payroll_total += s["total"]
             payroll_paid += s["paid"]
+    for _n, _e, _p, _s in _piece_rate_payroll(conn, ym):
+        payroll_total += _e
+        payroll_paid += _p
     studio_exp = conn.execute(
         "SELECT COALESCE(SUM(amount),0) AS s FROM studio_expenses WHERE edate LIKE ?",
         (ym + "%",)).fetchone()["s"] or 0
@@ -6322,6 +6326,21 @@ def _all_employee_names(conn):
     return names, set(editor_names)
 
 
+def _piece_rate_payroll(conn, ym=None):
+    """SALARY'da yo'q dona-hisobdagi montajchilar (Oygul, Muhammadyusuf, Murod...)
+    shu oy uchun jami/to'langan puli. [(name, earned, paid), ...]. Ular ham
+    kompaniya chiqimi — payroll jamiga qo'shilishi kerak."""
+    _names, editors = _all_employee_names(conn)
+    out = []
+    for n in sorted(editors):
+        if n in SALARY:
+            continue
+        es = editor_summary(conn, n, ym)
+        if es["earned"] or es["paid"] or es["montajEarned"]:
+            out.append((n, es["earned"], es["paid"], es))
+    return out
+
+
 def _video_type_breakdown(conn, name, ym):
     rows = conn.execute(
         "SELECT vtype, amount FROM videos WHERE editor=? AND approved_at LIKE ? "
@@ -7544,15 +7563,10 @@ def _month_snapshot(conn, ym, actor):
                              "paid": s["paid"], "remaining": s["remaining"]})
     # SALARY'da yo'q dona-hisobdagi montajchilar (Oygul, Muhammadyusuf, Murod...) —
     # ular ham maosh oladi, arxivda va payroll'da ko'rinishi kerak.
-    _names, _editors = _all_employee_names(conn)
-    for n in sorted(_editors):
-        if n in SALARY:
-            continue
-        es = editor_summary(conn, n, ym)
-        if es["earned"] or es["paid"] or es["montajEarned"]:
-            payroll_total += es["earned"]
-            salaries.append({"name": n, "title": "Montajchi (dona-hisobda)", "total": es["earned"],
-                             "paid": es["paid"], "remaining": es["remaining"]})
+    for n, earned, paid, es in _piece_rate_payroll(conn, ym):
+        payroll_total += earned
+        salaries.append({"name": n, "title": "Montajchi (dona-hisobda)", "total": earned,
+                         "paid": paid, "remaining": es["remaining"]})
     media_income = conn.execute("SELECT COALESCE(SUM(monthly_fee),0) AS s FROM projects WHERE monthly_fee>0 AND COALESCE(frozen,0)=0").fetchone()["s"] or 0
     like = ym + "%"
     # Ssenariy — mijozdan ALOHIDA olingan to'lovlar (loyiha oylik puliga kirmagan holatlar)
@@ -7673,6 +7687,7 @@ def api_charity(user):
         s = compute_salary(conn, n, rate)
         if s:
             payroll += s["total"]
+    payroll += sum(e for _n, e, _p, _s in _piece_rate_payroll(conn))
     conn.close()
     total_income = media_income + studio_income
     total_expense = payroll + studio_exp
