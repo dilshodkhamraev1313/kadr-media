@@ -63,7 +63,15 @@ VIDEO_TYPES = {
     "youtube":   "YouTube video",
     "ai_video":  "AI video",
     "ai_karusel": "AI karusel post",
+    "claude_reels": "Claude reels montaj",
+    "claude_podcast": "Claude podcast montaj",
+    "oblojka":   "Obloshka",
 }
+# Muhammadyusuf (AI kreator) uchun belgilangan narxli turlar (lavozimga bog'liq emas).
+# Lavozim (rank) ballari va 60 talik oylik hajm bonusiga HISOBLANMAYDI —
+# aks holda arzon obloshkalar AI video narxini oshirib yuborardi.
+FIXED_PRICE_VTYPES = {"claude_reels": 10000, "claude_podcast": 50000, "oblojka": 5000}
+_NO_RANK_SQL = "('claude_reels','claude_podcast','oblojka')"
 # Video darajalari va narxlari (so'm). Har daraja bitta turga tegishli.
 # Qabul qilishda shu turga mos darajalardan biri tanlanadi — pul avtomatik hisoblanadi.
 TIERS = {
@@ -281,12 +289,13 @@ DEFAULT_CHECKLIST = {
 }
 
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
-ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar", "Nodira", "Xayrulloh", "Fazliddin")
+ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar", "Nodira", "Xayrulloh", "Fazliddin",
+                    "Muhammadyusuf")
 TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
     "pardaboyev_samandar": "Samandar", "nbyva_929": "Nodira",
-    "uzbawr": "Xayrulloh", "fx4040": "Fazliddin",
+    "uzbawr": "Xayrulloh", "fx4040": "Fazliddin", "raxmatjanov_m": "Muhammadyusuf",
 }
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
@@ -306,7 +315,8 @@ VIDEO_CHECKIN_ENABLED = False  # 2026-09-24: WiFi-geofence pilot davrida vaqtinc
 # uchun, FAQAT unga dumaloq video hali ham "keldi" deb hisoblanadi (boshqalarga
 # tegishli emas — ular hali ham faqat WiFi orqali belgilanadi).
 # 2026-10-10: shu qoida Fazliddin (Android) uchun — dumaloq video bilan keldi deb belgilanadi.
-VIDEO_CHECKIN_EXEMPT = ("Fazliddin",)
+# 2026-11-03: Muhammadyusuf ham Android — dumaloq video bilan keldi deb belgilanadi.
+VIDEO_CHECKIN_EXEMPT = ("Fazliddin", "Muhammadyusuf")
 GEOFENCE_TOKENS = {
     "xM8uvINfcyixJ8BXBwNuTeXq": "Dilshod Khamraev",  # pilot/sinov uchun
     "aNQSgSVZPXJjnFs0Mfj4EGFh": "Gulmira",
@@ -329,7 +339,16 @@ JOIN_DATE = {
     "Nodira": "2026-09-11",    # ATTENDANCE_USERS'ga shu sanada qo'shildi (tizim shu kundan kuzata boshladi)
     "Xayrulloh": "2026-10-01",  # yangi ishga olindi
     "Fazliddin": "2026-10-06",  # yangi ishga olindi (Xayrulloh bilan bir xil sharoit)
+    "Muhammadyusuf": "2026-11-03",  # Fiksa/Intizom tizimiga shu sanadan o'tdi
 }
+# Maosh (SALARY) tizimiga o'tgan oy: undan OLDINGI oylar dona-hisobda (piece-rate) qoladi
+# — arxivlangan oktabr o'zgarmasligi uchun.
+SALARY_START = {"Muhammadyusuf": "2026-11"}
+
+
+def _salaried(name, ym):
+    """Xodim shu oy uchun SALARY (fiksa+...) tizimidami (yoki dona-hisobdami)."""
+    return name in SALARY and not (SALARY_START.get(name) and ym < SALARY_START[name])
 
 
 # Ishdan ketgan xodimlar: shu sanagacha (shu kun ham) hisoblanadi, undan keyingi kunlar uchun
@@ -491,6 +510,10 @@ SALARY = {
     # Murod: 2026-10-06 dan online ishlaydi, fiksa yo'q — Oygul kabi faqat montaj puli (piece-rate)
     "Xayrulloh": {"title": "Montajchi", "som": {"Fiksa": 500000}, "montaj": True},
     "Fazliddin": {"title": "Montajchi", "som": {"Fiksa": 500000}, "montaj": True},   # Xayrulloh bilan bir xil
+    # AI kreator (2026-11-03 dan): Fiksa + Intizom (+ mukammal davomat bonusi umumiy qoida)
+    # + dona-hisobdagi montaj puli (AI video, Claude reels/podcast, obloshka). Android — dumaloq video.
+    "Muhammadyusuf": {"title": "AI kreator + Claude montajchi", "som": {"Fiksa": 500000, "Intizom": 500000},
+                      "montaj": True},
 }
 
 # Rol='lead' bo'lsa ham montaj qiladigan rahbarlar (Shodiya): montajchi ro'yxatiga
@@ -531,6 +554,8 @@ RANK_PRICES = {
     "legenda": {"reels": 70000, "podcast": 400000, "youtube": 70000, "ai_video": 70000, "ai_karusel": 70000},
     "titan":   {"reels": 80000, "podcast": 450000, "youtube": 80000, "ai_video": 80000, "ai_karusel": 80000},
 }
+for _rk in RANK_PRICES.values():
+    _rk.update(FIXED_PRICE_VTYPES)
 
 
 # Ba'zi montajyorlar yuqori lavozimdan boshlanadi — qabul soniga qo'shiladigan bonus.
@@ -545,7 +570,8 @@ def eff_count(name, accepted):
 
 
 # Montaj deadline (biriktirilgandan qabulgacha). Kechiksa: reels — pul yo'q, podcast/youtube — yarim.
-DEADLINE_HOURS = {"reels": 24, "podcast": 48, "youtube": 48, "ai_video": 48, "ai_karusel": 48}
+DEADLINE_HOURS = {"reels": 24, "podcast": 48, "youtube": 48, "ai_video": 48, "ai_karusel": 48,
+                  "claude_reels": 24, "claude_podcast": 48, "oblojka": 24}
 REELS_PER_DAY = 3  # montajchiga kuniga nechta reels deadline (24 soatlik) qo'yiladi
 
 # Kunlik 2 ta reels normasi (2026-09-29'dan) — barcha montajchilar (rahbar-
@@ -733,7 +759,7 @@ def editor_pay(count, vtype):
     """Montajyor lavozimi (count bo'yicha) va video turiga qarab haq (so'm) + lavozim kaliti."""
     idx = rank_for_count(count)
     rk = RANKS[idx]["key"]
-    vt = vtype if vtype in ("reels", "podcast", "youtube", "ai_video", "ai_karusel") else "reels"
+    vt = vtype if vtype in VIDEO_TYPES else "reels"
     return RANK_PRICES[rk][vt], rk
 
 # Mijoz bilan kelishilgan oylik video reja (har bir bosqich uchun shu son).
@@ -2257,10 +2283,14 @@ def _editor_accepted_counts(conn):
 
 # Podcast ko'p vaqt oladi — lavozim (rank) uchun 1 podcast = PODCAST_RANK_WEIGHT video.
 PODCAST_RANK_WEIGHT = 3
+_RANK_POINTS_SQL = ("CASE WHEN vtype='podcast' THEN %d WHEN vtype IN " % PODCAST_RANK_WEIGHT
+                    + _NO_RANK_SQL + " THEN 0 ELSE 1 END")
 
 
 def _video_rank_points(v):
     """Bitta videoning lavozimga qo'shadigan ball: podcast — 3, boshqasi — 1."""
+    if v.get("vtype") in FIXED_PRICE_VTYPES:
+        return 0
     return PODCAST_RANK_WEIGHT if (v.get("vtype") == "podcast") else 1
 
 
@@ -2268,8 +2298,8 @@ def _editor_rank_points(conn):
     """Har montajyor uchun lavozim ballari (podcast=3). rank_info shu ballardan hisoblanadi."""
     pts = {}
     for r in conn.execute(
-        "SELECT editor, SUM(CASE WHEN vtype='podcast' THEN %d ELSE 1 END) AS n "
-        "FROM videos WHERE status IN ('qabul_qilindi','joylandi') GROUP BY editor" % PODCAST_RANK_WEIGHT
+        "SELECT editor, SUM(" + _RANK_POINTS_SQL + ") AS n "
+        "FROM videos WHERE status IN ('qabul_qilindi','joylandi') GROUP BY editor"
     ).fetchall():
         pts[r["editor"] or ""] = r["n"] or 0
     return pts
@@ -2588,8 +2618,8 @@ def api_video_action(user, vid, b):
     elif action == "accept" and is_qc_approver(user):
         # Montajyor lavozimiga (shu paytgacha to'plangan lavozim ballari — podcast=3) qarab pul avtomatik
         prev_points = conn.execute(
-            "SELECT SUM(CASE WHEN vtype='podcast' THEN %d ELSE 1 END) AS n "
-            "FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi')" % PODCAST_RANK_WEIGHT,
+            "SELECT SUM(" + _RANK_POINTS_SQL + ") AS n "
+            "FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi')",
             (ex["editor"],),
         ).fetchone()["n"] or 0
         vt = ex.get("vtype") or "reels"
@@ -2623,7 +2653,7 @@ def api_video_action(user, vid, b):
             f"💰 {VIDEO_TYPES.get(vt, vt)} — {amount:,} so'm hisoblandi{late_note}\n👮 Tasdiqladi: {user['name']}\n→ Joylashga".replace(",", " ")
         )
         # Yangi daraja (lavozim) ochilganmi — bo'lsa, alohida tabrik xabari
-        new_points = prev_points + (PODCAST_RANK_WEIGHT if vt == "podcast" else 1)
+        new_points = prev_points + (PODCAST_RANK_WEIGHT if vt == "podcast" else 0 if vt in FIXED_PRICE_VTYPES else 1)
         old_idx = rank_for_count(eff_count(ex["editor"], prev_points))
         new_idx = rank_for_count(eff_count(ex["editor"], new_points))
         if new_idx > old_idx:
@@ -2731,8 +2761,8 @@ def api_backfill_videos(user, b):
     conn = get_db()
     now_s = now_local()
     prev_points = conn.execute(
-        "SELECT COALESCE(SUM(CASE WHEN vtype='podcast' THEN %d ELSE 1 END),0) AS n "
-        "FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi')" % PODCAST_RANK_WEIGHT,
+        "SELECT COALESCE(SUM(" + _RANK_POINTS_SQL + "),0) AS n "
+        "FROM videos WHERE editor=? AND status IN ('qabul_qilindi','joylandi')",
         (editor,)).fetchone()["n"] or 0
     created = []
     for it in items:
@@ -2748,7 +2778,7 @@ def api_backfill_videos(user, b):
         else:
             vid = conn.execute(sql, params).lastrowid
         created.append({"id": vid, "title": title, "project": project, "amount": amount})
-        prev_points += PODCAST_RANK_WEIGHT if vt == "podcast" else 1
+        prev_points += PODCAST_RANK_WEIGHT if vt == "podcast" else 0 if vt in FIXED_PRICE_VTYPES else 1
     log_audit(conn, user["name"], "montaj backfill (hisoblanmagan)", f"{editor}: {len(created)} video")
     conn.commit()
     conn.close()
@@ -2757,7 +2787,7 @@ def api_backfill_videos(user, b):
 
 def _full_pay(v):
     """Videoning kechikishsiz (to'liq) haqi — saqlangan lavozim (tier) va turi bo'yicha."""
-    vt = v.get("vtype") if v.get("vtype") in ("reels", "podcast", "youtube") else "reels"
+    vt = v.get("vtype") if v.get("vtype") in VIDEO_TYPES else "reels"
     tier = v.get("tier") if v.get("tier") in RANK_PRICES else "junior"
     return RANK_PRICES.get(tier, RANK_PRICES["junior"]).get(vt, 0)
 
@@ -2819,13 +2849,14 @@ def editor_summary(conn, name, ym=None):
     # Oylik hajm bonusi — barcha turdagi video birga, MONTHLY_VOLUME_BONUS_TARGET
     # tagacha yetsa bir martalik qo'shimcha (compute_salary ichida SALARY
     # xodimlar uchun ham hisoblanadi — bu yerda faqat ko'rsatish/piece-rate uchun).
-    vb_count = len([v for v in accepted_m if not _internal_kind(v.get("project"))])
+    vb_count = len([v for v in accepted_m if not _internal_kind(v.get("project"))
+                    and v.get("vtype") not in FIXED_PRICE_VTYPES])
     vb_bonus = MONTHLY_VOLUME_BONUS_AMOUNT if (
         ym >= MONTHLY_VOLUME_BONUS_START_DATE[:7] and vb_count >= MONTHLY_VOLUME_BONUS_TARGET) else 0
     # Salaried montajchi (SALARYda bor) uchun "ishlagan" = TO'LIQ oylik maosh
     # (fiksa+intizom+montaj+...), aks holda (sof piece-rate) faqat montaj puli.
     reels_quota_penalty = 0
-    if name in SALARY:
+    if _salaried(name, ym):
         _sal = compute_salary(conn, name, get_usd_rate(), ym=ym)
         earned = _sal["total"] if _sal else montaj_earned
     else:
@@ -6094,6 +6125,8 @@ def compute_salary(conn, name, rate, ym=None):
     cfg = SALARY.get(name)
     if not cfg:
         return None
+    if SALARY_START.get(name) and (ym or uz_today().strftime("%Y-%m")) < SALARY_START[name]:
+        return None   # maosh tizimiga o'tishdan oldingi oylar — dona-hisobda
     _ld = LEFT_DATE.get(name)
     if _ld and _ld[:7] < (ym or uz_today().strftime("%Y-%m")):
         return None   # ishdan ketgan oydan KEYINGI oylar — maosh ro'yxatida yo'q
@@ -6228,7 +6261,8 @@ def compute_salary(conn, name, rate, ym=None):
         if ym >= MONTHLY_VOLUME_BONUS_START_DATE[:7]:
             vb_count = conn.execute(
                 "SELECT COUNT(*) AS c FROM videos WHERE editor=? AND approved_at LIKE ? "
-                "AND status IN ('qabul_qilindi','joylandi') AND " + _INTERNAL_SQL, (name, ym + "%")).fetchone()["c"] or 0
+                "AND status IN ('qabul_qilindi','joylandi') AND COALESCE(vtype,'reels') NOT IN " + _NO_RANK_SQL +
+                " AND " + _INTERNAL_SQL, (name, ym + "%")).fetchone()["c"] or 0
             if vb_count >= MONTHLY_VOLUME_BONUS_TARGET:
                 comps.append({"label": f"Oylik hajm bonusi ({vb_count}/{MONTHLY_VOLUME_BONUS_TARGET}+ video)",
                               "amount": MONTHLY_VOLUME_BONUS_AMOUNT, "kind": "bonus"})
@@ -6310,7 +6344,7 @@ def api_payroll(user, ym=None):
 
 
 VTYPE_LABEL = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video",
-               "ai_video": "AI video", "ai_karusel": "AI karusel"}
+               "ai_video": "AI video", "ai_karusel": "AI karusel", **{k: VIDEO_TYPES[k] for k in FIXED_PRICE_VTYPES}}
 
 
 def _all_employee_names(conn):
@@ -6333,7 +6367,7 @@ def _piece_rate_payroll(conn, ym=None):
     _names, editors = _all_employee_names(conn)
     out = []
     for n in sorted(editors):
-        if n in SALARY:
+        if _salaried(n, ym or uz_now().strftime("%Y-%m")):
             continue
         es = editor_summary(conn, n, ym)
         if es["earned"] or es["paid"] or es["montajEarned"]:
@@ -6363,7 +6397,7 @@ def _employee_month_report(conn, name, ym, rate, editor_names):
     lines = [f"👤 {name}"]
     penalties = 0
 
-    sal = compute_salary(conn, name, rate, ym=ym) if name in SALARY else None
+    sal = compute_salary(conn, name, rate, ym=ym) if _salaried(name, ym) else None
     if sal:
         lines.append(f"   Lavozim: {sal['title']}")
         for c in sal["components"]:
