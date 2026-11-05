@@ -344,6 +344,14 @@ JOIN_DATE = {
 # Maosh (SALARY) tizimiga o'tgan oy: undan OLDINGI oylar dona-hisobda (piece-rate) qoladi
 # — arxivlangan oktabr o'zgarmasligi uchun.
 SALARY_START = {"Muhammadyusuf": "2026-11"}
+# Fiksa o'zgargan xodimlar: {ism: (yangi stavka boshlangan oy, ESKI stavka)} — undan oldingi
+# oylar (arxiv, o'tgan oy maoshi) eski stavkada hisoblanadi. Shodiya: 500k → 1 mln (2026-11 dan).
+FIKSA_CHANGE = {"Shodiya": ("2026-11", 500000)}
+
+
+def _fiksa_for(name, ym, default):
+    ch = FIKSA_CHANGE.get(name)
+    return ch[1] if ch and ym < ch[0] else default
 
 
 def _salaried(name, ym):
@@ -500,7 +508,7 @@ SALARY = {
     # 2026-10-03: Shodiya SMM/Stories'dan chiqarildi — asosiy ish KREATIV STRATEG
     # (CREATIVE_PROJECTS bo'yicha, qabul qilingan g'oyalarga qarab to'lanadi).
     # KADR MEDIA rahbarligi, kun yopish, ba'zida montaj va operatorlik qoladi.
-    "Shodiya": {"title": "Kreativ strateg + montajchi + operator", "som": {"Fiksa": 500000},
+    "Shodiya": {"title": "Kreativ strateg + montajchi + operator", "som": {"Fiksa": 1000000},
                 "lead": True, "montaj": True, "operator": True, "creative_strategist": True},
     # Sotuv operatori — komissiya (% sotuvdan) hali kelishilmagan, keyin qo'shiladi.
     "Nodira": {"title": "Sotuv operatori", "som": {"Fiksa": 1000000, "Intizom": 500000}},
@@ -5733,6 +5741,7 @@ def _lateness_penalty(conn, name, today):
     cfg = SALARY.get(name, {})
     som = cfg.get("som") or {}
     fiksa = som.get("Fiksa") or sum(som.values())
+    fiksa = _fiksa_for(name, today.strftime("%Y-%m"), fiksa)
     cap = int(fiksa * PENALTY_CAP_PCT) if fiksa else 0
     capped = min(raw, cap) if cap else raw
     return capped, {"raw": raw, "cap": cap, "items": items}
@@ -6151,7 +6160,7 @@ def compute_salary(conn, name, rate, ym=None):
     is_close = name in DAILY_CLOSE_USERS
     brief_missed = _brief_missing_days(conn, name, today) if name in ATTENDANCE_USERS else []
     for label, som in (cfg.get("som") or {}).items():
-        amt = int(som)
+        amt = int(_fiksa_for(name, ym, som) if label == "Fiksa" else som)
         lbl = label
         kind = "fixed"
         if label == "Fiksa" and name in ATTENDANCE_USERS:
@@ -6189,7 +6198,7 @@ def compute_salary(conn, name, rate, ym=None):
     # Yakshanba bonusi — oddiy dam olish kuni, lekin kelib dumaloq video
     # tashlagan bo'lsa, shu kunlik Fiksa stavkasining 1,5 barobari to'lanadi.
     if name in ATTENDANCE_USERS:
-        fiksa_full = int((cfg.get("som") or {}).get("Fiksa", 0))
+        fiksa_full = int(_fiksa_for(name, ym, (cfg.get("som") or {}).get("Fiksa", 0)))
         if fiksa_full:
             wd = _workdays_in_month(today.year, today.month)
             daily_rate = fiksa_full / wd if wd else 0
