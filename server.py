@@ -2673,7 +2673,7 @@ def api_video_action(user, vid, b):
         )
         log_audit(conn, user["name"], "video qaytardi", f"#{vid} {ex['title']}")
         send_telegram(f"↩️ <b>Video qaytarildi</b>\n{ex['title']}\n👤 {ex['editor']}\n👮 {user['name']}")
-    elif action == "cancel" and role in APPROVER_ROLES:
+    elif action == "cancel" and role == "ceo":   # 2026-11-09: biriktirishni faqat CEO bekor qiladi
         conn.execute(
             "UPDATE videos SET status='bekor_qilindi', note=? WHERE id=?",
             (b.get("note") or ex["note"], vid),

@@ -945,7 +945,7 @@ function videoActions(v) {
     b.push(`<button class="mini-btn blue" data-vact="montaj_done" data-id="${v.id}">✓ Montaj qildim</button>`);
   if (isApprover && (v.status === 'biriktirildi' || v.status === 'qaytarildi'))
     b.push(`<button class="mini-btn blue" data-vedit="${v.id}">✏️ Tahrirlash</button>`);
-  if (isApprover && (v.status === 'biriktirildi' || v.status === 'qaytarildi'))
+  if (role === 'ceo' && (v.status === 'biriktirildi' || v.status === 'qaytarildi'))   // bekor qilish — faqat CEO
     b.push(`<button class="mini-btn gray" data-vact="cancel" data-id="${v.id}">🚫 Bekor qilish</button>`);
   if (isQc && v.status === 'montaj_qilindi') {
     b.push(`<button class="mini-btn green" data-vact="qc_ok" data-id="${v.id}">✓ Sifat OK</button>`);
