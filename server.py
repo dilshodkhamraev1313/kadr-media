@@ -1150,6 +1150,10 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS planyorka_log (
         id {pk}, pdate TEXT UNIQUE, confirmed_by TEXT, confirmed_at TEXT,
         penalized INTEGER DEFAULT 0)""")
+    # Montaj 3 kunda tugatilmasa jarima (video_id+editor bo'yicha bir marta)
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS montaj_late_fines (
+        id {pk}, video_id INTEGER, editor TEXT, ym TEXT, amount INTEGER, created_at {ts},
+        UNIQUE (video_id, editor))""")
     # Oy oxiri (23:00) avtomatik hisobot — bir oyga bir marta yuborilganini
     # belgilaydi (cron ikki marta yubormasligi uchun).
     conn.execute(f"""CREATE TABLE IF NOT EXISTS monthly_report_log (
@@ -1228,6 +1232,7 @@ def init_db():
     add_column_if_missing(conn, "videos", "deadline_reminded", "INTEGER DEFAULT 0")
     # videos: deadline uchun biriktirilgan vaqt (Toshkent) va kechikish belgisi
     add_column_if_missing(conn, "videos", "assigned_at", "TEXT")
+    add_column_if_missing(conn, "videos", "montaj_first_at", "TEXT")   # birinchi marta montaj tugatilgan vaqt (qaytarilsa o'zgarmaydi)
     add_column_if_missing(conn, "videos", "is_late", "INTEGER DEFAULT 0")
     # reels deadline avtomatik taqsimoti uchun rejalashtirilgan muddat (Toshkent)
     add_column_if_missing(conn, "videos", "due_at", "TEXT")
@@ -2576,10 +2581,15 @@ def api_update_video(user, vid, b):
     # Muddat: qo'lda kiritilsa — override (FAQAT CEO); aks holda mavjud due_at saqlanadi.
     manual_due = _norm_due(b.get("due_at")) if user["role"] == "ceo" else None
     due_at = manual_due if manual_due else ex.get("due_at")
+    reassigned = editor != ex["editor"]
+    if reassigned:
+        _montaj_sweep(conn, vid)   # oldingi montajchining muddati o'tgan bo'lsa — jarima shunda qoladi
     conn.execute(
         "UPDATE videos SET title=?, editor=?, vtype=?, project=?, client=?, note=?, drive_link=?, vdate=?, due_at=? WHERE id=?",
         (title, editor, vtype, project, client, note, drive, vdate, due_at, vid),
     )
+    if reassigned:   # yangi montajchi uchun 3 kunlik hisob qaytadan boshlanadi
+        conn.execute("UPDATE videos SET assigned_at=?, montaj_first_at=NULL WHERE id=?", (now_local(), vid))
     log_audit(conn, user["name"], "videoni tahrirladi", f"#{vid} {title} → {editor}")
     conn.commit()
     row = conn.execute("SELECT * FROM videos WHERE id=?", (vid,)).fetchone()
@@ -2604,9 +2614,11 @@ def api_video_action(user, vid, b):
 
     if action == "montaj_done" and (ex["editor"] == user["name"] or role in ADMIN_ROLES):
         conn.execute(
-            "UPDATE videos SET status='montaj_qilindi', drive_link=?, note=?, montaj_at=? WHERE id=?",
-            (b.get("drive_link") or ex["drive_link"], b.get("note") or ex["note"], now_local(), vid),
+            "UPDATE videos SET status='montaj_qilindi', drive_link=?, note=?, montaj_at=?, "
+            "montaj_first_at=COALESCE(NULLIF(montaj_first_at,''), ?) WHERE id=?",
+            (b.get("drive_link") or ex["drive_link"], b.get("note") or ex["note"], now_local(), now_local(), vid),
         )
+        _montaj_sweep(conn, vid)   # 3 kundan keyin tugatilgan bo'lsa — jarima yoziladi
         log_audit(conn, user["name"], "montaj tugatdi", f"#{vid} {ex['title']}")
         send_telegram(f"🎞 <b>Montaj tugatildi</b>\n{ex['title']}\n👤 {ex['editor']}\n→ Sifat nazoratiga")
     elif action == "qc_ok" and is_qc_approver(user):
@@ -2674,6 +2686,7 @@ def api_video_action(user, vid, b):
         log_audit(conn, user["name"], "video qaytardi", f"#{vid} {ex['title']}")
         send_telegram(f"↩️ <b>Video qaytarildi</b>\n{ex['title']}\n👤 {ex['editor']}\n👮 {user['name']}")
     elif action == "cancel" and role == "ceo":   # 2026-11-09: biriktirishni faqat CEO bekor qiladi
+        _montaj_sweep(conn, vid)   # muddati o'tib bo'lgan bo'lsa, jarima bekor qilish bilan yo'qolmasin
         conn.execute(
             "UPDATE videos SET status='bekor_qilindi', note=? WHERE id=?",
             (b.get("note") or ex["note"], vid),
@@ -2878,7 +2891,7 @@ def editor_summary(conn, name, ym=None):
         else:
             _qday = uz_today()
         reels_quota_penalty, _ = _reels_quota_penalty(conn, name, _qday)
-        earned = montaj_earned - reels_quota_penalty + vb_bonus
+        earned = montaj_earned - reels_quota_penalty - _montaj_late_penalty(conn, name, ym)[0] + vb_bonus
     by_project = {}
     for v in accepted_m:
         by_project[v["project"]] = by_project.get(v["project"], 0) + 1
@@ -2900,6 +2913,7 @@ def editor_summary(conn, name, ym=None):
         "earned": earned,
         "montajEarned": montaj_earned,
         "reelsQuotaPenalty": reels_quota_penalty,
+        "montajLatePenalty": _montaj_late_penalty(conn, name, ym)[0],
         "monthlyVolumeCount": vb_count,
         "monthlyVolumeBonus": vb_bonus,
         "monthlyVolumeTarget": MONTHLY_VOLUME_BONUS_TARGET,
@@ -5883,6 +5897,73 @@ def _set_ceo_chat_id(conn, chat_id):
     conn.execute("INSERT INTO settings (skey, svalue) VALUES ('ceo_chat_id', ?)", (str(chat_id),))
 
 
+# Biriktirilgan montaj 3 kun ichida tugatilmasa — montajchiga jarima (2026-11-09).
+# Sabab: montajchilar ulgurmasa/qilolmasa biriktirishni bekor qildirib qo'yishardi.
+MONTAJ_LATE_DAYS = 3
+MONTAJ_LATE_FINE = 10000
+MONTAJ_LATE_START = "2026-11-09"   # shu sanadan keyin biriktirilgan videolar uchun (retroaktiv emas)
+
+
+def _montaj_deadline(v):
+    """Montaj muddati: biriktirilgandan 3 kun; qo'lda/rejadagi due_at undan keyin bo'lsa — o'sha."""
+    a = _parse_dt(v.get("assigned_at"))
+    if not a:
+        return None
+    dl = a + datetime.timedelta(days=MONTAJ_LATE_DAYS)
+    due = _parse_dt(v.get("due_at"))
+    return max(dl, due) if due else dl
+
+
+def _montaj_late_candidates(conn, editor=None, vid=None):
+    """Hozirgi holat bo'yicha 3 kunlik muddatni buzgan videolar: [(video_id, editor, ym)].
+    Kech: muddatdan keyin birinchi marta montaj qilingan YOKI hali montaj qilinmagan."""
+    sql = ("SELECT id, editor, status, assigned_at, due_at, montaj_first_at, montaj_at FROM videos "
+           "WHERE assigned_at IS NOT NULL AND assigned_at>=? AND COALESCE(editor,'')<>'' "
+           "AND status<>'bekor_qilindi'")
+    params = [MONTAJ_LATE_START]
+    if editor:
+        sql += " AND editor=?"
+        params.append(editor)
+    if vid:
+        sql += " AND id=?"
+        params.append(vid)
+    now = _parse_dt(now_local())
+    out = []
+    for r in conn.execute(sql, tuple(params)).fetchall():
+        r = dict(r)
+        dl = _montaj_deadline(r)
+        if not dl:
+            continue
+        first = _parse_dt(r.get("montaj_first_at") or r.get("montaj_at"))
+        late = (first > dl) if first else (r["status"] in ("biriktirildi", "qaytarildi") and now and now > dl)
+        if late:
+            out.append((r["id"], r["editor"], dl.strftime("%Y-%m")))
+    return out
+
+
+def _montaj_sweep(conn, vid=None):
+    """Kechikkan videolar uchun jarimani bazaga YOZIB qo'yadi (bekor qilish/boshqaga o'tkazishdan
+    oldin chaqiriladi — keyin dalil yo'qolmasligi uchun). Chaqiruvchi commit qiladi."""
+    for v_id, ed, ym in _montaj_late_candidates(conn, vid=vid):
+        if not conn.execute("SELECT 1 FROM montaj_late_fines WHERE video_id=? AND editor=?", (v_id, ed)).fetchone():
+            conn.execute("INSERT INTO montaj_late_fines (video_id, editor, ym, amount) VALUES (?,?,?,?)",
+                         (v_id, ed, ym, MONTAJ_LATE_FINE))
+
+
+def _montaj_late_penalty(conn, name, ym):
+    """Shu oy uchun montajchining 3 kunlik muddat jarimasi: (summa, soni).
+    Bazaga yozilgan jarimalar + hali yozilmagan (jonli hisoblangan) kechikishlar."""
+    stored = {r["video_id"]: r["amount"] for r in conn.execute(
+        "SELECT video_id, amount FROM montaj_late_fines WHERE editor=? AND ym=?", (name, ym)).fetchall()}
+    total = sum(stored.values())
+    cnt = len(stored)
+    for v_id, ed, c_ym in _montaj_late_candidates(conn, editor=name):
+        if c_ym == ym and v_id not in stored:
+            total += MONTAJ_LATE_FINE
+            cnt += 1
+    return total, cnt
+
+
 def _reels_quota_penalty(conn, name, today):
     """Kunlik 2 ta reels normasi (REELS_QUOTA_START_DATE'dan, shu oy uchun).
     Har kun (yakshanba/otpusk/tashqarida-syomka kunlaridan tashqari) uchun
@@ -6267,6 +6348,10 @@ def compute_salary(conn, name, rate, ym=None):
         if rq_pen > 0:
             comps.append({"label": f"Kunlik 2 reels normasi bajarilmadi ({sum(s for _, s in rq_short)} ta video, {len(rq_short)} kun)",
                           "amount": -rq_pen, "kind": "penalty"})
+        ml_pen, ml_cnt = _montaj_late_penalty(conn, name, ym)
+        if ml_pen > 0:
+            comps.append({"label": f"Montaj {MONTAJ_LATE_DAYS} kunda tugatilmadi ({ml_cnt} ta video)",
+                          "amount": -ml_pen, "kind": "penalty"})
         if ym >= MONTHLY_VOLUME_BONUS_START_DATE[:7]:
             vb_count = conn.execute(
                 "SELECT COUNT(*) AS c FROM videos WHERE editor=? AND approved_at LIKE ? "
@@ -6421,6 +6506,9 @@ def _employee_month_report(conn, name, ym, rate, editor_names):
         if s["reelsQuotaPenalty"]:
             lines.append(f"   • Kunlik reels normasi jarimasi: -{som(s['reelsQuotaPenalty'])}")
             penalties += s["reelsQuotaPenalty"]
+        if s["montajLatePenalty"]:
+            lines.append(f"   • Montaj {MONTAJ_LATE_DAYS} kunda tugatilmadi jarimasi: -{som(s['montajLatePenalty'])}")
+            penalties += s["montajLatePenalty"]
         if s["monthlyVolumeBonus"]:
             lines.append(f"   • Oylik hajm bonusi ({s['monthlyVolumeCount']}/{s['monthlyVolumeTarget']}+ video): "
                           f"+{som(s['monthlyVolumeBonus'])}")

@@ -2955,6 +2955,7 @@ function editorCard(e) {
       <div class="money-rows">
         <div class="mrow"><span>Hisoblangan</span><b>${money(e.earned)}</b></div>
         ${e.reelsQuotaPenalty ? `<div class="mrow"><span style="color:var(--red)">Kunlik 2 reels normasi jarimasi</span><b style="color:var(--red)">−${money(e.reelsQuotaPenalty)}</b></div>` : ''}
+        ${e.montajLatePenalty ? `<div class="mrow"><span style="color:var(--red)">Montaj 3 kunda tugatilmadi (jarima)</span><b style="color:var(--red)">−${money(e.montajLatePenalty)}</b></div>` : ''}
         <div class="mrow"><span>To'langan</span><b style="color:var(--green)">${money(e.paid)}</b></div>
         <div class="mrow big"><span>Qolgan</span><b style="color:var(--orange)">${money(e.remaining)}</b></div>
       </div>
