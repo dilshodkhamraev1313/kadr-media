@@ -594,9 +594,15 @@ REELS_QUOTA_START_DATE = "2026-09-29"
 # emas) MONTHLY_VOLUME_BONUS_TARGET tagacha qabul qilingan video bo'lsa,
 # ustiga bir martalik qo'shimcha bonus. 2026-10-01'dan boshlab (2026-09-30
 # CEO bilan kelishilgan qaror — retrospektiv emas, kelgusi to'liq oydan).
-MONTHLY_VOLUME_BONUS_TARGET = 60
-MONTHLY_VOLUME_BONUS_AMOUNT = 1000000
+MONTHLY_VOLUME_BONUS_TARGET = 60           # BOSHLANG'ICH norma (1-bosqich)
+MONTHLY_VOLUME_BONUS_AMOUNT = 1000000      # har bosqichda bir xil
 MONTHLY_VOLUME_BONUS_START_DATE = "2026-10-01"
+# 2026-11-17: bonus qo'lga kiritilsa, keyingi oy norma +10 ta ko'tariladi (60 → 70 → 80 ...),
+# puli o'zgarmaydi. Bonus olinmagan oyda bosqich o'zgarmaydi (norma shu holda qoladi).
+MONTHLY_VOLUME_BONUS_STEP = 10
+# Ichki (Kadr Studio / Kadr Media) videolar oylik bonus hisobiga shu oydan kiradi.
+# Undan oldingi oylar (oktabr) o'sha paytdagi qoida bilan — ichkisiz — hisoblanadi.
+VOLUME_INTERNAL_INCLUDED_FROM = "2026-11"
 
 # Kunlik 2 ta reels normasidan ozod: montaj ularning asosiy ishi emas (faqat
 # vaqti yetsa qiladi), shuning uchun majburiy norma/jarima tegishli emas.
@@ -2857,6 +2863,30 @@ def api_restore_video_pay(user, vid):
 # ============================================================
 #  MONTAJCHILAR KABINETI + STATISTIKA
 # ============================================================
+def _volume_month_count(conn, name, ym):
+    """Shu oy bonus uchun sanaladigan videolar soni (qabul qilingan; belgilangan narxli
+    Claude/obloshka turlari kirmaydi; ichki videolar VOLUME_INTERNAL_INCLUDED_FROM'dan kiradi)."""
+    sql = ("SELECT COUNT(*) AS c FROM videos WHERE editor=? AND approved_at LIKE ? "
+           "AND status IN ('qabul_qilindi','joylandi') AND COALESCE(vtype,'reels') NOT IN " + _NO_RANK_SQL)
+    if ym < VOLUME_INTERNAL_INCLUDED_FROM:
+        sql += " AND " + _INTERNAL_SQL
+    return conn.execute(sql, (name, ym + "%")).fetchone()["c"] or 0
+
+
+def _volume_target(conn, name, ym):
+    """Shu oy uchun bonus normasi: 60 + 10 × (shu oygacha bonus olingan oylar soni)."""
+    y, m = (int(x) for x in MONTHLY_VOLUME_BONUS_START_DATE[:7].split("-"))
+    stage = 0
+    while f"{y:04d}-{m:02d}" < ym:
+        t = MONTHLY_VOLUME_BONUS_TARGET + MONTHLY_VOLUME_BONUS_STEP * stage
+        if _volume_month_count(conn, name, f"{y:04d}-{m:02d}") >= t:
+            stage += 1
+        m += 1
+        if m > 12:
+            y, m = y + 1, 1
+    return MONTHLY_VOLUME_BONUS_TARGET + MONTHLY_VOLUME_BONUS_STEP * stage
+
+
 def editor_summary(conn, name, ym=None):
     """ym berilmasa — joriy oy. Arxiv uchun o'tgan oy ('2026-10') beriladi."""
     cur_ym = uz_now().strftime("%Y-%m")
@@ -2870,10 +2900,10 @@ def editor_summary(conn, name, ym=None):
     # Oylik hajm bonusi — barcha turdagi video birga, MONTHLY_VOLUME_BONUS_TARGET
     # tagacha yetsa bir martalik qo'shimcha (compute_salary ichida SALARY
     # xodimlar uchun ham hisoblanadi — bu yerda faqat ko'rsatish/piece-rate uchun).
-    vb_count = len([v for v in accepted_m if not _internal_kind(v.get("project"))
-                    and v.get("vtype") not in FIXED_PRICE_VTYPES])
+    vb_count = _volume_month_count(conn, name, ym)
+    vb_target = _volume_target(conn, name, ym)
     vb_bonus = MONTHLY_VOLUME_BONUS_AMOUNT if (
-        ym >= MONTHLY_VOLUME_BONUS_START_DATE[:7] and vb_count >= MONTHLY_VOLUME_BONUS_TARGET) else 0
+        ym >= MONTHLY_VOLUME_BONUS_START_DATE[:7] and vb_count >= vb_target) else 0
     # Salaried montajchi (SALARYda bor) uchun "ishlagan" = TO'LIQ oylik maosh
     # (fiksa+intizom+montaj+...), aks holda (sof piece-rate) faqat montaj puli.
     reels_quota_penalty = 0
@@ -2916,7 +2946,7 @@ def editor_summary(conn, name, ym=None):
         "montajLatePenalty": _montaj_late_penalty(conn, name, ym)[0],
         "monthlyVolumeCount": vb_count,
         "monthlyVolumeBonus": vb_bonus,
-        "monthlyVolumeTarget": MONTHLY_VOLUME_BONUS_TARGET,
+        "monthlyVolumeTarget": vb_target,
         "monthlyVolumeBonusAmount": MONTHLY_VOLUME_BONUS_AMOUNT,
         "paid": paid,
         "remaining": earned - paid,
@@ -6353,12 +6383,10 @@ def compute_salary(conn, name, rate, ym=None):
             comps.append({"label": f"Montaj {MONTAJ_LATE_DAYS} kunda tugatilmadi ({ml_cnt} ta video)",
                           "amount": -ml_pen, "kind": "penalty"})
         if ym >= MONTHLY_VOLUME_BONUS_START_DATE[:7]:
-            vb_count = conn.execute(
-                "SELECT COUNT(*) AS c FROM videos WHERE editor=? AND approved_at LIKE ? "
-                "AND status IN ('qabul_qilindi','joylandi') AND COALESCE(vtype,'reels') NOT IN " + _NO_RANK_SQL +
-                " AND " + _INTERNAL_SQL, (name, ym + "%")).fetchone()["c"] or 0
-            if vb_count >= MONTHLY_VOLUME_BONUS_TARGET:
-                comps.append({"label": f"Oylik hajm bonusi ({vb_count}/{MONTHLY_VOLUME_BONUS_TARGET}+ video)",
+            vb_count = _volume_month_count(conn, name, ym)
+            vb_target = _volume_target(conn, name, ym)
+            if vb_count >= vb_target:
+                comps.append({"label": f"Oylik hajm bonusi ({vb_count}/{vb_target}+ video)",
                               "amount": MONTHLY_VOLUME_BONUS_AMOUNT, "kind": "bonus"})
     if cfg.get("studio_bonus"):
         comps.append({"label": "Studio mijoz bonusi", "amount": _studio_client_bonus(conn), "kind": "auto"})
