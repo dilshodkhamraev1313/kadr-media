@@ -38,7 +38,7 @@ const LEAD_STAGES = {
   taklif: '📨 Taklif yuborildi', mijoz: '✅ Mijoz bo\'ldi', rad: '❌ Rad etildi',
 };
 const LEAD_STAGE_ORDER = ['yangi', 'boglanildi', 'qiziqdi', 'taklif', 'mijoz', 'rad'];
-const CRM_USERS = ['Nodira'];
+const CRM_USERS = ['Gulro'];
 const LEAD_SOURCES = {
   reklama: 'Instagram/Telegram reklama', tavsiya: 'Tavsiya',
   sovuq: 'Sovuq qidiruv', boshqa: 'Sayt/boshqa',
@@ -305,8 +305,8 @@ const NAV_ITEMS = [
   { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
-  { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Gulmira', 'Samandar', 'Xonzoda', 'Sardor', 'Umid', 'Shodiya', 'Xayrulloh', 'Fazliddin', 'Muhammadyusuf'] },
-  { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Samandar', 'Gulmira', 'Xonzoda', 'Shodiya', 'Umid', 'Nodira'] },
+  { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Gulmira', 'Samandar', 'Xonzoda', 'Sardor', 'Umid', 'Shodiya', 'Xayrulloh', 'Fazliddin', 'Muhammadyusuf', 'Gulro'] },
+  { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Samandar', 'Gulmira', 'Xonzoda', 'Shodiya', 'Umid', 'Nodira', 'Gulro'] },
   { view: 'stats',     icon: '📈', label: 'Oylik statistika', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'reyting',   icon: '🏆', label: 'Reyting',        roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'shootstat', icon: '⏱', label: 'Syomka soatlari', roles: ['ceo', 'coordinator', 'lead'] },

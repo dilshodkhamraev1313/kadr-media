@@ -198,7 +198,7 @@ DEFAULT_PLAYBOOKS = {
 STUDIO_NO_INCOME_TYPES = ("kadr_media",)
 STUDIO_OPERATORS = ("Samandar", "Umid", "Shodiya")  # Shodiya ba'zida operatorlik qiladi (2026-10-03: saqlab qolindi)
 # Sotuv operatorlari — CRM (lid) bo'limiga kirish huquqi. Kelajakda ko'payadi.
-CRM_USERS = ("Nodira",)
+CRM_USERS = ("Gulro",)   # 2026-11-17: Nodira o'rniga Gulro
 LEAD_STAGES = {
     "yangi":      "🆕 Yangi",
     "boglanildi": "📞 Bog'lanildi",
@@ -290,7 +290,7 @@ DEFAULT_CHECKLIST = {
 
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
 ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar", "Nodira", "Xayrulloh", "Fazliddin",
-                    "Muhammadyusuf")
+                    "Muhammadyusuf", "Gulro")
 TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
@@ -340,6 +340,7 @@ JOIN_DATE = {
     "Xayrulloh": "2026-10-01",  # yangi ishga olindi
     "Fazliddin": "2026-10-06",  # yangi ishga olindi (Xayrulloh bilan bir xil sharoit)
     "Muhammadyusuf": "2026-11-03",  # Fiksa/Intizom tizimiga shu sanadan o'tdi
+    "Gulro": "2026-11-17",     # Nodira o'rniga yangi sotuv operatori
 }
 # Maosh (SALARY) tizimiga o'tgan oy: undan OLDINGI oylar dona-hisobda (piece-rate) qoladi
 # — arxivlangan oktabr o'zgarmasligi uchun.
@@ -512,6 +513,8 @@ SALARY = {
                 "lead": True, "montaj": True, "operator": True, "creative_strategist": True},
     # Sotuv operatori — komissiya (% sotuvdan) hali kelishilmagan, keyin qo'shiladi.
     "Nodira": {"title": "Sotuv operatori", "som": {"Fiksa": 1000000, "Intizom": 500000}},
+    # Gulro (2026-11-17, Nodira o'rniga): Fiksa 1 mln + Intizom 500k (+ mukammal davomat 500k) + sotuvdan % (keyin aniqlanadi)
+    "Gulro": {"title": "Sotuv operatori", "som": {"Fiksa": 1000000, "Intizom": 500000}},
     # Kun yarmidan keladi — ATTENDANCE_USERS'da (Fiksa kunlik hisoblansin
     # uchun) va LATE_SCHEDULE_EXEMPT'da (kech kelishi jarima keltirmasin
     # uchun). Intizom yo'q — faqat Fiksa (kunlik) + montaj puli.
@@ -831,6 +834,7 @@ TEAM = [
     # Sotuv operatori — komissiya modeli hali kelishilmagan, hozircha faqat
     # Fiksa+Intizom (SALARY pastda). Sotuv kabineti keyin qo'shiladi.
     ("Nodira",           "nodira",  "nodira2026","sales",      "Sotuv operatori",         "#FF6B00", None),
+    ("Gulro",            "gulro",   "gulro2026", "sales",      "Sotuv operatori",         "#FF6B00", None),
     # SMM menejer (faqat joylash)
     ("Aisha",            "aisha",   "aisha2026","smm",         "SMM menejer · Joylash",   "#FF2D55", None),
     # Jarvis (AI yordamchi, Kadr Jarvis OS loyihasi) — coordinator darajasi: operatsion
@@ -1409,6 +1413,11 @@ def freeze_departed_users(conn):
     conn.execute(
         f"DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE name IN ({ph}))",
         list(FROZEN_USERS))
+    # 2026-11-17: Nodira o'rniga Gulro — Nodira'ning OCHIQ lidlari (mijoz bo'lmagan/rad etilmagan)
+    # yangi sotuv operatoriga o'tadi (idempotent). Yopilgan lidlar tarix sifatida qoladi.
+    if "Nodira" in FROZEN_USERS and CRM_USERS and CRM_USERS[0] != "Nodira":
+        conn.execute("UPDATE leads SET assigned_to=? WHERE assigned_to='Nodira' AND stage NOT IN ('mijoz','rad')",
+                     (CRM_USERS[0],))
     conn.commit()
 
 
