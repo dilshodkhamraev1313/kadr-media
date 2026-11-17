@@ -295,7 +295,7 @@ TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
     "pardaboyev_samandar": "Samandar", "nbyva_929": "Nodira",
-    "uzbawr": "Xayrulloh", "fx4040": "Fazliddin", "raxmatjanov_m": "Muhammadyusuf",
+    "uzbawr": "Xayrulloh", "fx4040": "Fazliddin", "raxmatjanov_m": "Muhammadyusuf", "musfira_25": "Gulro",
 }
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
@@ -316,7 +316,7 @@ VIDEO_CHECKIN_ENABLED = False  # 2026-09-24: WiFi-geofence pilot davrida vaqtinc
 # tegishli emas — ular hali ham faqat WiFi orqali belgilanadi).
 # 2026-10-10: shu qoida Fazliddin (Android) uchun — dumaloq video bilan keldi deb belgilanadi.
 # 2026-11-03: Muhammadyusuf ham Android — dumaloq video bilan keldi deb belgilanadi.
-VIDEO_CHECKIN_EXEMPT = ("Fazliddin", "Muhammadyusuf")
+VIDEO_CHECKIN_EXEMPT = ("Fazliddin", "Muhammadyusuf", "Gulro")   # Gulro (@musfira_25) ham Android
 GEOFENCE_TOKENS = {
     "xM8uvINfcyixJ8BXBwNuTeXq": "Dilshod Khamraev",  # pilot/sinov uchun
     "aNQSgSVZPXJjnFs0Mfj4EGFh": "Gulmira",
