@@ -67,6 +67,7 @@ VIDEO_TYPES = {
     "claude_reels": "Claude reels montaj",
     "claude_podcast": "Claude podcast montaj",
     "oblojka":   "Obloshka",
+    "capcut":    "CapCut montaj",
 }
 # Muhammadyusuf (AI kreator) uchun belgilangan narxli turlar (lavozimga bog'liq emas).
 # Lavozim (rank) ballari va 60 talik oylik hajm bonusiga HISOBLANMAYDI —
@@ -292,12 +293,13 @@ DEFAULT_CHECKLIST = {
 
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
 ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar", "Nodira", "Xayrulloh", "Fazliddin",
-                    "Muhammadyusuf", "Gulro")
+                    "Muhammadyusuf", "Gulro", "Abdulloh")
 TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
     "pardaboyev_samandar": "Samandar", "nbyva_929": "Nodira",
     "uzbawr": "Xayrulloh", "fx4040": "Fazliddin", "raxmatjanov_m": "Muhammadyusuf", "musfira_25": "Gulro",
+    "shuxrativicc": "Abdulloh",
 }
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
@@ -343,6 +345,7 @@ JOIN_DATE = {
     "Fazliddin": "2026-10-06",  # yangi ishga olindi (Xayrulloh bilan bir xil sharoit)
     "Muhammadyusuf": "2026-11-03",  # Fiksa/Intizom tizimiga shu sanadan o'tdi
     "Gulro": "2026-11-17",     # Nodira o'rniga yangi sotuv operatori
+    "Abdulloh": "2026-11-18",  # yangi SMM mutaxassis
 }
 # Maosh (SALARY) tizimiga o'tgan oy: undan OLDINGI oylar dona-hisobda (piece-rate) qoladi
 # — arxivlangan oktabr o'zgarmasligi uchun.
@@ -468,7 +471,7 @@ LATENESS_PENALTY_PER_DAY = 20000  # 4-martadan boshlab har kechikkan kun uchun q
 # dumaloq video Fiksa uchun ishlatiladi), lekin umuman kelmagan kunlar
 # baribir jarima limitiga kiradi. Murod, Xayrulloh — kun yarmidan (taxminan
 # tushdan keyin) keladi.
-LATE_SCHEDULE_EXEMPT = ("Xonzoda", "Shodiya", "Xayrulloh", "Fazliddin")
+LATE_SCHEDULE_EXEMPT = ("Xonzoda", "Shodiya", "Xayrulloh", "Fazliddin", "Abdulloh")
 PERFECT_ATTENDANCE_BONUS = 500000  # butun oy (yakshanbadan tashqari) 100% vaqtida kelsa bonus
 OTPUSK_DAYS = 2                   # bir martalik otpusk davomiyligi (kun)
 OTPUSK_COOLDOWN_MONTHS = 1        # otpuskdan otpuskgacha eng kam oraliq (har oyda 1 marta)
@@ -525,6 +528,10 @@ SALARY = {
     "Fazliddin": {"title": "Montajchi", "som": {"Fiksa": 500000}, "montaj": True},   # Xayrulloh bilan bir xil
     # AI kreator (2026-11-03 dan): Fiksa + Intizom (+ mukammal davomat bonusi umumiy qoida)
     # + dona-hisobdagi montaj puli (AI video, Claude reels/podcast, obloshka). Android — dumaloq video.
+    # SMM mutaxassis (2026-11-18): obloshka, reels joylash, opisaniya, captions, persona retushi — Fiksa ichida.
+    # Dona-hisobda: obloshka 5k (belgilangan), AI video va CapCut montaj 25k dan (lavozim bo'yicha).
+    # Intizom yo'q — abetdan keyin keladi (kech qolish jarimasi yo'q, Xonzoda/Shodiya kabi).
+    "Abdulloh": {"title": "SMM mutaxassis + montajchi", "som": {"Fiksa": 1000000}, "montaj": True},
     "Muhammadyusuf": {"title": "AI kreator + Claude montajchi", "som": {"Fiksa": 500000, "Intizom": 500000},
                       "montaj": True},
 }
@@ -560,12 +567,12 @@ RANKS = [
 # Lavozim + video turi bo'yicha montajyor haqi (so'm). Pul shu jadval bo'yicha
 # avtomatik hisoblanadi — montajyor lavozimi qancha baland bo'lsa, haqi shuncha ko'p.
 RANK_PRICES = {
-    "junior":  {"reels": 25000, "podcast": 200000, "youtube": 25000, "ai_video": 25000, "ai_karusel": 25000},
-    "pro":     {"reels": 35000, "podcast": 250000, "youtube": 35000, "ai_video": 35000, "ai_karusel": 35000},
-    "elite":   {"reels": 50000, "podcast": 300000, "youtube": 50000, "ai_video": 50000, "ai_karusel": 50000},
-    "master":  {"reels": 60000, "podcast": 350000, "youtube": 60000, "ai_video": 60000, "ai_karusel": 60000},
-    "legenda": {"reels": 70000, "podcast": 400000, "youtube": 70000, "ai_video": 70000, "ai_karusel": 70000},
-    "titan":   {"reels": 80000, "podcast": 450000, "youtube": 80000, "ai_video": 80000, "ai_karusel": 80000},
+    "junior":  {"reels": 25000, "podcast": 200000, "youtube": 25000, "ai_video": 25000, "ai_karusel": 25000, "capcut": 25000},
+    "pro":     {"reels": 35000, "podcast": 250000, "youtube": 35000, "ai_video": 35000, "ai_karusel": 35000, "capcut": 35000},
+    "elite":   {"reels": 50000, "podcast": 300000, "youtube": 50000, "ai_video": 50000, "ai_karusel": 50000, "capcut": 50000},
+    "master":  {"reels": 60000, "podcast": 350000, "youtube": 60000, "ai_video": 60000, "ai_karusel": 60000, "capcut": 60000},
+    "legenda": {"reels": 70000, "podcast": 400000, "youtube": 70000, "ai_video": 70000, "ai_karusel": 70000, "capcut": 70000},
+    "titan":   {"reels": 80000, "podcast": 450000, "youtube": 80000, "ai_video": 80000, "ai_karusel": 80000, "capcut": 80000},
 }
 for _rk in RANK_PRICES.values():
     _rk.update(FIXED_PRICE_VTYPES)
@@ -583,7 +590,7 @@ def eff_count(name, accepted):
 
 
 # Montaj deadline (biriktirilgandan qabulgacha). Kechiksa: reels — pul yo'q, podcast/youtube — yarim.
-DEADLINE_HOURS = {"reels": 24, "podcast": 48, "youtube": 48, "ai_video": 48, "ai_karusel": 48,
+DEADLINE_HOURS = {"reels": 24, "podcast": 48, "youtube": 48, "ai_video": 48, "ai_karusel": 48, "capcut": 48,
                   "claude_reels": 24, "claude_podcast": 48, "oblojka": 24}
 REELS_PER_DAY = 3  # montajchiga kuniga nechta reels deadline (24 soatlik) qo'yiladi
 
@@ -837,6 +844,7 @@ TEAM = [
     # Fiksa+Intizom (SALARY pastda). Sotuv kabineti keyin qo'shiladi.
     ("Nodira",           "nodira",  "nodira2026","sales",      "Sotuv operatori",         "#FF6B00", None),
     ("Gulro",            "gulro",   "gulro2026", "sales",      "Sotuv operatori",         "#FF6B00", None),
+    ("Abdulloh",         "abdulloh","abdulloh2026","editor",   "SMM mutaxassis",          "#FF2D55", None),
     # SMM menejer (faqat joylash)
     ("Aisha",            "aisha",   "aisha2026","smm",         "SMM menejer · Joylash",   "#FF2D55", None),
     # Jarvis (AI yordamchi, Kadr Jarvis OS loyihasi) — coordinator darajasi: operatsion
@@ -6540,7 +6548,7 @@ def api_payroll(user, ym=None):
 
 
 VTYPE_LABEL = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video",
-               "ai_video": "AI video", "ai_karusel": "AI karusel", **{k: VIDEO_TYPES[k] for k in FIXED_PRICE_VTYPES}}
+               "ai_video": "AI video", "ai_karusel": "AI karusel", "capcut": "CapCut montaj", **{k: VIDEO_TYPES[k] for k in FIXED_PRICE_VTYPES}}
 
 
 def _all_employee_names(conn):
