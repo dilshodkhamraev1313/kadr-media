@@ -41,7 +41,7 @@ const LEAD_STAGE_ORDER = ['yangi', 'boglanildi', 'qiziqdi', 'taklif', 'mijoz', '
 const CRM_USERS = ['Gulro'];
 const LEAD_SOURCES = {
   reklama: 'Instagram/Telegram reklama', tavsiya: 'Tavsiya',
-  sovuq: 'Sovuq qidiruv', boshqa: 'Sayt/boshqa',
+  sovuq: 'Sovuq qidiruv', boshqa: 'Sayt/boshqa', sayt: 'Premium sayt (target)',
 };
 // Bron rangi MANBA bo'yicha: Kadr Studio = tilla, Kadr Media = ko'k (adashmaslik uchun)
 const SOURCE_COLOR = { studio: '#D4AF37', media: '#0A84FF' };

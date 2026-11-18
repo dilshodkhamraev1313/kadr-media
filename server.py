@@ -7,6 +7,7 @@
 # ============================================================
 
 import json
+import html
 import os
 import sqlite3
 import datetime
@@ -212,6 +213,7 @@ LEAD_SOURCES = {
     "tavsiya": "Tavsiya",
     "sovuq":   "Sovuq qidiruv",
     "boshqa":  "Sayt/boshqa",
+    "sayt":    "Premium sayt (target)",
 }
 
 # Kelib tushgan pullar shaffofligi — kim qabul qildi + qanday usul.
@@ -4145,6 +4147,69 @@ def api_create_lead(user, b):
         f"{_telegram_mention(assigned_to)} — CRM'da ko'ring.",
         thread_id=thread_id)
     return row
+
+
+# ============================================================
+#  OCHIQ LID FORMA — premium landing sayt (auth yo'q)
+# ============================================================
+PUBLIC_BUDGETS = {
+    "lt500":  ("$500 dan kam", 0),
+    "1500":   ("$1 500 – 2 000", 1500),
+    "4000":   ("$4 000+", 4000),
+}
+PUBLIC_WHEN = {"now": "Darhol", "month": "1 oy ichida", "later": "Keyinroq / o'rganyapman"}
+PUBLIC_TYPES = {"personal": "Shaxsiy brend", "company": "Kompaniya brendi"}
+_PUBLIC_HITS = {}
+
+
+def api_public_lead(b, ip):
+    """Saytdagi formadan lid. Spam himoyasi: honeypot + IP bo'yicha limit (10 daqiqada 3 ta)."""
+    if (b.get("website") or "").strip():          # honeypot — bot to'ldirgan
+        return {"ok": True}
+    now_t = time.time()
+    hits = [t for t in _PUBLIC_HITS.get(ip, []) if now_t - t < 600]
+    if len(hits) >= 3:
+        return {"error": "Juda ko'p urinish. Birozdan keyin qayta yuboring."}, 429
+    clip = lambda k, n=120: (str(b.get(k) or "")).strip()[:n]
+    name, phone = clip("name", 80), clip("phone", 30)
+    digits = re.sub(r"\D", "", phone)
+    if len(name) < 2 or len(digits) < 9:
+        return {"error": "Ism va telefon raqamini to'g'ri kiriting."}, 400
+    hits.append(now_t)
+    _PUBLIC_HITS[ip] = hits
+    budget_label, value = PUBLIC_BUDGETS.get(b.get("budget"), ("—", 0))
+    when = PUBLIC_WHEN.get(b.get("when"), "—")
+    btype = PUBLIC_TYPES.get(b.get("brand_type"), "—")
+    field, insta = clip("field"), clip("instagram")
+    utm = clip("utm", 200)
+    hot = b.get("budget") in ("1500", "4000") and b.get("when") in ("now", "month")
+    low = b.get("budget") == "lt500"
+    tag = "🔥 ISSIQ" if hot else ("⚪️ past byudjet" if low else "🟡 o'rta")
+    assigned_to = CRM_USERS[0] if CRM_USERS else "Dilshod Khamraev"
+    conn = get_db()
+    now = now_local()
+    sql = ("INSERT INTO leads (name, phone, source, stage, value_estimate, assigned_to, created_by, created_at, updated_at) "
+           "VALUES (?,?,?,?,?,?,?,?,?)")
+    params = (name, phone, "sayt", "yangi", value, assigned_to, "Sayt", now, now)
+    if IS_PG:
+        lid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        lid = conn.execute(sql, params).lastrowid
+    note = (f"{tag}\nBrend turi: {btype}\nSoha: {field or '—'}\nInstagram: {insta or '—'}\n"
+            f"Oylik byudjet: {budget_label}\nQachon: {when}" + (f"\nUTM: {utm}" if utm else ""))
+    conn.execute("INSERT INTO lead_notes (lead_id, kind, text, created_by, created_at) VALUES (?,?,?,?,?)",
+                 (lid, "note", note, "Sayt", now))
+    log_audit(conn, "Sayt", "saytdan yangi lid", name)
+    conn.commit()
+    conn.close()
+    thread_id = int(CRM_TOPIC_ID) if CRM_TOPIC_ID.isdigit() else None
+    esc_ = lambda x: html.escape(x or "—")
+    send_telegram(
+        f"🆕 <b>Saytdan yangi lid</b> {tag}\n👤 {esc_(name)}\n📞 {esc_(phone)}\n"
+        f"🏷 {esc_(btype)} · {esc_(field)}\n📸 {esc_(insta)}\n💰 {esc_(budget_label)} · ⏱ {esc_(when)}\n"
+        f"{_telegram_mention(assigned_to)} — CRM'da ko'ring.",
+        thread_id=thread_id)
+    return {"ok": True}
 
 
 def api_list_leads(user, stage=None):
@@ -9906,6 +9971,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self._guarded((lambda: self._proxy("GET")) if PROXY_TARGET else self._do_GET)
 
+    def do_OPTIONS(self):
+        # CORS preflight — faqat ochiq sayt formasi uchun
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_POST(self):
         self._guarded((lambda: self._proxy("POST")) if PROXY_TARGET else self._do_POST)
 
@@ -9928,7 +10002,8 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(n) if n > 0 else None
         hdrs = {k: v for k, v in self.headers.items() if k.lower() not in _PROXY_SKIP}
         hdrs["Accept-Encoding"] = "identity"
-        hdrs["X-Forwarded-For"] = self.client_address[0]
+        # Asl mijoz IP saqlanadi (sayt formasi IP-limiti hamma uchun bitta bo'lib qolmasin)
+        hdrs["X-Forwarded-For"] = self.headers.get("X-Forwarded-For") or self.client_address[0]
         req = urllib.request.Request(PROXY_TARGET + self.path, data=body, headers=hdrs, method=method)
         try:
             resp = _PROXY_OPENER.open(req, timeout=95)
@@ -9959,6 +10034,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if getattr(self, "_cors", False):
+            self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
@@ -10276,6 +10353,11 @@ class Handler(BaseHTTPRequestHandler):
         # Telegram webhook — ochiq (bot chaqiradi, auth yo'q)
         if path == "/api/telegram/webhook":
             return self._json(api_telegram_webhook(self._body()))
+        # Premium landing sayt formasi — ochiq (CORS, auth yo'q)
+        if path == "/api/public/lead":
+            self._cors = True
+            ip = (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip()
+            return self._json(api_public_lead(self._body(), ip))
         # Kadr Jarvis OS (mini PC) — o'z tokeni bilan, sessiya auth shart emas
         if path == "/api/studio/timelapse-done":
             b0 = self._body()
