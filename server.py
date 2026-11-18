@@ -328,7 +328,7 @@ VIDEO_CHECKIN_ENABLED = False  # 2026-09-24: WiFi-geofence pilot davrida vaqtinc
 # tegishli emas — ular hali ham faqat WiFi orqali belgilanadi).
 # 2026-10-10: shu qoida Fazliddin (Android) uchun — dumaloq video bilan keldi deb belgilanadi.
 # 2026-11-03: Muhammadyusuf ham Android — dumaloq video bilan keldi deb belgilanadi.
-VIDEO_CHECKIN_EXEMPT = ("Fazliddin", "Muhammadyusuf", "Gulro", "Abdulloh")   # Gulro (@musfira_25) ham Android
+VIDEO_CHECKIN_EXEMPT = ("Fazliddin", "Muhammadyusuf", "Gulro", "Abdulloh", "Hakima")   # Gulro (@musfira_25) ham Android
 GEOFENCE_TOKENS = {
     "xM8uvINfcyixJ8BXBwNuTeXq": "Dilshod Khamraev",  # pilot/sinov uchun
     "aNQSgSVZPXJjnFs0Mfj4EGFh": "Gulmira",
@@ -393,6 +393,8 @@ ATTENDANCE_ONTIME_BACKFILL = {
 }
 # Brif (ertangi reja) talabi shu sanagacha (shu kun ham) qo'llanmaydi — yangi xodim tizimni bilmagan davr.
 BRIEF_GRACE_UNTIL = {"Fazliddin": "2026-10-09"}
+# Brif (ertangi reja) umuman talab qilinmaydigan xodimlar: Hakima (ssenarist, 2026-11-18, CEO qarori).
+BRIEF_EXEMPT = ("Hakima",)
 
 
 def _backfill_attendance(conn):
@@ -5997,7 +5999,7 @@ def _brief_missing_days(conn, name, today):
     """Shu oyda (bugungacha, yakshanba/otpusksiz) 'ertangi kun rejasi' BRIEF_DEADLINE'gacha
     yuborilmagan kunlar ro'yxati — bu kunlar Fiksa/Intizomga kirmaydi. Bugungi kun faqat
     muddat (20:00) o'tgan bo'lsagina hisobga kiradi."""
-    if name not in ATTENDANCE_USERS:
+    if name not in ATTENDANCE_USERS or name in BRIEF_EXEMPT:
         return []
     ym = today.strftime("%Y-%m")
     otpusk = _otpusk_dates_set(conn, name, ym)
@@ -7823,6 +7825,9 @@ def api_brief_today(user):
     """Ertangi kun uchun o'zi yozgan rejani ko'rsatadi (yozganmi, matni, qachon)."""
     if user["name"] not in ATTENDANCE_USERS:
         return {"error": "Sizga tegishli emas"}, 403
+    if user["name"] in BRIEF_EXEMPT:
+        return {"forDate": None, "submitted": True, "exempt": True, "text": "", "submittedAt": None,
+                "deadline": BRIEF_DEADLINE}
     tomorrow = (uz_today() + datetime.timedelta(days=1)).isoformat()
     conn = get_db()
     row = conn.execute("SELECT text, submitted_at FROM daily_briefs WHERE person=? AND for_date=?",
@@ -9199,7 +9204,7 @@ def api_cron_brief_check():
     submitted = {r["person"] for r in conn.execute(
         "SELECT person FROM daily_briefs WHERE for_date=?", (tomorrow,)).fetchall()}
     conn.close()
-    missing = [p for p in _attendance_roster() if p not in submitted]
+    missing = [p for p in _attendance_roster() if p not in submitted and p not in BRIEF_EXEMPT]
     if not missing:
         return {"ok": True, "missing": []}
     mentions = ", ".join(_telegram_mention(p) for p in missing)
