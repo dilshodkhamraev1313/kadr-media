@@ -67,7 +67,6 @@ VIDEO_TYPES = {
     "claude_reels": "Claude reels montaj",
     "claude_podcast": "Claude podcast montaj",
     "oblojka":   "Obloshka",
-    "capcut":    "CapCut montaj",
 }
 # Muhammadyusuf (AI kreator) uchun belgilangan narxli turlar (lavozimga bog'liq emas).
 # Lavozim (rank) ballari va 60 talik oylik hajm bonusiga HISOBLANMAYDI —
@@ -243,7 +242,9 @@ LEADERSHIP_USD_HALF = 25  # deadline o'tib ketgan bo'lsa
 STUDIO_CLIENT_BONUS = 50000  # Gulmiraga studio mijozidan syomkaga kelgani uchun (har bron)
 
 # Kunlik sarhisob yopish majburiyati shu 4 kishida.
-DAILY_CLOSE_USERS = ("Gulmira", "Xonzoda", "Shodiya", "Samandar")
+DAILY_CLOSE_USERS = ("Gulmira", "Xonzoda", "Shodiya", "Samandar", "Abdulloh")
+# Kun yopilmagan ish kuni Fiksaga KIRMAYDI (ertangi reja/brif talabiga qo'shimcha). 2026-11-18: Abdulloh.
+CLOSE_GATES_FIKSA = ("Abdulloh",)
 WORKDAYS_PER_MONTH = 25  # intizom bo'linadigan ish kunlari (yakshanba dam)
 STORIES_PROJECT_USD = 100  # har biriktirilgan "Stories" loyihasi uchun OYLIK maksimal ($/25 kun = kunlik ulush)
 
@@ -275,6 +276,13 @@ DEFAULT_CHECKLIST = {
         "Amarkets — ssenariy/nazorat",
         "Fidda kumush — ssenariy/nazorat",
         "Bugungi ssenariylar yozildi",
+    ],
+    "Abdulloh": [
+        "Obloshkalar tayyorlandi (nechta, qaysi loyiha)",
+        "Reels'lar joylandi + opisaniya yozildi",
+        "Captions (subtitr) qo'yildi",
+        "Persona retushi qilindi",
+        "Montaj (CapCut/AI video) — agar bugun qilgan bo'lsa",
     ],
     "Umida": [
         "Stories joylandi",
@@ -320,7 +328,7 @@ VIDEO_CHECKIN_ENABLED = False  # 2026-09-24: WiFi-geofence pilot davrida vaqtinc
 # tegishli emas — ular hali ham faqat WiFi orqali belgilanadi).
 # 2026-10-10: shu qoida Fazliddin (Android) uchun — dumaloq video bilan keldi deb belgilanadi.
 # 2026-11-03: Muhammadyusuf ham Android — dumaloq video bilan keldi deb belgilanadi.
-VIDEO_CHECKIN_EXEMPT = ("Fazliddin", "Muhammadyusuf", "Gulro")   # Gulro (@musfira_25) ham Android
+VIDEO_CHECKIN_EXEMPT = ("Fazliddin", "Muhammadyusuf", "Gulro", "Abdulloh")   # Gulro (@musfira_25) ham Android
 GEOFENCE_TOKENS = {
     "xM8uvINfcyixJ8BXBwNuTeXq": "Dilshod Khamraev",  # pilot/sinov uchun
     "aNQSgSVZPXJjnFs0Mfj4EGFh": "Gulmira",
@@ -529,7 +537,7 @@ SALARY = {
     # AI kreator (2026-11-03 dan): Fiksa + Intizom (+ mukammal davomat bonusi umumiy qoida)
     # + dona-hisobdagi montaj puli (AI video, Claude reels/podcast, obloshka). Android — dumaloq video.
     # SMM mutaxassis (2026-11-18): obloshka, reels joylash, opisaniya, captions, persona retushi — Fiksa ichida.
-    # Dona-hisobda: obloshka 5k (belgilangan), AI video va CapCut montaj 25k dan (lavozim bo'yicha).
+    # Dona-hisobda: obloshka 5k (belgilangan), AI video va oddiy (CapCut) montaj — reels turi, 25k dan (lavozim bo'yicha, Sardor/Fazliddin kabi).
     # Intizom yo'q — abetdan keyin keladi (kech qolish jarimasi yo'q, Xonzoda/Shodiya kabi).
     "Abdulloh": {"title": "SMM mutaxassis + montajchi", "som": {"Fiksa": 1000000}, "montaj": True},
     "Muhammadyusuf": {"title": "AI kreator + Claude montajchi", "som": {"Fiksa": 500000, "Intizom": 500000},
@@ -567,12 +575,12 @@ RANKS = [
 # Lavozim + video turi bo'yicha montajyor haqi (so'm). Pul shu jadval bo'yicha
 # avtomatik hisoblanadi — montajyor lavozimi qancha baland bo'lsa, haqi shuncha ko'p.
 RANK_PRICES = {
-    "junior":  {"reels": 25000, "podcast": 200000, "youtube": 25000, "ai_video": 25000, "ai_karusel": 25000, "capcut": 25000},
-    "pro":     {"reels": 35000, "podcast": 250000, "youtube": 35000, "ai_video": 35000, "ai_karusel": 35000, "capcut": 35000},
-    "elite":   {"reels": 50000, "podcast": 300000, "youtube": 50000, "ai_video": 50000, "ai_karusel": 50000, "capcut": 50000},
-    "master":  {"reels": 60000, "podcast": 350000, "youtube": 60000, "ai_video": 60000, "ai_karusel": 60000, "capcut": 60000},
-    "legenda": {"reels": 70000, "podcast": 400000, "youtube": 70000, "ai_video": 70000, "ai_karusel": 70000, "capcut": 70000},
-    "titan":   {"reels": 80000, "podcast": 450000, "youtube": 80000, "ai_video": 80000, "ai_karusel": 80000, "capcut": 80000},
+    "junior":  {"reels": 25000, "podcast": 200000, "youtube": 25000, "ai_video": 25000, "ai_karusel": 25000},
+    "pro":     {"reels": 35000, "podcast": 250000, "youtube": 35000, "ai_video": 35000, "ai_karusel": 35000},
+    "elite":   {"reels": 50000, "podcast": 300000, "youtube": 50000, "ai_video": 50000, "ai_karusel": 50000},
+    "master":  {"reels": 60000, "podcast": 350000, "youtube": 60000, "ai_video": 60000, "ai_karusel": 60000},
+    "legenda": {"reels": 70000, "podcast": 400000, "youtube": 70000, "ai_video": 70000, "ai_karusel": 70000},
+    "titan":   {"reels": 80000, "podcast": 450000, "youtube": 80000, "ai_video": 80000, "ai_karusel": 80000},
 }
 for _rk in RANK_PRICES.values():
     _rk.update(FIXED_PRICE_VTYPES)
@@ -590,7 +598,7 @@ def eff_count(name, accepted):
 
 
 # Montaj deadline (biriktirilgandan qabulgacha). Kechiksa: reels — pul yo'q, podcast/youtube — yarim.
-DEADLINE_HOURS = {"reels": 24, "podcast": 48, "youtube": 48, "ai_video": 48, "ai_karusel": 48, "capcut": 48,
+DEADLINE_HOURS = {"reels": 24, "podcast": 48, "youtube": 48, "ai_video": 48, "ai_karusel": 48,
                   "claude_reels": 24, "claude_podcast": 48, "oblojka": 24}
 REELS_PER_DAY = 3  # montajchiga kuniga nechta reels deadline (24 soatlik) qo'yiladi
 
@@ -5952,6 +5960,28 @@ BRIEF_REMINDER_TIME = "18:00"   # shu vaqtda hali yozmaganlarga eslatma
 BRIEF_START_DATE = "2026-08-20"  # talab shu sanadan boshlab qo'llaniladi (retroaktiv emas)
 
 
+def _unclosed_days(conn, name, today):
+    """CLOSE_GATES_FIKSA xodimlari uchun: shu oyda kun sarhisobi YOPILMAGAN ish kunlari
+    (yakshanba/otpusksiz). Joriy oyda bugun hali hisobga kirmaydi (kun oxirida yopiladi);
+    o'tgan (arxivlanayotgan) oyda oxirgi kun ham kiradi."""
+    if name not in CLOSE_GATES_FIKSA:
+        return []
+    ym = today.strftime("%Y-%m")
+    real = uz_today()
+    past_month = ym < real.strftime("%Y-%m")
+    closed = _closed_dates(conn, name, ym)
+    otpusk = _otpusk_dates_set(conn, name, ym)
+    out = []
+    d = _effective_month_start(name, today)
+    end = _effective_month_end(name, today)
+    while d <= end:
+        iso = d.isoformat()
+        if d.weekday() != 6 and iso not in otpusk and iso not in closed and (past_month or d < real):
+            out.append(iso)
+        d += datetime.timedelta(days=1)
+    return out
+
+
 def _brief_missing_days(conn, name, today):
     """Shu oyda (bugungacha, yakshanba/otpusksiz) 'ertangi kun rejasi' BRIEF_DEADLINE'gacha
     yuborilmagan kunlar ro'yxati — bu kunlar Fiksa/Intizomga kirmaydi. Bugungi kun faqat
@@ -6363,15 +6393,19 @@ def compute_salary(conn, name, rate, ym=None):
             # bo'lgani uchun ular ikkinchi marta ayrilib, kelgan kunlar ham yo'qolardi.
             _dd = _month_attendance_days(conn, name, today)
             _miss = set(brief_missed)
+            _unclosed = set(_unclosed_days(conn, name, today)) - _miss
             _att = [x for x in _dd["on_time"] + _dd["late"]]
-            came = len([x for x in _att if x not in _miss])
+            came = len([x for x in _att if x not in _miss and x not in _unclosed])
             lost_brief = len([x for x in _att if x in _miss])
+            lost_close = len([x for x in _att if x in _unclosed])
             daily = amt / wd if wd else 0
             full_fmt = "{:,}".format(amt).replace(",", " ")
             amt = min(int(round(daily * came)), amt)  # oylikdan hech qachon oshmasin
             lbl = f"Fiksa (oylik {full_fmt}) · {came}/{wd} kun kelgan"
             if lost_brief:
                 lbl += f" (brif yozilmagan {lost_brief} kun hisobga kirmadi)"
+            if lost_close:
+                lbl += f" (kun yopilmagan {lost_close} kun hisobga kirmadi)"
             kind = "auto"
         elif label == "Intizom" and name in ATTENDANCE_USERS:
             _dd = _month_attendance_days(conn, name, today)
@@ -6548,7 +6582,7 @@ def api_payroll(user, ym=None):
 
 
 VTYPE_LABEL = {"reels": "Reels", "podcast": "Podcast", "youtube": "YouTube video",
-               "ai_video": "AI video", "ai_karusel": "AI karusel", "capcut": "CapCut montaj", **{k: VIDEO_TYPES[k] for k in FIXED_PRICE_VTYPES}}
+               "ai_video": "AI video", "ai_karusel": "AI karusel", **{k: VIDEO_TYPES[k] for k in FIXED_PRICE_VTYPES}}
 
 
 def _all_employee_names(conn):
@@ -8531,6 +8565,7 @@ EVIDENCE_FIELDS = {
     "Gulmira": ["studio_created"],
     "Xonzoda": ["scripts"],
     "Umida": ["posted", "scripts"],
+    "Abdulloh": ["posted"],
     "Shodiya": ["ideas_sent", "ideas_accepted", "shoots"],
 }
 EVIDENCE_LABEL = {

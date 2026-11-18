@@ -27,7 +27,7 @@ const VIDEO_ST = {
   qaytarildi:     { label: 'Qaytarildi',       cls: 'st-red' },
   bekor_qilindi:  { label: 'Bekor qilindi',    cls: 'st-gray' },
 };
-const VIDEO_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video', ai_video: 'AI video', ai_karusel: 'AI karusel post', capcut: 'CapCut montaj', claude_reels: 'Claude reels montaj', claude_podcast: 'Claude podcast montaj', oblojka: 'Obloshka' };
+const VIDEO_TYPE_LABEL = { reels: 'Reels', podcast: 'Podcast', youtube: 'YouTube video', ai_video: 'AI video', ai_karusel: 'AI karusel post', claude_reels: 'Claude reels montaj', claude_podcast: 'Claude podcast montaj', oblojka: 'Obloshka' };
 const STUDIO_ROOMS_DEFAULT = {
   white: { label: '1-xona · White', color: '#0A84FF' },
   black: { label: '2-xona · Black', color: '#1C1C1E' },
@@ -306,7 +306,7 @@ const NAV_ITEMS = [
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
   { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Gulmira', 'Samandar', 'Xonzoda', 'Sardor', 'Umid', 'Shodiya', 'Xayrulloh', 'Fazliddin', 'Muhammadyusuf', 'Gulro', 'Abdulloh'] },
-  { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Samandar', 'Gulmira', 'Xonzoda', 'Shodiya', 'Umid', 'Nodira', 'Gulro'] },
+  { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Samandar', 'Gulmira', 'Xonzoda', 'Shodiya', 'Umid', 'Nodira', 'Gulro', 'Abdulloh'] },
   { view: 'stats',     icon: '📈', label: 'Oylik statistika', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'reyting',   icon: '🏆', label: 'Reyting',        roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'shootstat', icon: '⏱', label: 'Syomka soatlari', roles: ['ceo', 'coordinator', 'lead'] },
@@ -4225,7 +4225,7 @@ async function openVideoModal(existing = null) {
   const edNames = (Array.isArray(eds) ? eds : []).map((e) => e.name);
   const editing = !!existing;
   const cur = existing || {};
-  const vtypes = [['reels', 'Reels'], ['podcast', 'Podcast'], ['youtube', 'YouTube video'], ['ai_video', 'AI video'], ['ai_karusel', 'AI karusel post'], ['capcut', 'CapCut montaj'], ['claude_reels', 'Claude reels montaj'], ['claude_podcast', 'Claude podcast montaj'], ['oblojka', 'Obloshka']];
+  const vtypes = [['reels', 'Reels'], ['podcast', 'Podcast'], ['youtube', 'YouTube video'], ['ai_video', 'AI video'], ['ai_karusel', 'AI karusel post'], ['claude_reels', 'Claude reels montaj'], ['claude_podcast', 'Claude podcast montaj'], ['oblojka', 'Obloshka']];
   const projOpts = DATA.projects.map((p) => `<option value="${esc(p.name)}" data-client="${esc(p.client)}" ${cur.project === p.name ? 'selected' : ''}>${esc(p.name)} (${esc(p.client)})</option>`).join('');
   const scriptOpts = DATA.scripts.map((s) => `<option value="${s.id}" ${cur.script_id == s.id ? 'selected' : ''}>#${s.id} ${esc(s.title)}</option>`).join('');
   const dlVal = cur.due_at ? String(cur.due_at).replace(' ', 'T').slice(0, 16) : '';
