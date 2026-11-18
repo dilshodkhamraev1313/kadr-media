@@ -223,7 +223,7 @@ METHOD_LABEL = {"naqt": "Naqt", "plastik": "Plastik"}
 
 # Ssenaristlar va har tasdiqlangan ssenariy uchun haq (so'm).
 # Ssenarist o'z kabinetidan tasdiqlangan ssenariyni kiritadi — pul avtomatik hisoblanadi.
-SCENARIST_PAY = {"Xonzoda": 100000}
+SCENARIST_PAY = {"Xonzoda": 100000, "Hakima": 100000}   # Hakima — 2026-11-18, faqat ssenariy (donasiga 100 000)
 
 # Umida SMM qiladigan loyihalar. SMM to'liq daromadi shu loyihalar bajarilishiga bog'liq
 # (hammasi bajarilsa — to'liq; qismi bajarilsa — foizi). Umida oy davomida belgilaydi.
@@ -301,13 +301,13 @@ DEFAULT_CHECKLIST = {
 
 # Kelish nazorati (intizom) — telegram kruzhok orqali. Telegram username → ism.
 ATTENDANCE_USERS = ("Gulmira", "Xonzoda", "Umid", "Sardor", "Shodiya", "Samandar", "Nodira", "Xayrulloh", "Fazliddin",
-                    "Muhammadyusuf", "Gulro", "Abdulloh")
+                    "Muhammadyusuf", "Gulro", "Abdulloh", "Hakima")
 TELEGRAM_ATTEND = {
     "baxt_mira": "Gulmira", "pilotflight6": "Xonzoda",
     "kartal_ck": "Umid", "sardor0526": "Sardor", "mxmdjnva8": "Shodiya",
     "pardaboyev_samandar": "Samandar", "nbyva_929": "Nodira",
     "uzbawr": "Xayrulloh", "fx4040": "Fazliddin", "raxmatjanov_m": "Muhammadyusuf", "musfira_25": "Gulro",
-    "shuxrativicc": "Abdulloh",
+    "shuxrativicc": "Abdulloh", "hakima_anvarovna": "Hakima",
 }
 ON_TIME_LIMIT = "10:15"      # shu vaqtgacha kelsa — o'z vaqtida
 INTIZOM_PER_DAY = 20000      # har o'z vaqtida kelgan ish kuni uchun
@@ -354,6 +354,7 @@ JOIN_DATE = {
     "Muhammadyusuf": "2026-11-03",  # Fiksa/Intizom tizimiga shu sanadan o'tdi
     "Gulro": "2026-11-17",     # Nodira o'rniga yangi sotuv operatori
     "Abdulloh": "2026-11-18",  # yangi SMM mutaxassis
+    "Hakima": "2026-11-18",    # yangi ssenarist
 }
 # Maosh (SALARY) tizimiga o'tgan oy: undan OLDINGI oylar dona-hisobda (piece-rate) qoladi
 # — arxivlangan oktabr o'zgarmasligi uchun.
@@ -539,6 +540,8 @@ SALARY = {
     # SMM mutaxassis (2026-11-18): obloshka, reels joylash, opisaniya, captions, persona retushi — Fiksa ichida.
     # Dona-hisobda: obloshka 5k (belgilangan), AI video va oddiy (CapCut) montaj — reels turi, 25k dan (lavozim bo'yicha, Sardor/Fazliddin kabi).
     # Intizom yo'q — abetdan keyin keladi (kech qolish jarimasi yo'q, Xonzoda/Shodiya kabi).
+    # Ssenarist (2026-11-18): faqat ssenariy yozadi — donasiga 100 000 (SCENARIST_PAY) + Fiksa + Intizom (+ mukammal davomat 500k).
+    "Hakima": {"title": "Ssenarist", "som": {"Fiksa": 1000000, "Intizom": 500000}, "scenarist": True},
     "Abdulloh": {"title": "SMM mutaxassis + montajchi", "som": {"Fiksa": 1000000}, "montaj": True},
     "Muhammadyusuf": {"title": "AI kreator + Claude montajchi", "som": {"Fiksa": 500000, "Intizom": 500000},
                       "montaj": True},
@@ -549,17 +552,24 @@ SALARY = {
 MONTAJ_LEADS = tuple(n for n, c in SALARY.items() if c.get("montaj") and c.get("lead"))
 
 
+# role='editor' bo'lsa-da MONTAJ QILMAYDIGAN xodimlar (faqat ssenarist) — montajchilar ro'yxatiga, video
+# biriktirishga va montajchi qo'llanmasiga kirmaydi.
+NON_MONTAJ_EDITORS = ("Hakima",)
+
+
 def is_montajchi_name(name, role=None):
     """Montajchi (video biriktiriladigan): role='editor' yoki montaj qiluvchi rahbar."""
-    return role == "editor" or name in MONTAJ_LEADS
+    return (role == "editor" and name not in NON_MONTAJ_EDITORS) or name in MONTAJ_LEADS
 
 
 def _montajchi_where():
     """users jadvalidan montajchilarni tanlash uchun WHERE (role='editor' + montaj-rahbarlar)."""
+    nm = ",".join(["?"] * len(NON_MONTAJ_EDITORS))
+    base = "role='editor' AND name NOT IN (%s)" % nm
     if MONTAJ_LEADS:
         ph = ",".join(["?"] * len(MONTAJ_LEADS))
-        return "(role='editor' OR name IN (%s))" % ph, list(MONTAJ_LEADS)
-    return "role='editor'", []
+        return "((%s) OR name IN (%s))" % (base, ph), list(NON_MONTAJ_EDITORS) + list(MONTAJ_LEADS)
+    return "(%s)" % base, list(NON_MONTAJ_EDITORS)
 
 # Montajyor lavozimlari (o'yin rank tizimi). Har lavozimga o'tish uchun
 # RANK_STEP ta muvaffaqiyatli qabul qilingan video kerak.
@@ -853,6 +863,7 @@ TEAM = [
     ("Nodira",           "nodira",  "nodira2026","sales",      "Sotuv operatori",         "#FF6B00", None),
     ("Gulro",            "gulro",   "gulro2026", "sales",      "Sotuv operatori",         "#FF6B00", None),
     ("Abdulloh",         "abdulloh","abdulloh2026","editor",   "SMM mutaxassis",          "#FF2D55", None),
+    ("Hakima",           "hakima",  "hakima2026", "editor",    "Ssenarist",               "#BF5AF2", None),
     # SMM menejer (faqat joylash)
     ("Aisha",            "aisha",   "aisha2026","smm",         "SMM menejer · Joylash",   "#FF2D55", None),
     # Jarvis (AI yordamchi, Kadr Jarvis OS loyihasi) — coordinator darajasi: operatsion
@@ -8345,7 +8356,7 @@ def _user_playbook_keys(user):
     keys = []
     if role in ("lead", "coordinator", "ceo"):
         keys.append("lead")
-    if role == "editor":
+    if role == "editor" and name not in NON_MONTAJ_EDITORS:
         keys.append("montajchi")
     if role == "smm":
         keys.append("smm")

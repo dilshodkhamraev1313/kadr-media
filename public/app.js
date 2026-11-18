@@ -269,10 +269,10 @@ const NAV_ITEMS = [
   { view: 'bugun',     icon: '🎯', label: 'Bugun',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'smm', 'sales'] },
   { view: 'ombor',     icon: '📚', label: 'Qo\'llanma',     roles: ['ceo', 'coordinator', 'lead', 'editor', 'smm', 'sales'] },
   // Montajchi uchun
-  { view: 'cabinet',   icon: '★', label: 'Mening kabinetim', roles: ['editor'] },
+  { view: 'cabinet',   icon: '★', label: 'Mening kabinetim', roles: ['editor'], notNames: ['Hakima'] },
   // Montaj ham qiladigan rahbar (Shodiya) — o'z montaj kabineti
   { view: 'cabinet',   icon: '★', label: 'Montaj kabinetim', roles: ['lead'], names: ['Shodiya'] },
-  { view: 'myvideos',  icon: '►', label: 'Videolarim',    roles: ['editor'] },
+  { view: 'myvideos',  icon: '►', label: 'Videolarim',    roles: ['editor'], notNames: ['Hakima'] },
   // Mijoz uchun (birinchi)
   { view: 'client',    icon: '▦', label: 'Loyihalarim',   roles: ['client'] },
   { view: 'cscripts',  icon: '✎', label: 'Ssenariylar',   roles: ['client'] },
@@ -289,7 +289,7 @@ const NAV_ITEMS = [
   { view: 'qc',        icon: '🔎', label: 'Sifat nazorati', roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Samandar'] },
   { view: 'shoots',    icon: '📹', label: 'Kadr Media',     roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'studio',    icon: '🎥', label: 'Kadr Studio',   roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Gulmira', 'Xonzoda', 'Samandar'] },
-  { view: 'myscripts', icon: '✍️', label: 'Ssenariylarim', roles: ['coordinator', 'editor', 'lead'], names: ['Xonzoda'] },
+  { view: 'myscripts', icon: '✍️', label: 'Ssenariylarim', roles: ['coordinator', 'editor', 'lead'], names: ['Xonzoda', 'Hakima'] },
   // Kreativ strateg (Shodiya) g'oyalari + qabul qiluvchilar (CEO, koordinator, loyiha rahbarlari)
   { view: 'safariwallet', icon: '💼', label: 'Safari kashelyok', roles: ['ceo'], names: ['Dilshod Khamraev'] },
   { view: 'goals',     icon: '🎯', label: 'Mening shartim', roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Xonzoda', 'Gulmira', 'Shodiya', 'Samandar', 'Umid', 'Sardor', 'Oygul', 'Xayrulloh'] },
@@ -305,7 +305,7 @@ const NAV_ITEMS = [
   { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
   { view: 'team',      icon: '◐', label: 'Jamoa',         roles: ['ceo'] },
   { view: 'audit',     icon: '≡', label: 'Audit',         roles: ['ceo'] },
-  { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Gulmira', 'Samandar', 'Xonzoda', 'Sardor', 'Umid', 'Shodiya', 'Xayrulloh', 'Fazliddin', 'Muhammadyusuf', 'Gulro', 'Abdulloh'] },
+  { view: 'salary',    icon: '💵', label: 'Maosh',         roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Gulmira', 'Samandar', 'Xonzoda', 'Sardor', 'Umid', 'Shodiya', 'Xayrulloh', 'Fazliddin', 'Muhammadyusuf', 'Gulro', 'Abdulloh', 'Hakima'] },
   { view: 'daily',     icon: '🌙', label: 'Kun yopish',    roles: ['ceo', 'coordinator', 'lead', 'editor', 'sales'], names: ['Dilshod Khamraev', 'Samandar', 'Gulmira', 'Xonzoda', 'Shodiya', 'Umid', 'Nodira', 'Gulro', 'Abdulloh'] },
   { view: 'stats',     icon: '📈', label: 'Oylik statistika', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'reyting',   icon: '🏆', label: 'Reyting',        roles: ['ceo', 'coordinator', 'lead'] },
@@ -315,6 +315,7 @@ const NAV_ITEMS = [
 const UZ_MONTH_FULL = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
 const NAV_FOR = (role) => NAV_ITEMS.filter((n) =>
   n.roles.includes(role)
+  && !(n.notNames && ME && n.notNames.includes(ME.name))
   && (!n.names || (ME && n.names.includes(ME.name)))
   && (!n.flag || role === 'ceo' || (ME && ME[n.flag])));
 
