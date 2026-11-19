@@ -1126,6 +1126,10 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS payments (
         id {pk}, editor TEXT, amount INTEGER, paid_by TEXT, note TEXT DEFAULT '',
         pdate TEXT, created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS manual_penalties (
+        id {pk}, person TEXT, amount INTEGER, reason TEXT DEFAULT '', pdate TEXT, ym TEXT,
+        created_by TEXT, created_at TEXT, cancelled INTEGER DEFAULT 0,
+        cancelled_by TEXT DEFAULT '', cancelled_at TEXT DEFAULT '')""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS audit (
         id {pk}, actor TEXT, action TEXT, detail TEXT DEFAULT '', created_at TEXT)""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS studio_bookings (
@@ -2961,7 +2965,8 @@ def editor_summary(conn, name, ym=None):
         else:
             _qday = uz_today()
         reels_quota_penalty, _ = _reels_quota_penalty(conn, name, _qday)
-        earned = montaj_earned - reels_quota_penalty - _montaj_late_penalty(conn, name, ym)[0] + vb_bonus
+        earned = (montaj_earned - reels_quota_penalty - _montaj_late_penalty(conn, name, ym)[0] + vb_bonus
+                  - sum(int(m["amount"] or 0) for m in _manual_penalties(conn, name, ym)))
     by_project = {}
     for v in accepted_m:
         by_project[v["project"]] = by_project.get(v["project"], 0) + 1
@@ -2984,6 +2989,7 @@ def editor_summary(conn, name, ym=None):
         "montajEarned": montaj_earned,
         "reelsQuotaPenalty": reels_quota_penalty,
         "montajLatePenalty": _montaj_late_penalty(conn, name, ym)[0],
+        "manualPenalties": _manual_penalties(conn, name, ym),
         "monthlyVolumeCount": vb_count,
         "monthlyVolumeBonus": vb_bonus,
         "monthlyVolumeTarget": vb_target,
@@ -6563,6 +6569,10 @@ def compute_salary(conn, name, rate, ym=None):
         if pl_pen > 0:
             comps.append({"label": f"Planyorka tasdiqlanmadi ({pl_n} kun, {PLANYORKA_DEADLINE}gacha)",
                           "amount": -pl_pen, "kind": "penalty"})
+    # CEO qo'lda kiritgan jarimalar — har biri alohida qator, sababi bilan
+    for mp in _manual_penalties(conn, name, ym):
+        comps.append({"label": f"Jarima (CEO, {mp['pdate'][5:]}): {mp['reason']}",
+                      "amount": -int(mp["amount"] or 0), "kind": "penalty", "manual": True, "pid": mp["id"]})
     total = sum(c["amount"] for c in comps)
     paid = _paid_to(conn, name, ym)
     return {"name": name, "title": cfg.get("title", ""), "components": comps,
@@ -6574,6 +6584,92 @@ def _paid_to(conn, name, ym):
     return conn.execute(
         "SELECT COALESCE(SUM(amount),0) AS s FROM payments WHERE editor=? AND pdate LIKE ?",
         (name, ym + "%")).fetchone()["s"] or 0
+
+
+# ------------------------------------------------------------
+#  CEO QO'LDA JARIMASI — CEO xodimni tanlab summa va sabab kiritadi, shu oy daromadidan ayriladi
+# ------------------------------------------------------------
+MANUAL_PENALTY_MAX = 50_000_000
+
+
+def _manual_penalties(conn, name, ym):
+    """Xodimning shu oydagi (bekor qilinmagan) CEO jarimalari."""
+    return [dict(r) for r in conn.execute(
+        "SELECT id, amount, reason, pdate FROM manual_penalties "
+        "WHERE person=? AND ym=? AND COALESCE(cancelled,0)=0 ORDER BY pdate, id", (name, ym)).fetchall()]
+
+
+def api_penalties(user, ym=None):
+    """CEO: oy bo'yicha qo'lda jarimalar ro'yxati + jarima kiritish mumkin bo'lgan xodimlar."""
+    if user["role"] != "ceo":
+        return {"error": "Faqat CEO"}, 403
+    ym = (ym or "").strip() or uz_today().strftime("%Y-%m")
+    conn = get_db()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM manual_penalties WHERE ym=? ORDER BY COALESCE(cancelled,0), pdate DESC, id DESC", (ym,)).fetchall()]
+    names, _ed = _all_employee_names(conn)
+    active = {r["name"] for r in conn.execute("SELECT name FROM users WHERE active=1").fetchall()}
+    people = sorted(n for n in names if n in active and n != "Dilshod Khamraev")
+    archived = bool(conn.execute("SELECT ym FROM monthly_archive WHERE ym=?", (ym,)).fetchone())
+    conn.close()
+    total = sum(r["amount"] or 0 for r in rows if not r.get("cancelled"))
+    return {"ym": ym, "penalties": rows, "total": total, "people": people, "archived": archived}
+
+
+def api_penalty_add(user, b):
+    if user["role"] != "ceo":
+        return {"error": "Faqat CEO"}, 403
+    person = (b.get("person") or "").strip()
+    reason = (b.get("reason") or "").strip()
+    try:
+        amount = int(b.get("amount") or 0)
+    except (ValueError, TypeError):
+        amount = 0
+    if amount <= 0 or amount > MANUAL_PENALTY_MAX:
+        return {"error": "Jarima summasini to'g'ri kiriting"}, 400
+    if len(reason) < 3:
+        return {"error": "Jarima sababini yozing (xodim shuni ko'radi)"}, 400
+    pdate = (b.get("pdate") or "").strip() or uz_today().isoformat()
+    try:
+        d = datetime.date.fromisoformat(pdate)
+    except ValueError:
+        return {"error": "Sana noto'g'ri"}, 400
+    if d > uz_today():
+        return {"error": "Kelajak sanasiga jarima yozib bo'lmaydi"}, 400
+    ym = pdate[:7]
+    conn = get_db()
+    names, _ed = _all_employee_names(conn)
+    if person not in names or person == "Dilshod Khamraev":
+        conn.close()
+        return {"error": "Bu xodimga jarima yozib bo'lmaydi"}, 400
+    if conn.execute("SELECT ym FROM monthly_archive WHERE ym=?", (ym,)).fetchone():
+        conn.close()
+        return {"error": f"{ym} oyi arxivlangan — arxivlangan oyga jarima kiritib bo'lmaydi. Joriy oy sanasini tanlang."}, 400
+    conn.execute("INSERT INTO manual_penalties (person, amount, reason, pdate, ym, created_by, created_at) VALUES (?,?,?,?,?,?,?)",
+                 (person, amount, reason, pdate, ym, user["name"], now_local()))
+    log_audit(conn, user["name"], "jarima yozdi", f"{person}: -{amount} · {reason}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_penalty_cancel(user, pid):
+    if user["role"] != "ceo":
+        return {"error": "Faqat CEO"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT * FROM manual_penalties WHERE id=?", (pid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if conn.execute("SELECT ym FROM monthly_archive WHERE ym=?", (row["ym"],)).fetchone():
+        conn.close()
+        return {"error": "Oy arxivlangan — jarimani bekor qilib bo'lmaydi"}, 400
+    conn.execute("UPDATE manual_penalties SET cancelled=1, cancelled_by=?, cancelled_at=? WHERE id=?",
+                 (user["name"], now_local(), pid))
+    log_audit(conn, user["name"], "jarimani bekor qildi", f"{row['person']}: -{row['amount']} · {row['reason']}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 def api_payroll(user, ym=None):
@@ -6666,6 +6762,9 @@ def _employee_month_report(conn, name, ym, rate, editor_names):
         if s["montajLatePenalty"]:
             lines.append(f"   • Montaj {MONTAJ_LATE_DAYS} kunda tugatilmadi jarimasi: -{som(s['montajLatePenalty'])}")
             penalties += s["montajLatePenalty"]
+        for mp in s.get("manualPenalties", []):
+            lines.append(f"   • Jarima (CEO): {mp['reason']}: -{som(mp['amount'])}")
+            penalties += int(mp["amount"] or 0)
         if s["monthlyVolumeBonus"]:
             lines.append(f"   • Oylik hajm bonusi ({s['monthlyVolumeCount']}/{s['monthlyVolumeTarget']}+ video): "
                           f"+{som(s['monthlyVolumeBonus'])}")
@@ -10310,6 +10409,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_playbooks(user))
         if path == "/api/scenarist":
             return self._forbid() if not is_scenarist(user) else self._json(api_scenarist(user))
+        if path == "/api/penalties":
+            ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
+            res = api_penalties(user, ym)
+            return self._json(*res) if isinstance(res, tuple) else self._json(res)
         if path == "/api/payroll":
             if role != "ceo" and user["name"] not in SALARY:
                 return self._forbid()
@@ -10653,6 +10756,16 @@ class Handler(BaseHTTPRequestHandler):
             if r != "ceo":
                 return self._forbid()
             return self._json(api_clear_attendance(user, b))
+        if path == "/api/penalties":
+            if r != "ceo":
+                return self._forbid()
+            res = api_penalty_add(user, b or {})
+            return self._json(*res) if isinstance(res, tuple) else self._json(res)
+        if len(seg) == 4 and seg[1] == "penalties" and seg[3] == "cancel" and seg[2].isdigit():
+            if r != "ceo":
+                return self._forbid()
+            res = api_penalty_cancel(user, int(seg[2]))
+            return self._json(*res) if isinstance(res, tuple) else self._json(res)
         if len(seg) == 4 and seg[1] == "scenarist" and seg[3] == "cancel":
             if not is_scenarist(user):
                 return self._forbid()

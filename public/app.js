@@ -300,6 +300,7 @@ const NAV_ITEMS = [
   { view: 'crm', icon: '📋', label: 'CRM (Lidlar)', roles: ['ceo', 'sales'] },
   { view: 'kassa',     icon: '💰', label: 'Kassa',         roles: ['ceo', 'lead'], names: ['Dilshod Khamraev', 'Gulmira'] },
   { view: 'late',      icon: '⏰', label: 'Kechikkanlar',   roles: ['ceo'] },
+  { view: 'penalties', icon: '⚖️', label: 'Jarima',         roles: ['ceo'] },
   { view: 'archive',   icon: '🗄', label: 'Oylik arxiv',    roles: ['ceo'] },
   { view: 'income',    icon: '💳', label: 'To\'lovlar',      roles: ['ceo'] },
   { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
@@ -369,6 +370,7 @@ const TITLES = {
   videos:    ['Montaj — videolar', 'Biriktirish va qabul qilish'],
   qc:        ['Sifat nazorati', 'Montaj qilingan, tasdiq kutayotgan videolar'],
   shoots:    ['Kadr Media', 'Loyiha syomkalari — operator, vaqt va pul'],
+  penalties: ['Jarima', 'Xodimga jarima yozish — daromaddan ayriladi'],
   myscripts: ['Ssenariylarim', 'Tasdiqlangan ssenariylar va hisoblangan pul'],
   salary:    ['Maosh', 'Fiksa, rahbarlik va daromadlar'],
   daily:     ['Kun yopish', 'Kunlik sarhisob va KPI intizomi'],
@@ -440,6 +442,7 @@ async function render() {
     else if (VIEW === 'income') await viewIncome();
     else if (VIEW === 'team') await viewTeam();
     else if (VIEW === 'audit') await viewAudit();
+    else if (VIEW === 'penalties') await viewPenalties();
     else if (VIEW === 'cabinet') await viewCabinet();
     else if (VIEW === 'client') await viewProjects();
   } catch (e) {
@@ -1872,8 +1875,8 @@ function salaryCard(p) {
   const paid = p.paid || 0;
   const rem = (p.remaining != null) ? p.remaining : p.total;
   const isCeo = ME.role === 'ceo';
-  const pen = p.components.find((c) => c.kind === 'penalty' && !c.label.includes('reels normasi'));
-  const reelsPen = p.components.find((c) => c.kind === 'penalty' && c.label.includes('reels normasi'));
+  const pen = p.components.find((c) => c.kind === 'penalty' && !c.manual && !c.label.includes('reels normasi'));
+  const reelsPen = p.components.find((c) => c.kind === 'penalty' && !c.manual && c.label.includes('reels normasi'));
   return `
     <div class="team-card">
       <div class="team-head"><div class="team-av" style="background:${colorFor(p.name)}">${initials(p.name)}</div>
@@ -2957,6 +2960,7 @@ function editorCard(e) {
         <div class="mrow"><span>Hisoblangan</span><b>${money(e.earned)}</b></div>
         ${e.reelsQuotaPenalty ? `<div class="mrow"><span style="color:var(--red)">Kunlik 2 reels normasi jarimasi</span><b style="color:var(--red)">−${money(e.reelsQuotaPenalty)}</b></div>` : ''}
         ${e.montajLatePenalty ? `<div class="mrow"><span style="color:var(--red)">Montaj 3 kunda tugatilmadi (jarima)</span><b style="color:var(--red)">−${money(e.montajLatePenalty)}</b></div>` : ''}
+        ${(e.manualPenalties || []).map((m) => `<div class="mrow"><span style="color:var(--red)">Jarima (CEO, ${esc((m.pdate || '').slice(5))}): ${esc(m.reason)}</span><b style="color:var(--red)">−${money(m.amount)}</b></div>`).join('')}
         <div class="mrow"><span>To'langan</span><b style="color:var(--green)">${money(e.paid)}</b></div>
         <div class="mrow big"><span>Qolgan</span><b style="color:var(--orange)">${money(e.remaining)}</b></div>
       </div>
@@ -4045,6 +4049,64 @@ async function viewTeam() {
 // ============================================================
 //  AUDIT
 // ============================================================
+let PEN_YM = '';
+async function viewPenalties() {
+  const d = await api('/api/penalties' + (PEN_YM ? '?ym=' + PEN_YM : ''));
+  if (d.error) { $('#content').innerHTML = emptyState(d.error); return; }
+  const today = new Date().toISOString().slice(0, 10);
+  const nowYm = today.slice(0, 7);
+  const list = d.penalties.map((p) => `
+    <div class="activity-item" style="${p.cancelled ? 'opacity:.5' : ''}">
+      <div class="activity-dot" style="background:var(--red)"></div>
+      <div style="flex:1"><b>${esc(p.person)}</b> — <span style="color:var(--red)">−${money(p.amount)}</span>
+        ${p.cancelled ? '<span class="muted">(bekor qilingan)</span>' : ''}
+        <div class="muted" style="font-size:13px">${esc(p.reason)} · ${esc(fmtDate(p.pdate))}</div></div>
+      ${(!p.cancelled && !d.archived) ? `<button class="mini-btn red pen-cancel" data-id="${p.id}">Bekor qilish</button>` : ''}
+    </div>`).join('') || emptyState('Bu oy jarima yozilmagan');
+  $('#content').innerHTML = `
+    <div class="panel" style="margin-bottom:16px;max-width:560px">
+      <div class="sec-label" style="margin-bottom:10px">⚖️ Yangi jarima</div>
+      <div class="field"><label>Xodim</label>
+        <select id="pen_person"><option value="">— tanlang —</option>${d.people.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('')}</select></div>
+      <div class="field-row">
+        <div class="field"><label>Jarima summasi (so'm)</label><input id="pen_amount" type="number" inputmode="numeric" placeholder="masalan 50000" /></div>
+        <div class="field"><label>Sana</label><input id="pen_date" type="date" value="${today}" max="${today}" /></div>
+      </div>
+      <div class="field"><label>Nima uchun jarima? (xodim o'z Maosh bo'limida shuni ko'radi)</label>
+        <textarea id="pen_reason" rows="3" placeholder="masalan: Mijoz videosida xato — noto'g'ri subtitr"></textarea></div>
+      <button class="btn-save" id="pen_save" style="background:var(--red)">⚖️ Jarima yozish</button>
+      <p class="muted" style="margin-top:8px">Summa xodimning shu oydagi daromadidan ayriladi. Xato yozilsa — pastdan bekor qilishingiz mumkin.</p>
+    </div>
+    <div class="panel" style="max-width:560px">
+      <div class="field-row" style="align-items:end;margin-bottom:10px">
+        <div class="field" style="margin:0"><label>Oy</label><input id="pen_ym" type="month" value="${esc(d.ym)}" max="${nowYm}" /></div>
+        <div><span class="muted">Jami jarima</span><div style="font-size:20px;color:var(--red)"><b>−${money(d.total)}</b></div></div>
+      </div>
+      ${d.archived ? '<p class="muted" style="margin-bottom:8px">🗄 Bu oy arxivlangan — o\'zgartirib bo\'lmaydi.</p>' : ''}
+      ${list}
+    </div>`;
+  $('#pen_ym').addEventListener('change', (e) => { PEN_YM = e.target.value; render(); });
+  $('#pen_save').addEventListener('click', async () => {
+    const person = $('#pen_person').value;
+    const amount = parseInt($('#pen_amount').value || '0', 10);
+    const reason = $('#pen_reason').value.trim();
+    const pdate = $('#pen_date').value;
+    if (!person) { toast('Xodimni tanlang'); return; }
+    if (!(amount > 0)) { toast('Summani kiriting'); return; }
+    if (reason.length < 3) { toast('Jarima sababini yozing'); return; }
+    if (!confirm(`${person}ga ${amount.toLocaleString('ru-RU')} so'm jarima yozilsin?\n\nSabab: ${reason}`)) return;
+    const r = await api('/api/penalties', { method: 'POST', body: JSON.stringify({ person, amount, reason, pdate }) });
+    if (r && r.error) { toast('⚠️ ' + r.error); return; }
+    toast('⚖️ Jarima yozildi'); PEN_YM = pdate.slice(0, 7); render();
+  });
+  $$('.pen-cancel').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Bu jarimani bekor qilamizmi? Summa xodim daromadiga qaytadi.')) return;
+    const r = await api('/api/penalties/' + b.dataset.id + '/cancel', { method: 'POST', body: '{}' });
+    if (r && r.error) { toast('⚠️ ' + r.error); return; }
+    toast('↩️ Jarima bekor qilindi'); render();
+  }));
+}
+
 async function viewAudit() {
   const log = await api('/api/audit');
   $('#content').innerHTML = `<div class="panel"><div class="audit-list">${log.map((a) => `
