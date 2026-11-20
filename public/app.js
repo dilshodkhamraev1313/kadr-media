@@ -899,13 +899,19 @@ async function viewVideos() {
   DATA.videos = videos;
   let list = videos.filter((v) => matchSearch(v.title + ' ' + v.project + ' ' + v.editor));
   if (Object.keys(VIDEO_ST).includes(FILTER)) list = list.filter((v) => v.status === FILTER);
+  const lateDone = videos.filter((v) => v.is_late && ['qabul_qilindi', 'joylandi'].includes(v.status));
+  if (FILTER === 'late') list = list.filter((v) => lateDone.includes(v));
   const chips = (VIEW === 'joylash')
     ? [['all', 'Hammasi'], ['qabul_qilindi', 'Joylash kerak'], ['joylandi', 'Joylandi']]
     : [['all', 'Hammasi'], ['biriktirildi', 'Montaj kerak'], ['montaj_qilindi', 'Sifatda'], ['sifat_ok', 'Qabulda'], ['qabul_qilindi', 'Qabul qilingan'], ['qaytarildi', 'Qaytgan']];
+  if (VIEW === 'videos' && ME.role === 'ceo' && lateDone.length) chips.push(['late', `⏰ Kechikkan (${lateDone.length})`]);
   $('#content').innerHTML = `
+    ${(VIEW === 'videos' && ME.role === 'ceo' && lateDone.length) ? `<div class="pc-problem soft" style="margin-bottom:12px">⏰ Deadline o'tib puli kamaygan/0 bo'lgan <b>${lateDone.length} ta</b> video bor — <a href="#" id="goLate" style="text-decoration:underline">«Kechikkanlar» sahifasida pulini tiklash</a></div>` : ''}
     <div class="filter-row">${chips.map(([k, l]) => `<button class="chip ${FILTER === k ? 'active' : ''}" data-f="${k}">${l}</button>`).join('')}</div>
     <div class="cards-grid">${list.map(videoCard).join('') || emptyState('Video yo\'q')}</div>`;
   bindVideoCards();
+  const gl = $('#goLate');
+  if (gl) gl.addEventListener('click', (e) => { e.preventDefault(); VIEW = 'late'; FILTER = 'all'; render(); });
 }
 
 async function viewQC() {
@@ -1063,7 +1069,16 @@ function openVideoDetailModal(v) {
     ${driveBtn}
     ${v.instagram_link ? `<a href="${esc(v.instagram_link)}" target="_blank" rel="noopener" class="link-chip" style="display:inline-block;margin-bottom:12px">📷 Instagram post</a>` : ''}
     ${actions ? `<div class="modal-actions">${actions}</div>` : ''}
+    ${(ME.role === 'ceo' && v.is_late && ['qabul_qilindi', 'joylandi'].includes(v.status)) ? `<button class="btn-save" id="v_restore_pay" style="margin-top:10px;width:100%">💰 Pulini to'liq tiklash</button>` : ''}
   `, () => {
+    const rp = $('#v_restore_pay');
+    if (rp) rp.addEventListener('click', async () => {
+      if (!confirm('Bu videoning to\'liq puli hisoblansinmi?')) return;
+      rp.disabled = true;
+      const r = await api(`/api/videos/${v.id}/restore-pay`, { method: 'POST', body: '{}' });
+      if (r && r.error) { rp.disabled = false; toast('⚠️ ' + r.error); return; }
+      toast(`💰 ${money(r.amount)} hisoblandi`); closeModal(); render();
+    });
     $('#modalBody').querySelectorAll('[data-vact]').forEach((b) =>
       b.addEventListener('click', () => { closeModal(); videoActionUI(b.dataset.id, b.dataset.vact); })
     );
