@@ -6691,6 +6691,7 @@ def _report_client_month(conn, client, ym):
     items_rows = [dict(r) for r in conn.execute(
         "SELECT * FROM report_items WHERE client=? AND COALESCE(active,1)=1 ORDER BY sort, id", (client,)).fetchall()]
     items = []
+    unplanned = []   # kelishuvda yo'q (reja 0) va shu oy hech narsa qilinmagan — hisobotda ko'rinmaydi, faqat qo'shish uchun
     for it in items_rows:
         start = it.get("start_ym") or ym
         if start > ym:
@@ -6707,16 +6708,20 @@ def _report_client_month(conn, client, ym):
         manual = _report_manual_count(conn, it["id"], ym)
         done = auto + manual
         target = plan + carry
+        if target == 0 and done == 0:
+            unplanned.append({"id": it["id"], "kind": it["kind"], "label": it["label"], "source": it["source"] or ""})
+            continue
         items.append({
             "id": it["id"], "kind": it["kind"], "label": it["label"], "source": it["source"] or "",
             "plan": plan, "carry": carry, "target": target, "done": done, "auto": auto, "manual": manual,
+            "unplanned": plan == 0 and carry == 0,
             "extra": max(0, done - target), "short": max(0, target - done),
             "pct": round(done / target * 100) if target else (100 if done else 0),
         })
     t_target = sum(i["target"] for i in items)
     t_in_plan = sum(min(i["done"], i["target"]) for i in items)
     return {
-        "client": client, "ym": ym, "items": items,
+        "client": client, "ym": ym, "items": items, "unplanned": unplanned,
         "totalTarget": t_target, "totalDone": sum(i["done"] for i in items),
         "totalExtra": sum(i["extra"] for i in items), "totalShort": sum(i["short"] for i in items),
         "totalCarry": sum(i["carry"] for i in items),
@@ -6791,8 +6796,8 @@ def api_report_agreement_save(user, b):
             qty = 0
         if not label:
             continue
-        if qty <= 0 or qty > 100000:
-            return {"error": f"«{label}» uchun oylik sonni to'g'ri kiriting"}, 400
+        if qty < 0 or qty > 100000:
+            return {"error": f"«{label}» uchun oylik sonni to'g'ri kiriting (0 = kelishuvda yo'q)"}, 400
         kind = it.get("kind") if it.get("kind") in dict(REPORT_KINDS) else "boshqa"
         source = it.get("source") if it.get("source") in REPORT_SOURCES else ""
         clean.append({"id": it.get("id"), "label": label, "qty": qty, "kind": kind, "source": source, "sort": i})

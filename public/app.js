@@ -4127,8 +4127,8 @@ async function viewReportClient(ym) {
   const isCeo = ME.role === 'ceo';
   const rows = r.items.map((i) => `
     <div class="rep-row">
-      <div class="rep-head"><b>${esc(i.label)}</b>
-        <span><b>${i.done}</b> / ${i.target}${i.carry ? ` <span class="muted">(o'tgan oydan +${i.carry})</span>` : ''}
+      <div class="rep-head"><b>${esc(i.label)}${i.unplanned ? ' <span class="muted" style="font-weight:400">(kelishuvda yo\'q)</span>' : ''}</b>
+        <span>${i.unplanned ? `<b>${i.done}</b>` : `<b>${i.done}</b> / ${i.target}`}${i.carry ? ` <span class="muted">(o'tgan oydan +${i.carry})</span>` : ''}
           ${i.extra ? `<b style="color:${REP_GREEN}"> +${i.extra} ortiqcha</b>` : ''}</span></div>
       ${repBarHTML(i)}
       <div class="rep-foot"><span class="muted">${i.source ? `avto ${i.auto} + qo'lda ${i.manual}` : `qo'lda ${i.manual}`}${i.short ? ` · qoldi ${i.short}` : ''}</span>
@@ -4150,6 +4150,8 @@ async function viewReportClient(ym) {
         ${statTile('⏳', r.totalShort, 'Keyingi oyga ko\'chadi', 'purple')}
       </div>
       <div style="margin-top:12px">${rows || emptyState('Kelishuv kiritilmagan')}</div>
+      ${(r.unplanned || []).length ? `<div class="rep-unplanned"><div class="muted" style="margin-bottom:6px">Kelishuvda yo'q ishlar — qilinsa, «+ Qo'shish» bosing, hisobotda ortiqcha (yashil) bo'lib chiqadi:</div>
+        ${r.unplanned.map((u) => `<div class="rep-foot" style="margin-bottom:6px"><span>${esc(u.label)}</span><button class="mini-btn gray rep-add" data-id="${u.id}" data-label="${esc(u.label)}">+ Qo'shish</button></div>`).join('')}</div>` : ''}
       <div class="field-row" style="margin-top:12px;gap:8px">
         <button class="btn-save" id="rep_dl">📥 Rasm yuklab olish</button>
         ${isCeo ? `<button class="btn-primary" id="rep_send">📤 Guruhga yuborish</button>` : ''}
@@ -4210,7 +4212,7 @@ async function openAgreementModal(client) {
     <div class="ag-row" data-id="${it.id || ''}">
       <select class="ag-kind">${kinds.map(([k, l]) => `<option value="${k}" ${it.kind === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       <input class="ag-label" type="text" value="${esc(it.label || '')}" placeholder="Nomi (masalan: Reels video)" />
-      <input class="ag-qty" type="number" inputmode="numeric" min="1" value="${it.qty || ''}" placeholder="Soni" />
+      <input class="ag-qty" type="number" inputmode="numeric" min="0" value="${it.qty === undefined ? '' : it.qty}" placeholder="Soni" title="Oylik son. 0 = kelishuvda yo'q (qilinsa ortiqcha bo'lib chiqadi)" />
       <select class="ag-src">${Object.entries(sources).map(([k, l]) => `<option value="${k}" ${(it.source || '') === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       <button class="mini-btn red ag-rm" type="button">✕</button>
     </div>`;
@@ -4218,7 +4220,7 @@ async function openAgreementModal(client) {
     <div class="field"><label>Mijoz</label>
       <input id="ag_client" list="ag_clients" type="text" value="${esc(client)}" ${client ? 'readonly' : ''} placeholder="Mijoz nomi" />
       <datalist id="ag_clients">${clientNames.map((n) => `<option value="${esc(n)}">`).join('')}</datalist></div>
-    <p class="muted" style="margin-bottom:8px">Har oy qilinadigan ishlar. «Soni» — oylik kelishuv. Manba «Avto» bo'lsa tizim o'zi sanaydi, «Qo'lda» bo'lsa loyiha rahbari +1 bosadi.</p>
+    <p class="muted" style="margin-bottom:8px">Har oy qilinadigan ishlar. «Soni» — oylik kelishuv. Kelishuvda bo'lmagan ish (masalan podcast) uchun <b>0</b> yozing: hisobotda ko'rinmaydi, lekin qilinsa «ortiqcha» (yashil) bo'lib chiqadi. Manba «Avto» bo'lsa tizim o'zi sanaydi, «Qo'lda» bo'lsa loyiha rahbari +1 bosadi.</p>
     <div id="ag_rows">${(existing.length ? existing : [{}]).map(rowHTML).join('')}</div>
     <button class="btn-ghost sm" id="ag_add" type="button">+ Ish turi qo'shish</button>
     <button class="btn-save" id="ag_save" style="margin-top:12px">💾 Saqlash</button>`, () => {
@@ -4236,7 +4238,7 @@ async function openAgreementModal(client) {
       const items = $$('.ag-row').map((r) => ({
         id: r.dataset.id ? parseInt(r.dataset.id, 10) : null,
         kind: r.querySelector('.ag-kind').value, label: r.querySelector('.ag-label').value.trim(),
-        qty: parseInt(r.querySelector('.ag-qty').value || '0', 10), source: r.querySelector('.ag-src').value,
+        qty: Math.max(parseInt(r.querySelector('.ag-qty').value || '0', 10) || 0, 0), source: r.querySelector('.ag-src').value,
       })).filter((i) => i.label);
       if (!items.length) { toast('Kamida bitta ish turini kiriting'); return; }
       const x = await api('/api/reports/agreement', { method: 'POST', body: JSON.stringify({ client: cl, items }) });
@@ -4274,7 +4276,7 @@ function drawReportCanvas(r) {
   r.items.forEach((i) => {
     g.fillStyle = '#16181D'; g.font = `700 32px ${FONT}`; g.fillText(i.label, PAD, y + 30);
     g.textAlign = 'right'; g.font = `700 32px ${FONT}`; g.fillStyle = '#16181D';
-    g.fillText(`${i.done} / ${i.target}`, W - PAD, y + 30);
+    g.fillText(i.unplanned ? `${i.done}` : `${i.done} / ${i.target}`, W - PAD, y + 30);
     g.textAlign = 'left';
     const bx = PAD, by = y + 48, bw = W - 2 * PAD, bh = 26;
     const max = Math.max(i.target, i.done, 1);
@@ -4284,10 +4286,11 @@ function drawReportCanvas(r) {
     if (i.extra > 0) {
       const w2 = bw * i.extra / max;
       g.fillStyle = REP_GREEN; g.fillRect(bx + w1, by, Math.min(w2, bw - w1), bh);
-      g.fillStyle = '#16181D'; g.fillRect(bx + bw * i.target / max - 2, by - 6, 4, bh + 12);
+      if (i.target > 0) { g.fillStyle = '#16181D'; g.fillRect(bx + bw * i.target / max - 2, by - 6, 4, bh + 12); }
     }
     g.font = `500 24px ${FONT}`; g.fillStyle = '#6B6F78';
     let sub = '';
+    if (i.unplanned) sub += `kelishuvda yo'q — sovg'a sifatida qilindi`;
     if (i.carry) sub += `o'tgan oydan +${i.carry}  `;
     if (i.short) sub += `qoldi ${i.short} — keyingi oyga ko'chadi`;
     g.fillText(sub, PAD, y + 98);
