@@ -972,6 +972,34 @@ def send_telegram_video(video_bytes, caption, chat_id=None, thread_id=None):
         return False
 
 
+def send_telegram_photo(img_bytes, caption, filename="hisobot.jpg", mime="image/jpeg", chat_id=None):
+    """Telegram'ga rasm yuboradi (sinxron — True/False). Mijoz oylik hisoboti uchun."""
+    target = chat_id or TELEGRAM_CHAT_ID
+    if not TELEGRAM_BOT_TOKEN or not target:
+        return False
+    boundary = "----KadrPhoto" + secrets.token_hex(16)
+    fields = {"chat_id": str(target), "caption": caption, "parse_mode": "HTML"}
+    parts = []
+    for key, val in fields.items():
+        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n{val}\r\n".encode("utf-8"))
+    parts.append(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"{filename}\"\r\n"
+        f"Content-Type: {mime}\r\n\r\n".encode("utf-8")
+    )
+    parts.append(img_bytes)
+    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+    body = b"".join(parts)
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+        req = urllib.request.Request(url, data=body,
+                                     headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+        return bool(res.get("ok"))
+    except Exception:
+        return False
+
+
 def send_telegram_document(file_bytes, filename, caption, chat_id=None):
     """Telegram'ga matnli hujjat (masalan oylik hisobot .txt) yuboradi —
     sendVideo bilan bir xil qo'lda-multipart uslub, faqat 'document' maydoni."""
@@ -1126,6 +1154,12 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS payments (
         id {pk}, editor TEXT, amount INTEGER, paid_by TEXT, note TEXT DEFAULT '',
         pdate TEXT, created_at {ts})""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS report_items (
+        id {pk}, client TEXT, kind TEXT DEFAULT 'boshqa', label TEXT, qty INTEGER DEFAULT 0,
+        source TEXT DEFAULT '', sort INTEGER DEFAULT 0, active INTEGER DEFAULT 1, start_ym TEXT DEFAULT '')""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS report_log (
+        id {pk}, item_id INTEGER, client TEXT, ym TEXT, qty INTEGER DEFAULT 1, note TEXT DEFAULT '',
+        created_by TEXT, created_at TEXT, deleted INTEGER DEFAULT 0)""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS manual_penalties (
         id {pk}, person TEXT, amount INTEGER, reason TEXT DEFAULT '', pdate TEXT, ym TEXT,
         created_by TEXT, created_at TEXT, cancelled INTEGER DEFAULT 0,
@@ -6587,6 +6621,287 @@ def _paid_to(conn, name, ym):
 
 
 # ------------------------------------------------------------
+#  MIJOZ OYLIK HISOBOTI — kelishuv (har oy nima qilinadi) vs qilingan ish
+# ------------------------------------------------------------
+REPORT_KINDS = [
+    ("reels", "Reels video"), ("podcast", "Podcast"), ("youtube", "YouTube video"), ("vsl", "VSL video"),
+    ("karusel", "Karusel post"), ("story", "Stories"), ("ssenariy", "Ssenariy"), ("strategiya", "Strategiya"),
+    ("kontent_plan", "Kontent plan"), ("syomka", "Syomka"), ("dizayn", "Rasm / dizayn"), ("boshqa", "Boshqa"),
+]
+# Avtomatik sanash manbalari (qolgani qo'lda "+1" bilan kiritiladi)
+REPORT_SOURCES = {
+    "": "Qo'lda kiritiladi",
+    "video:reels": "Avto: qabul qilingan Reels videolar",
+    "video:podcast": "Avto: qabul qilingan Podcast videolar",
+    "video:youtube": "Avto: qabul qilingan YouTube videolar",
+    "video:all": "Avto: barcha qabul qilingan videolar",
+    "script": "Avto: tasdiqlangan ssenariylar",
+    "shoot": "Avto: syomkalar",
+}
+REPORT_ROLES = ("ceo", "coordinator", "lead")
+
+
+def _ym_add(ym, n):
+    y, m = (int(x) for x in ym.split("-"))
+    t = y * 12 + (m - 1) + n
+    return "%04d-%02d" % (t // 12, t % 12 + 1)
+
+
+def _report_client_projects(conn, client):
+    return [r["name"] for r in conn.execute("SELECT name FROM projects WHERE client=?", (client,)).fetchall()]
+
+
+def _report_auto_count(conn, client, projects, source, ym):
+    like = ym + "%"
+    pj = ""
+    params = [client]
+    if projects:
+        pj = " OR project IN (%s)" % ",".join(["?"] * len(projects))
+        params += projects
+    if source.startswith("video:"):
+        vt = source.split(":", 1)[1]
+        sql = ("SELECT COUNT(*) AS n FROM videos WHERE (client=?" + pj + ") AND status IN ('qabul_qilindi','joylandi') "
+               "AND approved_at LIKE ?")
+        params.append(like)
+        if vt != "all":
+            sql += " AND COALESCE(vtype,'reels')=?"
+            params.append(vt)
+        return conn.execute(sql, params).fetchone()["n"] or 0
+    if source == "script":
+        sql = ("SELECT COUNT(*) AS n FROM scripts WHERE (client=?" + pj + ") AND status='tasdiqlandi' AND approved_at LIKE ?")
+        return conn.execute(sql, params + [like]).fetchone()["n"] or 0
+    if source == "shoot":
+        if not projects:
+            return 0
+        sql = ("SELECT COUNT(*) AS n FROM shoots WHERE project IN (%s) AND (status IS NULL OR status<>'bekor_qilindi') "
+               "AND sdate LIKE ?" % ",".join(["?"] * len(projects)))
+        return conn.execute(sql, projects + [like]).fetchone()["n"] or 0
+    return 0
+
+
+def _report_manual_count(conn, item_id, ym):
+    return conn.execute("SELECT COALESCE(SUM(qty),0) AS n FROM report_log WHERE item_id=? AND ym=? AND COALESCE(deleted,0)=0",
+                        (item_id, ym)).fetchone()["n"] or 0
+
+
+def _report_client_month(conn, client, ym):
+    """Mijozning shu oydagi hisoboti. Bajarilmagan ish keyingi oyga ko'chadi (carry):
+    target(oy) = reja + oldingi oylardan ko'chgan; carry_out = max(0, target - bajarilgan)."""
+    projects = _report_client_projects(conn, client)
+    items_rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM report_items WHERE client=? AND COALESCE(active,1)=1 ORDER BY sort, id", (client,)).fetchall()]
+    items = []
+    for it in items_rows:
+        start = it.get("start_ym") or ym
+        if start > ym:
+            continue
+        first = max(start, _ym_add(ym, -11))
+        carry = 0
+        m = first
+        while m < ym:
+            done_m = _report_auto_count(conn, client, projects, it["source"] or "", m) + _report_manual_count(conn, it["id"], m)
+            carry = max(0, (it["qty"] or 0) + carry - done_m)
+            m = _ym_add(m, 1)
+        plan = int(it["qty"] or 0)
+        auto = _report_auto_count(conn, client, projects, it["source"] or "", ym)
+        manual = _report_manual_count(conn, it["id"], ym)
+        done = auto + manual
+        target = plan + carry
+        items.append({
+            "id": it["id"], "kind": it["kind"], "label": it["label"], "source": it["source"] or "",
+            "plan": plan, "carry": carry, "target": target, "done": done, "auto": auto, "manual": manual,
+            "extra": max(0, done - target), "short": max(0, target - done),
+            "pct": round(done / target * 100) if target else (100 if done else 0),
+        })
+    t_target = sum(i["target"] for i in items)
+    t_in_plan = sum(min(i["done"], i["target"]) for i in items)
+    return {
+        "client": client, "ym": ym, "items": items,
+        "totalTarget": t_target, "totalDone": sum(i["done"] for i in items),
+        "totalExtra": sum(i["extra"] for i in items), "totalShort": sum(i["short"] for i in items),
+        "totalCarry": sum(i["carry"] for i in items),
+        "planPct": round(t_in_plan / t_target * 100) if t_target else 0,
+    }
+
+
+def api_report_overview(user, ym=None):
+    if user["role"] not in REPORT_ROLES:
+        return {"error": "Ruxsat yo'q"}, 403
+    ym = (ym or "").strip() or uz_today().strftime("%Y-%m")
+    conn = get_db()
+    clients = sorted({r["client"] for r in conn.execute(
+        "SELECT DISTINCT client FROM projects WHERE client IS NOT NULL AND client<>''").fetchall()})
+    with_items = {r["client"] for r in conn.execute(
+        "SELECT DISTINCT client FROM report_items WHERE COALESCE(active,1)=1").fetchall()}
+    for c in with_items:
+        if c not in clients:
+            clients.append(c)
+    today = uz_today()
+    cur = today.strftime("%Y-%m") == ym
+    from calendar import monthrange
+    frac = (today.day / monthrange(today.year, today.month)[1]) if cur else 1.0
+    out = []
+    for c in sorted(clients):
+        if c in with_items:
+            rep = _report_client_month(conn, c, ym)
+            behind = [i["label"] for i in rep["items"]
+                      if cur and i["target"] and i["done"] < i["target"] * frac * 0.7]
+            out.append({"client": c, "hasAgreement": True, "planPct": rep["planPct"], "totalTarget": rep["totalTarget"],
+                        "totalDone": rep["totalDone"], "totalExtra": rep["totalExtra"], "totalShort": rep["totalShort"],
+                        "totalCarry": rep["totalCarry"], "behind": behind})
+        else:
+            out.append({"client": c, "hasAgreement": False})
+    conn.close()
+    return {"ym": ym, "clients": out, "kinds": REPORT_KINDS, "sources": REPORT_SOURCES}
+
+
+def api_report_month(user, client, ym=None):
+    if user["role"] not in REPORT_ROLES:
+        return {"error": "Ruxsat yo'q"}, 403
+    client = (client or "").strip()
+    ym = (ym or "").strip() or uz_today().strftime("%Y-%m")
+    conn = get_db()
+    rep = _report_client_month(conn, client, ym)
+    logs = [dict(r) for r in conn.execute(
+        "SELECT l.id, l.item_id, l.qty, l.note, l.created_by, l.created_at, i.label FROM report_log l "
+        "LEFT JOIN report_items i ON i.id=l.item_id WHERE l.client=? AND l.ym=? AND COALESCE(l.deleted,0)=0 "
+        "ORDER BY l.id DESC", (client, ym)).fetchall()]
+    conn.close()
+    rep["logs"] = logs
+    rep["kinds"] = REPORT_KINDS
+    rep["sources"] = REPORT_SOURCES
+    return rep
+
+
+def api_report_agreement_save(user, b):
+    """CEO: mijoz kelishuvini (oylik ishlar ro'yxati) saqlaydi. Mavjud qatorlar id bo'yicha yangilanadi,
+    ro'yxatda yo'q qatorlar o'chirilmaydi, faqat nofaol bo'ladi (tarix saqlanadi)."""
+    if user["role"] != "ceo":
+        return {"error": "Faqat CEO"}, 403
+    client = (b.get("client") or "").strip()
+    items = b.get("items") or []
+    if not client:
+        return {"error": "Mijoz nomini kiriting"}, 400
+    clean = []
+    for i, it in enumerate(items):
+        label = (it.get("label") or "").strip()
+        try:
+            qty = int(it.get("qty") or 0)
+        except (ValueError, TypeError):
+            qty = 0
+        if not label:
+            continue
+        if qty <= 0 or qty > 100000:
+            return {"error": f"«{label}» uchun oylik sonni to'g'ri kiriting"}, 400
+        kind = it.get("kind") if it.get("kind") in dict(REPORT_KINDS) else "boshqa"
+        source = it.get("source") if it.get("source") in REPORT_SOURCES else ""
+        clean.append({"id": it.get("id"), "label": label, "qty": qty, "kind": kind, "source": source, "sort": i})
+    conn = get_db()
+    ym = uz_today().strftime("%Y-%m")
+    keep = set()
+    for it in clean:
+        row = conn.execute("SELECT id FROM report_items WHERE id=? AND client=?", (it["id"], client)).fetchone() if it["id"] else None
+        if row:
+            conn.execute("UPDATE report_items SET label=?, qty=?, kind=?, source=?, sort=?, active=1 WHERE id=?",
+                         (it["label"], it["qty"], it["kind"], it["source"], it["sort"], row["id"]))
+            keep.add(row["id"])
+        else:
+            conn.execute("INSERT INTO report_items (client, kind, label, qty, source, sort, active, start_ym) VALUES (?,?,?,?,?,?,1,?)",
+                         (client, it["kind"], it["label"], it["qty"], it["source"], it["sort"], ym))
+            nid = conn.execute("SELECT MAX(id) AS m FROM report_items WHERE client=?", (client,)).fetchone()["m"]
+            keep.add(nid)
+    for r in conn.execute("SELECT id FROM report_items WHERE client=? AND COALESCE(active,1)=1", (client,)).fetchall():
+        if r["id"] not in keep:
+            conn.execute("UPDATE report_items SET active=0 WHERE id=?", (r["id"],))
+    log_audit(conn, user["name"], "mijoz kelishuvini saqladi", f"{client}: {len(clean)} ta ish turi")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_report_agreement_get(user, client):
+    if user["role"] not in REPORT_ROLES:
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    items = [dict(r) for r in conn.execute(
+        "SELECT id, kind, label, qty, source FROM report_items WHERE client=? AND COALESCE(active,1)=1 ORDER BY sort, id",
+        ((client or "").strip(),)).fetchall()]
+    conn.close()
+    return {"client": client, "items": items}
+
+
+def api_report_log_add(user, b):
+    if user["role"] not in REPORT_ROLES:
+        return {"error": "Ruxsat yo'q"}, 403
+    try:
+        item_id = int(b.get("item_id") or 0)
+        qty = int(b.get("qty") or 1)
+    except (ValueError, TypeError):
+        return {"error": "Noto'g'ri ma'lumot"}, 400
+    if qty < 1 or qty > 1000:
+        return {"error": "Sonni to'g'ri kiriting"}, 400
+    ym = (b.get("ym") or "").strip() or uz_today().strftime("%Y-%m")
+    conn = get_db()
+    it = conn.execute("SELECT id, client, label FROM report_items WHERE id=?", (item_id,)).fetchone()
+    if not it:
+        conn.close()
+        return {"error": "Ish turi topilmadi"}, 404
+    conn.execute("INSERT INTO report_log (item_id, client, ym, qty, note, created_by, created_at) VALUES (?,?,?,?,?,?,?)",
+                 (item_id, it["client"], ym, qty, (b.get("note") or "").strip()[:300], user["name"], now_local()))
+    log_audit(conn, user["name"], "hisobotga ish qo'shdi", f"{it['client']}: {it['label']} +{qty}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_report_log_delete(user, lid):
+    if user["role"] not in REPORT_ROLES:
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    row = conn.execute("SELECT * FROM report_log WHERE id=?", (lid,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Topilmadi"}, 404
+    if user["role"] != "ceo" and row["created_by"] != user["name"]:
+        conn.close()
+        return {"error": "Faqat o'zingiz kiritganni o'chira olasiz"}, 403
+    conn.execute("UPDATE report_log SET deleted=1 WHERE id=?", (lid,))
+    log_audit(conn, user["name"], "hisobotdagi yozuvni o'chirdi", f"{row['client']} #{lid}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def api_report_send_image(user, b):
+    """Hisobot rasmini (brauzerda chizilgan) jamoa Telegram guruhiga yuboradi."""
+    if user["role"] != "ceo":
+        return {"error": "Faqat CEO"}, 403
+    client = (b.get("client") or "").strip()
+    ym = (b.get("ym") or "").strip()
+    data = b.get("image") or ""
+    if "," in data:
+        head, data = data.split(",", 1)
+    else:
+        head = ""
+    try:
+        img = base64.b64decode(data)
+    except Exception:
+        return {"error": "Rasm noto'g'ri"}, 400
+    if len(img) < 1000 or len(img) > 9_000_000:
+        return {"error": "Rasm hajmi noto'g'ri"}, 400
+    mime = "image/png" if "png" in head else "image/jpeg"
+    caption = f"📊 <b>{client}</b> — {ym} oylik hisobot"
+    ok = send_telegram_photo(img, caption, filename="hisobot." + ("png" if mime.endswith("png") else "jpg"), mime=mime)
+    if not ok:
+        return {"error": "Telegramga yuborib bo'lmadi (token/guruh sozlamasini tekshiring)"}, 502
+    conn = get_db()
+    log_audit(conn, user["name"], "mijoz hisobotini guruhga yubordi", f"{client} {ym}")
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------
 #  CEO QO'LDA JARIMASI — CEO xodimni tanlab summa va sabab kiritadi, shu oy daromadidan ayriladi
 # ------------------------------------------------------------
 MANUAL_PENALTY_MAX = 50_000_000
@@ -10409,6 +10724,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_playbooks(user))
         if path == "/api/scenarist":
             return self._forbid() if not is_scenarist(user) else self._json(api_scenarist(user))
+        if path == "/api/reports/overview":
+            return self._json(api_report_overview(user, (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]))
+        if path == "/api/reports/month":
+            q = parse_qs(urlparse(self.path).query)
+            return self._json(api_report_month(user, (q.get("client") or [""])[0], (q.get("ym") or [""])[0]))
+        if path == "/api/reports/agreement":
+            return self._json(api_report_agreement_get(user, (parse_qs(urlparse(self.path).query).get("client") or [""])[0]))
         if path == "/api/penalties":
             ym = (parse_qs(urlparse(self.path).query).get("ym") or [""])[0]
             res = api_penalties(user, ym)
@@ -10756,6 +11078,14 @@ class Handler(BaseHTTPRequestHandler):
             if r != "ceo":
                 return self._forbid()
             return self._json(api_clear_attendance(user, b))
+        if path == "/api/reports/agreement":
+            return self._json(api_report_agreement_save(user, b or {}))
+        if path == "/api/reports/log":
+            return self._json(api_report_log_add(user, b or {}))
+        if len(seg) == 5 and seg[1] == "reports" and seg[2] == "log" and seg[4] == "delete" and seg[3].isdigit():
+            return self._json(api_report_log_delete(user, int(seg[3])))
+        if path == "/api/reports/send-image":
+            return self._json(api_report_send_image(user, b or {}))
         if path == "/api/penalties":
             if r != "ceo":
                 return self._forbid()

@@ -301,6 +301,7 @@ const NAV_ITEMS = [
   { view: 'kassa',     icon: '💰', label: 'Kassa',         roles: ['ceo', 'lead'], names: ['Dilshod Khamraev', 'Gulmira'] },
   { view: 'late',      icon: '⏰', label: 'Kechikkanlar',   roles: ['ceo'] },
   { view: 'penalties', icon: '⚖️', label: 'Jarima',         roles: ['ceo'] },
+  { view: 'reports',   icon: '📊', label: 'Mijoz hisoboti', roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Xonzoda', 'Gulmira', 'Samandar', 'Shodiya', 'Umid'] },
   { view: 'archive',   icon: '🗄', label: 'Oylik arxiv',    roles: ['ceo'] },
   { view: 'income',    icon: '💳', label: 'To\'lovlar',      roles: ['ceo'] },
   { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
@@ -370,6 +371,7 @@ const TITLES = {
   videos:    ['Montaj — videolar', 'Biriktirish va qabul qilish'],
   qc:        ['Sifat nazorati', 'Montaj qilingan, tasdiq kutayotgan videolar'],
   shoots:    ['Kadr Media', 'Loyiha syomkalari — operator, vaqt va pul'],
+  reports: ['Mijoz hisoboti', 'Oylik kelishuv va bajarilgan ishlar — har mijozga'],
   penalties: ['Jarima', 'Xodimga jarima yozish — daromaddan ayriladi'],
   myscripts: ['Ssenariylarim', 'Tasdiqlangan ssenariylar va hisoblangan pul'],
   salary:    ['Maosh', 'Fiksa, rahbarlik va daromadlar'],
@@ -443,6 +445,7 @@ async function render() {
     else if (VIEW === 'team') await viewTeam();
     else if (VIEW === 'audit') await viewAudit();
     else if (VIEW === 'penalties') await viewPenalties();
+    else if (VIEW === 'reports') await viewReports();
     else if (VIEW === 'cabinet') await viewCabinet();
     else if (VIEW === 'client') await viewProjects();
   } catch (e) {
@@ -4064,6 +4067,245 @@ async function viewTeam() {
 // ============================================================
 //  AUDIT
 // ============================================================
+// ============================================================
+//  MIJOZ OYLIK HISOBOTI — kelishuv vs qilingan ish
+// ============================================================
+let REP_YM = '';
+let REP_CLIENT = '';
+const REP_YELLOW = '#F5B301', REP_GREEN = '#22C55E', REP_GRAY = '#E3DED5';
+
+function repBarHTML(i) {
+  const max = Math.max(i.target, i.done, 1);
+  const inPlan = Math.min(i.done, i.target);
+  const w1 = (inPlan / max * 100).toFixed(1);
+  const w2 = (i.extra / max * 100).toFixed(1);
+  const tick = (i.target / max * 100).toFixed(1);
+  return `<div class="rep-bar"><div class="rep-fill" style="width:${w1}%;background:${REP_YELLOW}"></div>`
+    + `<div class="rep-fill" style="left:${w1}%;width:${w2}%;background:${REP_GREEN}"></div>`
+    + (i.extra > 0 ? `<div class="rep-tick" style="left:${tick}%"></div>` : '') + `</div>`;
+}
+
+async function viewReports() {
+  const ym = REP_YM || new Date().toISOString().slice(0, 7);
+  if (REP_CLIENT) return viewReportClient(ym);
+  const d = await api('/api/reports/overview?ym=' + ym);
+  if (d.error) { $('#content').innerHTML = emptyState(d.error); return; }
+  const isCeo = ME.role === 'ceo';
+  const cards = d.clients.map((c) => c.hasAgreement ? `
+    <div class="team-card rep-card" data-client="${esc(c.client)}" style="cursor:pointer">
+      <div class="team-name">${esc(c.client)}</div>
+      <div class="rep-bar" style="margin:10px 0 6px"><div class="rep-fill" style="width:${Math.min(c.planPct, 100)}%;background:${REP_YELLOW}"></div></div>
+      <div class="mrow"><span>Reja bajarilishi</span><b>${c.totalDone} / ${c.totalTarget} · ${c.planPct}%</b></div>
+      ${c.totalExtra ? `<div class="mrow"><span style="color:${REP_GREEN}">Ortiqcha ish</span><b style="color:${REP_GREEN}">+${c.totalExtra}</b></div>` : ''}
+      ${c.totalShort ? `<div class="mrow"><span class="muted">Qolgan (keyingi oyga ko'chadi)</span><b>${c.totalShort}</b></div>` : ''}
+      ${c.behind && c.behind.length ? `<div class="pc-problem soft" style="margin-top:8px">⚠️ Orqada: ${esc(c.behind.join(', '))}</div>` : ''}
+    </div>` : `
+    <div class="team-card" style="opacity:.75">
+      <div class="team-name">${esc(c.client)}</div>
+      <div class="muted" style="margin:8px 0">Kelishuv kiritilmagan</div>
+      ${isCeo ? `<button class="btn-ghost sm rep-setup" data-client="${esc(c.client)}">⚙️ Kelishuvni kiritish</button>` : ''}
+    </div>`).join('');
+  $('#content').innerHTML = `
+    <div class="panel" style="margin-bottom:16px">
+      <div class="field-row" style="align-items:end">
+        <div class="field" style="margin:0;max-width:200px"><label>Oy</label><input id="rep_ym" type="month" value="${esc(ym)}" /></div>
+        ${isCeo ? `<button class="btn-ghost" id="rep_new" style="max-width:220px">➕ Yangi mijoz kelishuvi</button>` : ''}
+      </div>
+      <p class="muted" style="margin-top:8px">Sariq — kelishuv bo'yicha bajarilgani, yashil — kelishuvdan ortiqcha. Bajarilmagan ish keyingi oyga ko'chadi.</p>
+    </div>
+    <div class="cards-grid">${cards || emptyState('Mijozlar yo\'q')}</div>`;
+  $('#rep_ym').addEventListener('change', (e) => { REP_YM = e.target.value; render(); });
+  $$('.rep-card').forEach((el) => el.addEventListener('click', () => { REP_CLIENT = el.dataset.client; render(); }));
+  $$('.rep-setup').forEach((b) => b.addEventListener('click', () => openAgreementModal(b.dataset.client)));
+  const nb = $('#rep_new');
+  if (nb) nb.addEventListener('click', () => openAgreementModal(''));
+}
+
+async function viewReportClient(ym) {
+  const r = await api('/api/reports/month?client=' + encodeURIComponent(REP_CLIENT) + '&ym=' + ym);
+  if (r.error) { $('#content').innerHTML = emptyState(r.error); return; }
+  const isCeo = ME.role === 'ceo';
+  const rows = r.items.map((i) => `
+    <div class="rep-row">
+      <div class="rep-head"><b>${esc(i.label)}</b>
+        <span><b>${i.done}</b> / ${i.target}${i.carry ? ` <span class="muted">(o'tgan oydan +${i.carry})</span>` : ''}
+          ${i.extra ? `<b style="color:${REP_GREEN}"> +${i.extra} ortiqcha</b>` : ''}</span></div>
+      ${repBarHTML(i)}
+      <div class="rep-foot"><span class="muted">${i.source ? `avto ${i.auto} + qo'lda ${i.manual}` : `qo'lda ${i.manual}`}${i.short ? ` · qoldi ${i.short}` : ''}</span>
+        <button class="mini-btn gray rep-add" data-id="${i.id}" data-label="${esc(i.label)}">+ Qo'shish</button></div>
+    </div>`).join('');
+  const logs = (r.logs || []).map((l) => `
+    <div class="activity-item"><div class="activity-dot" style="background:${REP_YELLOW}"></div>
+      <div style="flex:1"><b>${esc(l.label || '—')}</b> +${l.qty} <span class="muted">· ${esc(l.created_by || '')} · ${esc((l.created_at || '').slice(5, 16))}${l.note ? ' · ' + esc(l.note) : ''}</span></div>
+      <button class="mini-btn red rep-del" data-id="${l.id}">🗑</button></div>`).join('') || '<div class="muted">Hali qo\'lda yozuv yo\'q</div>';
+  $('#content').innerHTML = `
+    <div class="panel" style="margin-bottom:16px;max-width:640px">
+      <div class="field-row" style="align-items:center">
+        <button class="btn-ghost sm" id="rep_back" style="max-width:120px">← Orqaga</button>
+        <div style="flex:1"><b style="font-size:18px">${esc(r.client)}</b><div class="muted">${esc(UZ_YM(ym))}</div></div>
+      </div>
+      <div class="stats-grid" style="margin-top:12px">
+        ${statTile('🎯', r.planPct + '%', 'Reja bajarilishi', 'orange')}
+        ${statTile('✅', r.totalExtra ? '+' + r.totalExtra : '0', 'Ortiqcha ish', 'green')}
+        ${statTile('⏳', r.totalShort, 'Keyingi oyga ko\'chadi', 'purple')}
+      </div>
+      <div style="margin-top:12px">${rows || emptyState('Kelishuv kiritilmagan')}</div>
+      <div class="field-row" style="margin-top:12px;gap:8px">
+        <button class="btn-save" id="rep_dl">📥 Rasm yuklab olish</button>
+        ${isCeo ? `<button class="btn-primary" id="rep_send">📤 Guruhga yuborish</button>` : ''}
+        ${isCeo ? `<button class="btn-ghost" id="rep_edit">⚙️ Kelishuv</button>` : ''}
+      </div>
+    </div>
+    <div class="panel" style="max-width:640px"><div class="sec-label" style="margin-bottom:8px">Qo'lda kiritilganlar</div>${logs}</div>`;
+  $('#rep_back').addEventListener('click', () => { REP_CLIENT = ''; render(); });
+  $$('.rep-add').forEach((b) => b.addEventListener('click', () => openRepAddModal(b.dataset.id, b.dataset.label, ym)));
+  $$('.rep-del').forEach((b) => b.addEventListener('click', async () => {
+    if (!confirm('Bu yozuv o\'chirilsinmi?')) return;
+    const x = await api('/api/reports/log/' + b.dataset.id + '/delete', { method: 'POST', body: '{}' });
+    if (x && x.error) { toast('⚠️ ' + x.error); return; }
+    render();
+  }));
+  $('#rep_dl').addEventListener('click', () => {
+    const cv = drawReportCanvas(r);
+    const a = document.createElement('a');
+    a.href = cv.toDataURL('image/png');
+    a.download = `hisobot-${r.client.replace(/[^a-zA-Z0-9]+/g, '_')}-${ym}.png`;
+    a.click();
+  });
+  const sb = $('#rep_send');
+  if (sb) sb.addEventListener('click', async () => {
+    if (!confirm(`${r.client} hisobotini jamoa guruhiga rasm qilib yuboraylikmi?`)) return;
+    sb.disabled = true;
+    const cv = drawReportCanvas(r);
+    const res = await api('/api/reports/send-image', { method: 'POST', body: JSON.stringify({ client: r.client, ym: UZ_YM(ym), image: cv.toDataURL('image/jpeg', 0.92) }) });
+    sb.disabled = false;
+    if (res && res.error) { toast('⚠️ ' + res.error); return; }
+    toast('📤 Guruhga yuborildi');
+  });
+  const eb = $('#rep_edit');
+  if (eb) eb.addEventListener('click', () => openAgreementModal(r.client));
+}
+
+function openRepAddModal(itemId, label, ym) {
+  openModal('➕ ' + label, `
+    <div class="field"><label>Nechta ish qilindi?</label><input id="ra_qty" type="number" inputmode="numeric" value="1" min="1" /></div>
+    <div class="field"><label>Izoh / havola (ixtiyoriy)</label><input id="ra_note" type="text" placeholder="masalan: instagram.com/p/..." /></div>
+    <button class="btn-save" id="ra_save">Saqlash</button>`, () => {
+    $('#ra_save').addEventListener('click', async () => {
+      const qty = parseInt($('#ra_qty').value || '0', 10);
+      if (!(qty > 0)) { toast('Sonni kiriting'); return; }
+      const x = await api('/api/reports/log', { method: 'POST', body: JSON.stringify({ item_id: itemId, qty, note: $('#ra_note').value.trim(), ym }) });
+      if (x && x.error) { toast('⚠️ ' + x.error); return; }
+      closeModal(); toast('✅ Qo\'shildi'); render();
+    });
+  });
+}
+
+async function openAgreementModal(client) {
+  const meta = await api('/api/reports/overview');
+  const kinds = meta.kinds || [], sources = meta.sources || {};
+  const existing = client ? (await api('/api/reports/agreement?client=' + encodeURIComponent(client))).items || [] : [];
+  const clientNames = (meta.clients || []).map((c) => c.client);
+  const rowHTML = (it) => `
+    <div class="ag-row" data-id="${it.id || ''}">
+      <select class="ag-kind">${kinds.map(([k, l]) => `<option value="${k}" ${it.kind === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      <input class="ag-label" type="text" value="${esc(it.label || '')}" placeholder="Nomi (masalan: Reels video)" />
+      <input class="ag-qty" type="number" inputmode="numeric" min="1" value="${it.qty || ''}" placeholder="Soni" />
+      <select class="ag-src">${Object.entries(sources).map(([k, l]) => `<option value="${k}" ${(it.source || '') === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      <button class="mini-btn red ag-rm" type="button">✕</button>
+    </div>`;
+  openModal(client ? '⚙️ Kelishuv — ' + client : '➕ Yangi mijoz kelishuvi', `
+    <div class="field"><label>Mijoz</label>
+      <input id="ag_client" list="ag_clients" type="text" value="${esc(client)}" ${client ? 'readonly' : ''} placeholder="Mijoz nomi" />
+      <datalist id="ag_clients">${clientNames.map((n) => `<option value="${esc(n)}">`).join('')}</datalist></div>
+    <p class="muted" style="margin-bottom:8px">Har oy qilinadigan ishlar. «Soni» — oylik kelishuv. Manba «Avto» bo'lsa tizim o'zi sanaydi, «Qo'lda» bo'lsa loyiha rahbari +1 bosadi.</p>
+    <div id="ag_rows">${(existing.length ? existing : [{}]).map(rowHTML).join('')}</div>
+    <button class="btn-ghost sm" id="ag_add" type="button">+ Ish turi qo'shish</button>
+    <button class="btn-save" id="ag_save" style="margin-top:12px">💾 Saqlash</button>`, () => {
+    const bind = () => $$('.ag-rm').forEach((b) => { b.onclick = () => b.closest('.ag-row').remove(); });
+    // tur tanlanganda nom bo'sh bo'lsa avtomatik to'ldiriladi
+    const bindKind = () => $$('.ag-kind').forEach((s) => { s.onchange = () => {
+      const lab = s.closest('.ag-row').querySelector('.ag-label');
+      if (!lab.value.trim()) lab.value = (kinds.find(([k]) => k === s.value) || [, ''])[1];
+    }; });
+    bind(); bindKind();
+    $('#ag_add').onclick = () => { $('#ag_rows').insertAdjacentHTML('beforeend', rowHTML({})); bind(); bindKind(); };
+    $('#ag_save').onclick = async () => {
+      const cl = $('#ag_client').value.trim();
+      if (!cl) { toast('Mijoz nomini kiriting'); return; }
+      const items = $$('.ag-row').map((r) => ({
+        id: r.dataset.id ? parseInt(r.dataset.id, 10) : null,
+        kind: r.querySelector('.ag-kind').value, label: r.querySelector('.ag-label').value.trim(),
+        qty: parseInt(r.querySelector('.ag-qty').value || '0', 10), source: r.querySelector('.ag-src').value,
+      })).filter((i) => i.label);
+      if (!items.length) { toast('Kamida bitta ish turini kiriting'); return; }
+      const x = await api('/api/reports/agreement', { method: 'POST', body: JSON.stringify({ client: cl, items }) });
+      if (x && x.error) { toast('⚠️ ' + x.error); return; }
+      closeModal(); toast('✅ Kelishuv saqlandi'); REP_CLIENT = cl; render();
+    };
+  });
+}
+
+function drawReportCanvas(r) {
+  const W = 1080, PAD = 64, rowH = 118;
+  const H = 400 + r.items.length * rowH + 90;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const g = cv.getContext('2d');
+  const FONT = '-apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  g.fillStyle = '#FAF7F2'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#16181D'; g.fillRect(0, 0, W, 190);
+  g.fillStyle = '#fff'; g.font = `700 30px ${FONT}`; g.fillText('KADR MEDIA', PAD, 72);
+  g.fillStyle = '#9AA0AA'; g.font = `500 26px ${FONT}`; g.fillText('Oylik ish hisoboti', PAD, 112);
+  g.fillStyle = '#fff'; g.font = `700 46px ${FONT}`;
+  let t = r.client; while (g.measureText(t).width > W - 2 * PAD && t.length > 4) t = t.slice(0, -2);
+  g.fillText(t === r.client ? t : t + '…', PAD, 166);
+  g.textAlign = 'right'; g.fillStyle = REP_YELLOW; g.font = `700 30px ${FONT}`; g.fillText(UZ_YM(r.ym), W - PAD, 72);
+  g.textAlign = 'left';
+  // umumiy ko'rsatkichlar
+  const stat = (x, big, small, col) => {
+    g.fillStyle = col; g.font = `800 76px ${FONT}`; g.fillText(big, x, 300);
+    g.fillStyle = '#6B6F78'; g.font = `500 26px ${FONT}`; g.fillText(small, x, 340);
+  };
+  stat(PAD, r.planPct + '%', 'Reja bajarilishi', '#16181D');
+  stat(PAD + 340, r.totalExtra ? '+' + r.totalExtra : '0', 'Ortiqcha ish', REP_GREEN);
+  stat(PAD + 680, String(r.totalDone), 'Jami qilingan ish', '#16181D');
+  // qatorlar
+  let y = 400;
+  r.items.forEach((i) => {
+    g.fillStyle = '#16181D'; g.font = `700 32px ${FONT}`; g.fillText(i.label, PAD, y + 30);
+    g.textAlign = 'right'; g.font = `700 32px ${FONT}`; g.fillStyle = '#16181D';
+    g.fillText(`${i.done} / ${i.target}`, W - PAD, y + 30);
+    g.textAlign = 'left';
+    const bx = PAD, by = y + 48, bw = W - 2 * PAD, bh = 26;
+    const max = Math.max(i.target, i.done, 1);
+    g.fillStyle = REP_GRAY; roundRect(g, bx, by, bw, bh, 13); g.fill();
+    const w1 = bw * Math.min(i.done, i.target) / max;
+    if (w1 > 0) { g.fillStyle = REP_YELLOW; roundRect(g, bx, by, Math.max(w1, 14), bh, 13); g.fill(); }
+    if (i.extra > 0) {
+      const w2 = bw * i.extra / max;
+      g.fillStyle = REP_GREEN; g.fillRect(bx + w1, by, Math.min(w2, bw - w1), bh);
+      g.fillStyle = '#16181D'; g.fillRect(bx + bw * i.target / max - 2, by - 6, 4, bh + 12);
+    }
+    g.font = `500 24px ${FONT}`; g.fillStyle = '#6B6F78';
+    let sub = '';
+    if (i.carry) sub += `o'tgan oydan +${i.carry}  `;
+    if (i.short) sub += `qoldi ${i.short} — keyingi oyga ko'chadi`;
+    g.fillText(sub, PAD, y + 98);
+    if (i.extra > 0) { g.textAlign = 'right'; g.fillStyle = '#15803D'; g.font = `700 26px ${FONT}`; g.fillText(`+${i.extra} ortiqcha`, W - PAD, y + 98); g.textAlign = 'left'; }
+    y += rowH;
+  });
+  // legend + footer
+  y += 6;
+  g.fillStyle = REP_YELLOW; g.fillRect(PAD, y, 22, 22); g.fillStyle = '#16181D'; g.font = `500 24px ${FONT}`; g.fillText('Kelishuv bo\'yicha', PAD + 32, y + 19);
+  g.fillStyle = REP_GREEN; g.fillRect(PAD + 290, y, 22, 22); g.fillStyle = '#16181D'; g.fillText('Kelishuvdan ortiqcha', PAD + 322, y + 19);
+  g.fillStyle = '#9AA0AA'; g.font = `500 22px ${FONT}`; g.fillText('Kadr Media · avtomatik hisobot', PAD, H - 28);
+  return cv;
+}
+function roundRect(g, x, y, w, h, r) {
+  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+
 let PEN_YM = '';
 async function viewPenalties() {
   const d = await api('/api/penalties' + (PEN_YM ? '?ym=' + PEN_YM : ''));
