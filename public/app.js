@@ -787,6 +787,7 @@ function projectCard(p) {
         </div>` : ''}
       <div class="pc-foot"><div class="pc-resp"><div class="mini-av" style="background:${colorFor(p.responsible)}">${initials(p.responsible)}</div><span>${esc(p.responsible) || '—'}</span></div>
         <div class="pc-deadline ${dlCls}">📅 ${dl}</div></div>
+      ${['ceo', 'coordinator', 'lead'].includes(ME.role) && p.client ? `<button class="mini-btn gray proj-report" data-client="${esc(p.client)}" style="margin-top:8px;width:100%">📊 Mijoz hisoboti</button>` : ''}
       ${(ME.role === 'ceo' && !p.frozen) ? `<button class="mini-btn blue proj-reset" data-resetproj="${p.id}" data-name="${esc(p.name)}" style="margin-top:8px;width:100%">🔄 Shu loyihani yangilash (yangi davr)</button>` : ''}
       ${(ME.role === 'ceo' && !p.fullyDone) ? `<button class="mini-btn ${p.frozen ? 'green' : 'gray'} proj-freeze" data-freezeproj="${p.id}" data-name="${esc(p.name)}" data-frozen="${p.frozen ? 1 : 0}" style="margin-top:8px;width:100%">${p.frozen ? '🔥 Muzlatishdan tiklash' : '🧊 Muzlatish (mijoz to\'xtatdi)'}</button>` : ''}
     </div>`;
@@ -796,6 +797,9 @@ function bindProjectCards() {
     document.querySelectorAll('.project-card.clickable').forEach((el) =>
       el.addEventListener('click', () => openProjectModal((DATA.projects || []).find((p) => p.id == el.dataset.id))));
   }
+  document.querySelectorAll('.proj-report').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation(); REP_CLIENT = b.dataset.client; VIEW = 'reports'; render();
+  }));
   document.querySelectorAll('.proj-reset').forEach((b) => b.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (!confirm(`«${b.dataset.name}» loyihasini yangilaysizmi?\n\nJoriy sonlar arxivga yoziladi (Oldingi davrlar), yangi davr 0 dan boshlanadi.`)) return;
@@ -4223,6 +4227,7 @@ async function openAgreementModal(client) {
     <p class="muted" style="margin-bottom:8px">Har oy qilinadigan ishlar. «Soni» — oylik kelishuv. Kelishuvda bo'lmagan ish (masalan podcast) uchun <b>0</b> yozing: hisobotda ko'rinmaydi, lekin qilinsa «ortiqcha» (yashil) bo'lib chiqadi. Manba «Avto» bo'lsa tizim o'zi sanaydi, «Qo'lda» bo'lsa loyiha rahbari +1 bosadi.</p>
     <div id="ag_rows">${(existing.length ? existing : [{}]).map(rowHTML).join('')}</div>
     <button class="btn-ghost sm" id="ag_add" type="button">+ Ish turi qo'shish</button>
+    <button class="btn-ghost sm" id="ag_fromproj" type="button" title="Loyihalar sahifasidagi oylik rejadan to'ldiradi">📥 Loyihalar rejasidan olish</button>
     <button class="btn-save" id="ag_save" style="margin-top:12px">💾 Saqlash</button>`, () => {
     const bind = () => $$('.ag-rm').forEach((b) => { b.onclick = () => b.closest('.ag-row').remove(); });
     // tur tanlanganda nom bo'sh bo'lsa avtomatik to'ldiriladi
@@ -4232,6 +4237,15 @@ async function openAgreementModal(client) {
     }; });
     bind(); bindKind();
     $('#ag_add').onclick = () => { $('#ag_rows').insertAdjacentHTML('beforeend', rowHTML({})); bind(); bindKind(); };
+    $('#ag_fromproj').onclick = async () => {
+      const cl = $('#ag_client').value.trim();
+      if (!cl) { toast('Avval mijoz nomini kiriting'); return; }
+      const d = await api('/api/reports/from-projects?client=' + encodeURIComponent(cl));
+      if (d.error) { toast('⚠️ ' + d.error); return; }
+      if (!d.items.length) { toast('Bu mijozning loyihalarida oylik reja kiritilmagan'); return; }
+      $('#ag_rows').insertAdjacentHTML('beforeend', d.items.map(rowHTML).join('')); bind(); bindKind();
+      toast(`📥 Loyihalardagi reja (${d.plan} ta) qo'shildi`);
+    };
     $('#ag_save').onclick = async () => {
       const cl = $('#ag_client').value.trim();
       if (!cl) { toast('Mijoz nomini kiriting'); return; }

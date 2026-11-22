@@ -6637,7 +6637,13 @@ REPORT_SOURCES = {
     "video:all": "Avto: barcha qabul qilingan videolar",
     "script": "Avto: tasdiqlangan ssenariylar",
     "shoot": "Avto: syomkalar",
+    "project:ssenariy": "Loyihalar: ssenariy (rahbar kiritgan)",
+    "project:syomka": "Loyihalar: syomka (rahbar kiritgan)",
+    "project:montaj": "Loyihalar: montaj (rahbar kiritgan)",
+    "project:tasdiq": "Loyihalar: tasdiq (rahbar kiritgan)",
+    "project:joylash": "Loyihalar: joylash (rahbar kiritgan)",
 }
+REPORT_PROJECT_STAGES = ("ssenariy", "syomka", "montaj", "tasdiq", "joylash")
 REPORT_ROLES = ("ceo", "coordinator", "lead")
 
 
@@ -6651,7 +6657,53 @@ def _report_client_projects(conn, client):
     return [r["name"] for r in conn.execute("SELECT name FROM projects WHERE client=?", (client,)).fetchall()]
 
 
+def _mid_month(d_from, d_to):
+    """Ikki sana (ISO) oralig'ining o'rtasi tushgan oy 'YYYY-MM'."""
+    a = datetime.date.fromisoformat(d_from)
+    b = datetime.date.fromisoformat(d_to)
+    return (a + (b - a) / 2).strftime("%Y-%m")
+
+
+def _report_project_count(conn, client, stage, ym):
+    """«Loyihalar» sahifasida rahbarlar kiritgan bosqich sonlari (done_X) bo'yicha shu oyga tegishli ish soni.
+    Davr — oxirgi «yangilash»dan hozirgacha (done_X − prev_done_X) yoki arxivdagi yopilgan davrlar;
+    davr o'rtasi qaysi oyga tushsa, o'sha oyga yoziladi."""
+    if stage not in REPORT_PROJECT_STAGES:
+        return 0
+    col = "done_" + stage
+    today = uz_today()
+    total = 0
+    for p in conn.execute("SELECT * FROM projects WHERE client=?", (client,)).fetchall():
+        p = dict(p)
+        cur = max((p.get(col) or 0) - (p.get("prev_" + col) or 0), 0)
+        if cur:
+            start = (p.get("prev_period") or "")[:10]
+            try:
+                month = _mid_month(start, today.isoformat()) if start else today.strftime("%Y-%m")
+            except ValueError:
+                month = today.strftime("%Y-%m")
+            if month == ym:
+                total += cur
+        for l in conn.execute("SELECT period_from, period_to, " + col + " AS n FROM project_period_log WHERE project_id=?",
+                              (p["id"],)).fetchall():
+            if not l["n"]:
+                continue
+            pto = (l["period_to"] or "")[:10]
+            pfrom = (l["period_from"] or "")[:10]
+            try:
+                if not pto:
+                    continue
+                month = _mid_month(pfrom, pto) if pfrom else (datetime.date.fromisoformat(pto) - datetime.timedelta(days=15)).strftime("%Y-%m")
+            except ValueError:
+                continue
+            if month == ym:
+                total += l["n"]
+    return total
+
+
 def _report_auto_count(conn, client, projects, source, ym):
+    if source.startswith("project:"):
+        return _report_project_count(conn, client, source.split(":", 1)[1], ym)
     like = ym + "%"
     pj = ""
     params = [client]
@@ -6822,6 +6874,26 @@ def api_report_agreement_save(user, b):
     conn.commit()
     conn.close()
     return {"ok": True}
+
+
+def api_report_from_projects(user, client):
+    """Loyihalar sahifasidagi oylik rejadan (plan) kelishuv qatorlarini taklif qiladi."""
+    if user["role"] not in REPORT_ROLES:
+        return {"error": "Ruxsat yo'q"}, 403
+    conn = get_db()
+    plan = 0
+    for r in conn.execute("SELECT plan, self_post, self_script FROM projects WHERE client=?", ((client or "").strip(),)).fetchall():
+        plan += r["plan"] or 0
+    conn.close()
+    items = []
+    if plan:
+        items = [
+            {"kind": "ssenariy", "label": "Ssenariy", "qty": plan, "source": "project:ssenariy"},
+            {"kind": "syomka", "label": "Syomka (video)", "qty": plan, "source": "project:syomka"},
+            {"kind": "reels", "label": "Montaj (video)", "qty": plan, "source": "project:montaj"},
+            {"kind": "boshqa", "label": "Joylangan post", "qty": plan, "source": "project:joylash"},
+        ]
+    return {"client": client, "plan": plan, "items": items}
 
 
 def api_report_agreement_get(user, client):
@@ -10734,6 +10806,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/reports/month":
             q = parse_qs(urlparse(self.path).query)
             return self._json(api_report_month(user, (q.get("client") or [""])[0], (q.get("ym") or [""])[0]))
+        if path == "/api/reports/from-projects":
+            return self._json(api_report_from_projects(user, (parse_qs(urlparse(self.path).query).get("client") or [""])[0]))
         if path == "/api/reports/agreement":
             return self._json(api_report_agreement_get(user, (parse_qs(urlparse(self.path).query).get("client") or [""])[0]))
         if path == "/api/penalties":
