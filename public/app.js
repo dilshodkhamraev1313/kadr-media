@@ -4239,59 +4239,126 @@ async function openAgreementModal(client) {
 }
 
 function drawReportCanvas(r) {
-  const W = 1080, PAD = 64, rowH = 118;
-  const H = 400 + r.items.length * rowH + 90;
+  const W = 1080, PAD = 56;
+  const FONT = '-apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  const BG = '#0E1117', CARD = '#171B24', TRACK = '#2A3040', MUTED = '#8B93A7';
+  const GREEN = '#22C55E', GREEN2 = '#4ADE80', YEL = REP_YELLOW;
+  const rows = r.items;
+  const hasExtra = r.totalExtra > 0;
+  const rowH = 176, gap = 18, heroH = hasExtra ? 380 : 290;
+  const H = 190 + 24 + heroH + 36 + rows.length * (rowH + gap) + 150;
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const g = cv.getContext('2d');
-  const FONT = '-apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
-  g.fillStyle = '#FAF7F2'; g.fillRect(0, 0, W, H);
-  g.fillStyle = '#16181D'; g.fillRect(0, 0, W, 190);
-  g.fillStyle = '#fff'; g.font = `700 30px ${FONT}`; g.fillText('KADR MEDIA', PAD, 72);
-  g.fillStyle = '#9AA0AA'; g.font = `500 26px ${FONT}`; g.fillText('Oylik ish hisoboti', PAD, 112);
-  g.fillStyle = '#fff'; g.font = `700 46px ${FONT}`;
+  g.fillStyle = BG; g.fillRect(0, 0, W, H);
+
+  // ---- sarlavha
+  g.fillStyle = '#090B10'; g.fillRect(0, 0, W, 190);
+  g.fillStyle = '#fff'; g.font = `800 28px ${FONT}`; g.fillText('KADR MEDIA', PAD, 64);
+  g.fillStyle = MUTED; g.font = `500 24px ${FONT}`; g.fillText('Oylik ish hisoboti', PAD, 98);
+  g.textAlign = 'right'; g.fillStyle = YEL; g.font = `700 30px ${FONT}`; g.fillText(UZ_YM(r.ym), W - PAD, 64); g.textAlign = 'left';
+  g.fillStyle = '#fff'; g.font = `800 50px ${FONT}`;
   let t = r.client; while (g.measureText(t).width > W - 2 * PAD && t.length > 4) t = t.slice(0, -2);
-  g.fillText(t === r.client ? t : t + '…', PAD, 166);
-  g.textAlign = 'right'; g.fillStyle = REP_YELLOW; g.font = `700 30px ${FONT}`; g.fillText(UZ_YM(r.ym), W - PAD, 72);
-  g.textAlign = 'left';
-  // umumiy ko'rsatkichlar
-  const stat = (x, big, small, col) => {
-    g.fillStyle = col; g.font = `800 76px ${FONT}`; g.fillText(big, x, 300);
-    g.fillStyle = '#6B6F78'; g.font = `500 26px ${FONT}`; g.fillText(small, x, 340);
-  };
-  stat(PAD, r.planPct + '%', 'Reja bajarilishi', '#16181D');
-  stat(PAD + 340, r.totalExtra ? '+' + r.totalExtra : '0', 'Ortiqcha ish', REP_GREEN);
-  stat(PAD + 680, String(r.totalDone), 'Jami qilingan ish', '#16181D');
-  // qatorlar
-  let y = 400;
-  r.items.forEach((i) => {
-    g.fillStyle = '#16181D'; g.font = `700 32px ${FONT}`; g.fillText(i.label, PAD, y + 30);
-    g.textAlign = 'right'; g.font = `700 32px ${FONT}`; g.fillStyle = '#16181D';
-    g.fillText(i.unplanned ? `${i.done}` : `${i.done} / ${i.target}`, W - PAD, y + 30);
-    g.textAlign = 'left';
-    const bx = PAD, by = y + 48, bw = W - 2 * PAD, bh = 26;
-    const max = Math.max(i.target, i.done, 1);
-    g.fillStyle = REP_GRAY; roundRect(g, bx, by, bw, bh, 13); g.fill();
-    const w1 = bw * Math.min(i.done, i.target) / max;
-    if (w1 > 0) { g.fillStyle = REP_YELLOW; roundRect(g, bx, by, Math.max(w1, 14), bh, 13); g.fill(); }
-    if (i.extra > 0) {
-      const w2 = bw * i.extra / max;
-      g.fillStyle = REP_GREEN; g.fillRect(bx + w1, by, Math.min(w2, bw - w1), bh);
-      if (i.target > 0) { g.fillStyle = '#16181D'; g.fillRect(bx + bw * i.target / max - 2, by - 6, 4, bh + 12); }
+  g.fillText(t === r.client ? t : t + '…', PAD, 158);
+
+  // ---- asosiy blok (hero)
+  let y = 190 + 24;
+  const hx = PAD, hw = W - 2 * PAD;
+  if (hasExtra) {
+    const gr = g.createLinearGradient(hx, y, hx + hw, y + heroH);
+    gr.addColorStop(0, '#0B6B35'); gr.addColorStop(1, '#22C55E');
+    g.fillStyle = gr; roundRect(g, hx, y, hw, heroH, 36); g.fill();
+    // bayram nuqtalari (har safar bir xil)
+    let seed = 7; const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+    for (let k = 0; k < 46; k++) {
+      const px = hx + 20 + rnd() * (hw - 40), py = y + 16 + rnd() * (heroH - 32), rr = 3 + rnd() * 7;
+      g.globalAlpha = 0.18 + rnd() * 0.3; g.fillStyle = rnd() > 0.5 ? '#FFF6B0' : '#fff';
+      g.beginPath(); g.arc(px, py, rr, 0, Math.PI * 2); g.fill();
     }
-    g.font = `500 24px ${FONT}`; g.fillStyle = '#6B6F78';
-    let sub = '';
-    if (i.unplanned) sub += `kelishuvda yo'q — sovg'a sifatida qilindi`;
-    if (i.carry) sub += `o'tgan oydan +${i.carry}  `;
-    if (i.short) sub += `qoldi ${i.short} — keyingi oyga ko'chadi`;
-    g.fillText(sub, PAD, y + 98);
-    if (i.extra > 0) { g.textAlign = 'right'; g.fillStyle = '#15803D'; g.font = `700 26px ${FONT}`; g.fillText(`+${i.extra} ortiqcha`, W - PAD, y + 98); g.textAlign = 'left'; }
-    y += rowH;
+    g.globalAlpha = 1;
+    g.fillStyle = '#fff'; g.font = `900 210px ${FONT}`;
+    g.shadowColor = 'rgba(0,0,0,.25)'; g.shadowBlur = 18;
+    g.fillText('+' + r.totalExtra, hx + 44, y + 232); g.shadowBlur = 0;
+    const bw = g.measureText('+' + r.totalExtra).width;
+    g.fillStyle = '#fff'; g.font = `800 44px ${FONT}`; g.fillText('TA ORTIQCHA ISH', hx + 44 + bw + 28, y + 150);
+    g.fillStyle = 'rgba(255,255,255,.92)'; g.font = `500 28px ${FONT}`;
+    g.fillText('kelishuvdan tashqari, sizga sovg\'a 🎁', hx + 44 + bw + 28, y + 196);
+    g.fillStyle = 'rgba(0,0,0,.22)'; roundRect(g, hx + 28, y + heroH - 104, hw - 56, 72, 20); g.fill();
+    g.fillStyle = '#fff'; g.font = `700 32px ${FONT}`;
+    const pctAll = r.totalTarget ? Math.round(r.totalDone / r.totalTarget * 100) : 0;
+    g.fillText(`Kelishuv: ${r.totalTarget} ta`, hx + 52, y + heroH - 56);
+    g.textAlign = 'center'; g.fillText(`Biz qildik: ${r.totalDone} ta`, hx + hw / 2 + 40, y + heroH - 56);
+    g.textAlign = 'right'; g.fillStyle = '#FFF6B0'; g.fillText(r.totalTarget ? `${pctAll}%` : '', hx + hw - 52, y + heroH - 56); g.textAlign = 'left';
+  } else {
+    g.fillStyle = CARD; roundRect(g, hx, y, hw, heroH, 36); g.fill();
+    g.fillStyle = YEL; g.font = `900 170px ${FONT}`; g.fillText(r.planPct + '%', hx + 44, y + 190);
+    g.fillStyle = '#fff'; g.font = `800 40px ${FONT}`; g.fillText('kelishuv bajarildi', hx + 44, y + 244);
+  }
+  y += heroH + 36;
+
+  // ---- ish turlari
+  rows.forEach((i) => {
+    g.fillStyle = CARD; roundRect(g, hx, y, hw, rowH, 28); g.fill();
+    const ix = hx + 30, iw = hw - 60;
+    g.fillStyle = '#fff'; g.font = `700 36px ${FONT}`;
+    let lb = i.label; while (g.measureText(lb).width > iw * 0.55 && lb.length > 4) lb = lb.slice(0, -2);
+    const lbText = lb === i.label ? lb : lb + '…';
+    g.fillText(lbText, ix, y + 58);
+    const lbW = g.measureText(lbText).width;
+    // raqamlar (o'ngda)
+    g.textAlign = 'right';
+    g.fillStyle = MUTED; g.font = `600 30px ${FONT}`;
+    const tgt = i.unplanned ? '' : ` / ${i.target}`;
+    g.fillText(tgt, ix + iw, y + 60);
+    const tw = g.measureText(tgt).width;
+    g.fillStyle = i.extra ? GREEN2 : '#fff'; g.font = `900 64px ${FONT}`;
+    g.fillText(String(i.done), ix + iw - tw, y + 66);
+    g.textAlign = 'left';
+    // chiziq
+    const bx = ix, by = y + 92, bw2 = iw, bh = 34;
+    const max = Math.max(i.target, i.done, 1);
+    g.fillStyle = TRACK; roundRect(g, bx, by, bw2, bh, 17); g.fill();
+    const w1 = bw2 * Math.min(i.done, i.target) / max;
+    if (w1 > 0) {
+      const yg = g.createLinearGradient(bx, 0, bx + w1, 0); yg.addColorStop(0, '#F5B301'); yg.addColorStop(1, '#FFD34D');
+      g.fillStyle = yg; roundRect(g, bx, by, Math.max(w1, 18), bh, 17); g.fill();
+    }
+    if (i.extra > 0) {
+      const w2 = Math.min(bw2 * i.extra / max, bw2 - w1);
+      g.save(); g.shadowColor = GREEN; g.shadowBlur = 26;
+      g.fillStyle = GREEN; roundRect(g, bx + w1 - (w1 > 0 ? 17 : 0), by, w2 + (w1 > 0 ? 17 : 0), bh, 17); g.fill(); g.restore();
+      // sariq qism ustini qayta chizamiz (yashil uchi unga kirmasin)
+      if (w1 > 0) {
+        const yg = g.createLinearGradient(bx, 0, bx + w1, 0); yg.addColorStop(0, '#F5B301'); yg.addColorStop(1, '#FFD34D');
+        g.fillStyle = yg; roundRect(g, bx, by, w1, bh, 17); g.fill();
+        g.fillRect(bx + w1 - 17, by, 17, bh);
+      }
+      if (i.target > 0) {
+        const tx = bx + bw2 * i.target / max;
+        g.fillStyle = '#fff'; g.fillRect(tx - 2, by - 8, 4, bh + 16);
+        g.font = `600 22px ${FONT}`; g.fillStyle = MUTED; g.textAlign = 'center';
+        g.fillText(`kelishuv ${i.target}`, Math.min(Math.max(tx, bx + 60), bx + bw2 - 60), y + rowH - 20); g.textAlign = 'left';
+      }
+      // sovg'a belgisi (sarlavha yonida)
+      const label = i.unplanned ? '🎁 kelishuvda yo\'q edi' : `🎁 +${i.extra} ortiqcha`;
+      g.font = `800 26px ${FONT}`;
+      const pw = g.measureText(label).width + 32;
+      const px = Math.min(ix + lbW + 22, ix + iw * 0.62 - pw);
+      g.fillStyle = GREEN2; roundRect(g, px, y + 24, pw, 42, 21); g.fill();
+      g.fillStyle = '#052E16'; g.fillText(label, px + 16, y + 53);
+    } else {
+      g.font = `600 26px ${FONT}`;
+      if (i.short > 0) { g.fillStyle = MUTED; g.fillText(`qoldi ${i.short} — keyingi oyga ko'chadi`, ix, y + rowH - 22); }
+      else { g.fillStyle = GREEN2; g.fillText('✓ kelishuv to\'liq bajarildi', ix, y + rowH - 22); }
+    }
+    if (i.carry && i.extra <= 0) { g.textAlign = 'right'; g.fillStyle = MUTED; g.font = `500 24px ${FONT}`; g.fillText(`o'tgan oydan +${i.carry}`, ix + iw, y + rowH - 22); g.textAlign = 'left'; }
+    y += rowH + gap;
   });
-  // legend + footer
-  y += 6;
-  g.fillStyle = REP_YELLOW; g.fillRect(PAD, y, 22, 22); g.fillStyle = '#16181D'; g.font = `500 24px ${FONT}`; g.fillText('Kelishuv bo\'yicha', PAD + 32, y + 19);
-  g.fillStyle = REP_GREEN; g.fillRect(PAD + 290, y, 22, 22); g.fillStyle = '#16181D'; g.fillText('Kelishuvdan ortiqcha', PAD + 322, y + 19);
-  g.fillStyle = '#9AA0AA'; g.font = `500 22px ${FONT}`; g.fillText('Kadr Media · avtomatik hisobot', PAD, H - 28);
+
+  // ---- pastki qism
+  g.fillStyle = hasExtra ? GREEN2 : MUTED; g.font = `700 30px ${FONT}`; g.textAlign = 'center';
+  g.fillText(hasExtra ? 'Biz va\'dadan ko\'proq qilamiz 💪' : 'Har oy sizning loyihangiz ustida', W / 2, y + 40);
+  g.fillStyle = '#5B6376'; g.font = `500 22px ${FONT}`;
+  g.fillText('Kadr Media · avtomatik hisobot', W / 2, y + 86); g.textAlign = 'left';
   return cv;
 }
 function roundRect(g, x, y, w, h, r) {
