@@ -1469,6 +1469,7 @@ def init_db():
 
     ensure_accounts(conn)
     ensure_project_plans(conn)
+    migrate_report_keys(conn)
     freeze_departed_users(conn)
     conn.close()
 
@@ -1489,6 +1490,21 @@ def freeze_departed_users(conn):
     if "Nodira" in FROZEN_USERS and CRM_USERS and CRM_USERS[0] != "Nodira":
         conn.execute("UPDATE leads SET assigned_to=? WHERE assigned_to='Nodira' AND stage NOT IN ('mijoz','rad')",
                      (CRM_USERS[0],))
+    conn.commit()
+
+
+def migrate_report_keys(conn):
+    """Hisobot oldin mijoz nomi bo'yicha yuritilgan edi; endi «Loyihalar»dagi loyiha nomi bo'yicha.
+    Mijoz nomi bilan saqlangan kelishuvlar shu mijozning (birinchi) loyihasiga ko'chiriladi. Idempotent."""
+    names = {r["name"] for r in conn.execute("SELECT name FROM projects").fetchall()}
+    for r in conn.execute("SELECT DISTINCT client FROM report_items").fetchall():
+        key = r["client"]
+        if not key or key in names:
+            continue
+        cand = conn.execute("SELECT name FROM projects WHERE client=? ORDER BY id LIMIT 1", (key,)).fetchone()
+        if cand:
+            conn.execute("UPDATE report_items SET client=? WHERE client=?", (cand["name"], key))
+            conn.execute("UPDATE report_log SET client=? WHERE client=?", (cand["name"], key))
     conn.commit()
 
 
@@ -6644,11 +6660,11 @@ REPORT_ROLES = ("ceo", "coordinator", "lead")
 
 
 def _report_can_access(conn, user, client):
-    """CEO va koordinator — hamma mijoz; loyiha rahbari (lead) — faqat o'zi mas'ul loyihasi bor mijoz."""
+    """CEO va koordinator — hamma loyiha; loyiha rahbari (lead) — faqat o'zi mas'ul bo'lgan loyiha."""
     if user["role"] in ("ceo", "coordinator"):
         return True
     if user["role"] == "lead":
-        return bool(conn.execute("SELECT 1 FROM projects WHERE client=? AND responsible=?", (client, user["name"])).fetchone())
+        return bool(conn.execute("SELECT 1 FROM projects WHERE name=? AND responsible=?", (client, user["name"])).fetchone())
     return False
 
 
@@ -6659,19 +6675,19 @@ def _ym_add(ym, n):
 
 
 def _report_client_projects(conn, client):
-    return [r["name"] for r in conn.execute("SELECT name FROM projects WHERE client=?", (client,)).fetchall()]
+    """Hisobot kaliti — «Loyihalar» bo'limidagi loyiha nomi (aynan shunday yoziladi)."""
+    return [client] if client else []
 
 
 def _report_auto_count(conn, client, projects, source, ym):
     like = ym + "%"
-    pj = ""
-    params = [client]
-    if projects:
-        pj = " OR project IN (%s)" % ",".join(["?"] * len(projects))
-        params += projects
+    if not projects or not source:
+        return 0
+    pj = "project IN (%s)" % ",".join(["?"] * len(projects))
+    params = list(projects)
     if source.startswith("video:"):
         vt = source.split(":", 1)[1]
-        sql = ("SELECT COUNT(*) AS n FROM videos WHERE (client=?" + pj + ") AND status IN ('qabul_qilindi','joylandi') "
+        sql = ("SELECT COUNT(*) AS n FROM videos WHERE (" + pj + ") AND status IN ('qabul_qilindi','joylandi') "
                "AND approved_at LIKE ?")
         params.append(like)
         if vt != "all":
@@ -6679,11 +6695,9 @@ def _report_auto_count(conn, client, projects, source, ym):
             params.append(vt)
         return conn.execute(sql, params).fetchone()["n"] or 0
     if source == "script":
-        sql = ("SELECT COUNT(*) AS n FROM scripts WHERE (client=?" + pj + ") AND status='tasdiqlandi' AND approved_at LIKE ?")
+        sql = ("SELECT COUNT(*) AS n FROM scripts WHERE (" + pj + ") AND status='tasdiqlandi' AND approved_at LIKE ?")
         return conn.execute(sql, params + [like]).fetchone()["n"] or 0
     if source == "shoot":
-        if not projects:
-            return 0
         sql = ("SELECT COUNT(*) AS n FROM shoots WHERE project IN (%s) AND (status IS NULL OR status<>'bekor_qilindi') "
                "AND sdate LIKE ?" % ",".join(["?"] * len(projects)))
         return conn.execute(sql, projects + [like]).fetchone()["n"] or 0
@@ -6752,13 +6766,11 @@ def api_report_overview(user, ym=None):
         return {"error": "Ruxsat yo'q"}, 403
     ym = (ym or "").strip() or uz_today().strftime("%Y-%m")
     conn = get_db()
-    clients = sorted({r["client"] for r in conn.execute(
-        "SELECT DISTINCT client FROM projects WHERE client IS NOT NULL AND client<>''").fetchall()})
+    proj_rows = [dict(r) for r in conn.execute("SELECT name, client FROM projects ORDER BY name").fetchall()]
+    client_of = {r["name"]: (r["client"] or "") for r in proj_rows}
+    clients = sorted(client_of.keys())
     with_items = {r["client"] for r in conn.execute(
         "SELECT DISTINCT client FROM report_items WHERE COALESCE(active,1)=1").fetchall()}
-    for c in with_items:
-        if c not in clients:
-            clients.append(c)
     clients = [c for c in clients if _report_can_access(conn, user, c)]
     today = uz_today()
     cur = today.strftime("%Y-%m") == ym
@@ -6770,7 +6782,7 @@ def api_report_overview(user, ym=None):
             rep = _report_client_month(conn, c, ym)
             behind = [i["label"] for i in rep["items"]
                       if cur and i["target"] and i["done"] < i["target"] * frac * 0.7]
-            out.append({"client": c, "hasAgreement": True, "planPct": rep["planPct"], "totalTarget": rep["totalTarget"],
+            out.append({"client": c, "clientName": client_of.get(c, ""), "hasAgreement": True, "planPct": rep["planPct"], "totalTarget": rep["totalTarget"],
                         "totalDone": rep["totalDone"], "totalExtra": rep["totalExtra"], "totalShort": rep["totalShort"],
                         "totalCarry": rep["totalCarry"], "behind": behind,
                         "items": [{"id": i["id"], "label": i["label"], "target": i["target"], "done": i["done"],
@@ -6778,7 +6790,7 @@ def api_report_overview(user, ym=None):
                                   for i in rep["items"]],
                         "hidden": rep["unplanned"]})
         else:
-            out.append({"client": c, "hasAgreement": False})
+            out.append({"client": c, "clientName": client_of.get(c, ""), "hasAgreement": False})
     conn.close()
     return {"ym": ym, "clients": out, "kinds": REPORT_KINDS, "sources": REPORT_SOURCES}
 
@@ -6842,7 +6854,7 @@ def api_report_agreement_save(user, b):
     client = (b.get("client") or "").strip()
     items = b.get("items") or []
     if not client:
-        return {"error": "Mijoz nomini kiriting"}, 400
+        return {"error": "Loyihani tanlang"}, 400
     clean = []
     for i, it in enumerate(items):
         label = (it.get("label") or "").strip()
@@ -6858,6 +6870,9 @@ def api_report_agreement_save(user, b):
         source = it.get("source") if it.get("source") in REPORT_SOURCES else ""
         clean.append({"id": it.get("id"), "label": label, "qty": qty, "kind": kind, "source": source, "sort": i})
     conn = get_db()
+    if not conn.execute("SELECT 1 FROM projects WHERE name=?", (client,)).fetchone():
+        conn.close()
+        return {"error": "Bunday loyiha «Loyihalar» bo'limida yo'q — nomni aynan shunday tanlang"}, 400
     ym = uz_today().strftime("%Y-%m")
     keep = set()
     for it in clean:

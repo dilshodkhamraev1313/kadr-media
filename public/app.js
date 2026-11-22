@@ -4094,6 +4094,7 @@ async function viewReports() {
   const cards = d.clients.map((c) => c.hasAgreement ? `
     <div class="team-card rep-card" data-client="${esc(c.client)}" style="cursor:pointer">
       <div class="team-name">${esc(c.client)}</div>
+      ${c.clientName ? `<div class="muted" style="font-size:12px">📁 ${esc(c.clientName)}</div>` : ''}
       <div class="rep-bar" style="margin:10px 0 6px"><div class="rep-fill" style="width:${Math.min(c.planPct, 100)}%;background:${REP_YELLOW}"></div></div>
       <div class="mrow"><span>Reja bajarilishi</span><b>${c.totalDone} / ${c.totalTarget} · ${c.planPct}%</b></div>
       ${c.totalExtra ? `<div class="mrow"><span style="color:${REP_GREEN}">Ortiqcha ish</span><b style="color:${REP_GREEN}">+${c.totalExtra}</b></div>` : ''}
@@ -4102,6 +4103,7 @@ async function viewReports() {
     </div>` : `
     <div class="team-card" style="opacity:.75">
       <div class="team-name">${esc(c.client)}</div>
+      ${c.clientName ? `<div class="muted" style="font-size:12px">📁 ${esc(c.clientName)}</div>` : ''}
       <div class="muted" style="margin:8px 0">Kelishuv kiritilmagan</div>
       ${isCeo ? `<button class="btn-ghost sm rep-setup" data-client="${esc(c.client)}">⚙️ Kelishuvni kiritish</button>` : ''}
     </div>`).join('');
@@ -4109,7 +4111,7 @@ async function viewReports() {
     <div class="panel" style="margin-bottom:16px">
       <div class="field-row" style="align-items:end">
         <div class="field" style="margin:0;max-width:200px"><label>Oy</label><input id="rep_ym" type="month" value="${esc(ym)}" /></div>
-        ${isCeo ? `<button class="btn-ghost" id="rep_new" style="max-width:220px">➕ Yangi mijoz kelishuvi</button>` : ''}
+        ${isCeo ? `<button class="btn-ghost" id="rep_new" style="max-width:220px">➕ Yangi kelishuv</button>` : ''}
       </div>
       <p class="muted" style="margin-top:8px">Sariq — kelishuv bo'yicha bajarilgani, yashil — kelishuvdan ortiqcha. Bajarilmagan ish keyingi oyga ko'chadi.</p>
     </div>
@@ -4193,8 +4195,7 @@ async function openAgreementModal(client) {
   const meta = await api('/api/reports/overview');
   const kinds = meta.kinds || [], sources = meta.sources || {};
   const existing = client ? (await api('/api/reports/agreement?client=' + encodeURIComponent(client))).items || [] : [];
-  const clientNames = (meta.clients || []).map((c) => c.client);
-  const rowHTML = (it) => `
+    const rowHTML = (it) => `
     <div class="ag-row" data-id="${it.id || ''}">
       <select class="ag-kind">${kinds.map(([k, l]) => `<option value="${k}" ${it.kind === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       <input class="ag-label" type="text" value="${esc(it.label || '')}" placeholder="Nomi (masalan: Reels video)" />
@@ -4202,11 +4203,11 @@ async function openAgreementModal(client) {
       <select class="ag-src">${Object.entries(sources).map(([k, l]) => `<option value="${k}" ${(it.source || '') === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       <button class="mini-btn red ag-rm" type="button">✕</button>
     </div>`;
-  openModal(client ? '⚙️ Kelishuv — ' + client : '➕ Yangi mijoz kelishuvi', `
-    <div class="field"><label>Mijoz</label>
-      <input id="ag_client" list="ag_clients" type="text" value="${esc(client)}" ${client ? 'readonly' : ''} placeholder="Mijoz nomi" />
-      <datalist id="ag_clients">${clientNames.map((n) => `<option value="${esc(n)}">`).join('')}</datalist></div>
-    <p class="muted" style="margin-bottom:8px">Har oy mijozga qilinadigan ishlar va oylik soni (kelishuv). Kelishuvda bo'lmagan ish uchun <b>0</b> yozing yoki bo'sh qoldiring: hisobotda ko'rinmaydi, lekin qilinsa «ortiqcha» (yashil) bo'lib chiqadi. Loyiha rahbarlari har oy shu ro'yxat bo'yicha nima qancha qilinganini kiritadi.</p>
+  openModal(client ? '⚙️ Kelishuv — ' + client : '➕ Yangi kelishuv', `
+    <div class="field"><label>Loyiha («Loyihalar» bo'limidagi nom)</label>
+      ${client ? `<input id="ag_client" type="text" value="${esc(client)}" readonly />`
+        : `<select id="ag_client"><option value="">— loyihani tanlang —</option>${(meta.clients || []).filter((c) => !c.hasAgreement).map((c) => `<option value="${esc(c.client)}">${esc(c.client)}${c.clientName ? ' · ' + esc(c.clientName) : ''}</option>`).join('')}</select>`}</div>
+    <p class="muted" style="margin-bottom:8px">Har oy loyiha bo'yicha qilinadigan ishlar va oylik soni (kelishuv). Kelishuvda bo'lmagan ish uchun <b>0</b> yozing yoki bo'sh qoldiring: hisobotda ko'rinmaydi, lekin qilinsa «ortiqcha» (yashil) bo'lib chiqadi. Loyiha rahbarlari har oy shu ro'yxat bo'yicha nima qancha qilinganini kiritadi.</p>
     <div id="ag_rows">${(existing.length ? existing : [
       { kind: 'reels', label: 'Reels video' }, { kind: 'podcast', label: 'Podcast' }, { kind: 'youtube', label: 'YouTube video' },
       { kind: 'karusel', label: 'Karusel post' }, { kind: 'story', label: 'Stories' }, { kind: 'ssenariy', label: 'Ssenariy' },
@@ -4223,7 +4224,7 @@ async function openAgreementModal(client) {
     $('#ag_add').onclick = () => { $('#ag_rows').insertAdjacentHTML('beforeend', rowHTML({})); bind(); bindKind(); };
     $('#ag_save').onclick = async () => {
       const cl = $('#ag_client').value.trim();
-      if (!cl) { toast('Mijoz nomini kiriting'); return; }
+      if (!cl) { toast('Loyihani tanlang'); return; }
       const items = $$('.ag-row').map((r) => ({
         id: r.dataset.id ? parseInt(r.dataset.id, 10) : null,
         kind: r.querySelector('.ag-kind').value, label: r.querySelector('.ag-label').value.trim(),
