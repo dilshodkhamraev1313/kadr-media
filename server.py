@@ -1157,6 +1157,8 @@ def init_db():
     conn.execute(f"""CREATE TABLE IF NOT EXISTS report_items (
         id {pk}, client TEXT, kind TEXT DEFAULT 'boshqa', label TEXT, qty INTEGER DEFAULT 0,
         source TEXT DEFAULT '', sort INTEGER DEFAULT 0, active INTEGER DEFAULT 1, start_ym TEXT DEFAULT '')""")
+    conn.execute(f"""CREATE TABLE IF NOT EXISTS report_done (
+        id {pk}, item_id INTEGER, ym TEXT, qty INTEGER DEFAULT 0, updated_by TEXT, updated_at TEXT)""")
     conn.execute(f"""CREATE TABLE IF NOT EXISTS report_log (
         id {pk}, item_id INTEGER, client TEXT, ym TEXT, qty INTEGER DEFAULT 1, note TEXT DEFAULT '',
         created_by TEXT, created_at TEXT, deleted INTEGER DEFAULT 0)""")
@@ -6637,14 +6639,17 @@ REPORT_SOURCES = {
     "video:all": "Avto: barcha qabul qilingan videolar",
     "script": "Avto: tasdiqlangan ssenariylar",
     "shoot": "Avto: syomkalar",
-    "project:ssenariy": "Loyihalar: ssenariy (rahbar kiritgan)",
-    "project:syomka": "Loyihalar: syomka (rahbar kiritgan)",
-    "project:montaj": "Loyihalar: montaj (rahbar kiritgan)",
-    "project:tasdiq": "Loyihalar: tasdiq (rahbar kiritgan)",
-    "project:joylash": "Loyihalar: joylash (rahbar kiritgan)",
 }
-REPORT_PROJECT_STAGES = ("ssenariy", "syomka", "montaj", "tasdiq", "joylash")
 REPORT_ROLES = ("ceo", "coordinator", "lead")
+
+
+def _report_can_access(conn, user, client):
+    """CEO va koordinator — hamma mijoz; loyiha rahbari (lead) — faqat o'zi mas'ul loyihasi bor mijoz."""
+    if user["role"] in ("ceo", "coordinator"):
+        return True
+    if user["role"] == "lead":
+        return bool(conn.execute("SELECT 1 FROM projects WHERE client=? AND responsible=?", (client, user["name"])).fetchone())
+    return False
 
 
 def _ym_add(ym, n):
@@ -6657,53 +6662,7 @@ def _report_client_projects(conn, client):
     return [r["name"] for r in conn.execute("SELECT name FROM projects WHERE client=?", (client,)).fetchall()]
 
 
-def _mid_month(d_from, d_to):
-    """Ikki sana (ISO) oralig'ining o'rtasi tushgan oy 'YYYY-MM'."""
-    a = datetime.date.fromisoformat(d_from)
-    b = datetime.date.fromisoformat(d_to)
-    return (a + (b - a) / 2).strftime("%Y-%m")
-
-
-def _report_project_count(conn, client, stage, ym):
-    """«Loyihalar» sahifasida rahbarlar kiritgan bosqich sonlari (done_X) bo'yicha shu oyga tegishli ish soni.
-    Davr — oxirgi «yangilash»dan hozirgacha (done_X − prev_done_X) yoki arxivdagi yopilgan davrlar;
-    davr o'rtasi qaysi oyga tushsa, o'sha oyga yoziladi."""
-    if stage not in REPORT_PROJECT_STAGES:
-        return 0
-    col = "done_" + stage
-    today = uz_today()
-    total = 0
-    for p in conn.execute("SELECT * FROM projects WHERE client=?", (client,)).fetchall():
-        p = dict(p)
-        cur = max((p.get(col) or 0) - (p.get("prev_" + col) or 0), 0)
-        if cur:
-            start = (p.get("prev_period") or "")[:10]
-            try:
-                month = _mid_month(start, today.isoformat()) if start else today.strftime("%Y-%m")
-            except ValueError:
-                month = today.strftime("%Y-%m")
-            if month == ym:
-                total += cur
-        for l in conn.execute("SELECT period_from, period_to, " + col + " AS n FROM project_period_log WHERE project_id=?",
-                              (p["id"],)).fetchall():
-            if not l["n"]:
-                continue
-            pto = (l["period_to"] or "")[:10]
-            pfrom = (l["period_from"] or "")[:10]
-            try:
-                if not pto:
-                    continue
-                month = _mid_month(pfrom, pto) if pfrom else (datetime.date.fromisoformat(pto) - datetime.timedelta(days=15)).strftime("%Y-%m")
-            except ValueError:
-                continue
-            if month == ym:
-                total += l["n"]
-    return total
-
-
 def _report_auto_count(conn, client, projects, source, ym):
-    if source.startswith("project:"):
-        return _report_project_count(conn, client, source.split(":", 1)[1], ym)
     like = ym + "%"
     pj = ""
     params = [client]
@@ -6731,24 +6690,11 @@ def _report_auto_count(conn, client, projects, source, ym):
     return 0
 
 
-def _report_item_plan(conn, it, client):
-    """Oylik reja: «Loyihalar» bosqichiga bog'langan qator (source=project:X) uchun — loyihalardagi reja (plan)
-    yig'indisi (bir joydan yuritiladi); qolganlari uchun — kelishuvda yozilgan son."""
-    src = it.get("source") or ""
-    if src.startswith("project:"):
-        stage = src.split(":", 1)[1]
-        total = 0
-        for r in conn.execute("SELECT plan, self_post, self_script FROM projects WHERE client=?", (client,)).fetchall():
-            if (stage == "joylash" and r["self_post"]) or (stage == "ssenariy" and r["self_script"]):
-                continue
-            total += r["plan"] or 0
-        return total
-    return int(it.get("qty") or 0)
-
-
 def _report_manual_count(conn, item_id, ym, source=""):
-    if (source or "").startswith("project:"):
-        return 0   # «Loyihalar» bosqichidan olinadigan qatorda qo'lda yozuvlar sanalmaydi (ikki marta sanalmasin)
+    """Rahbar oy uchun kiritgan jami son (report_done) bor bo'lsa — shu, bo'lmasa eski «+1» yozuvlar yig'indisi."""
+    row = conn.execute("SELECT qty FROM report_done WHERE item_id=? AND ym=? ORDER BY id DESC", (item_id, ym)).fetchone()
+    if row:
+        return int(row["qty"] or 0)
     return conn.execute("SELECT COALESCE(SUM(qty),0) AS n FROM report_log WHERE item_id=? AND ym=? AND COALESCE(deleted,0)=0",
                         (item_id, ym)).fetchone()["n"] or 0
 
@@ -6759,6 +6705,9 @@ def _report_client_month(conn, client, ym):
     projects = _report_client_projects(conn, client)
     items_rows = [dict(r) for r in conn.execute(
         "SELECT * FROM report_items WHERE client=? AND COALESCE(active,1)=1 ORDER BY sort, id", (client,)).fetchall()]
+    for it in items_rows:
+        if (it.get("source") or "").startswith("project:"):
+            it["source"] = ""   # «Loyihalar»ga bog'lash olib tashlandi — qo'lda kiritiladigan qator
     items = []
     unplanned = []   # kelishuvda yo'q (reja 0) va shu oy hech narsa qilinmagan — hisobotda ko'rinmaydi, faqat qo'shish uchun
     for it in items_rows:
@@ -6770,9 +6719,9 @@ def _report_client_month(conn, client, ym):
         m = first
         while m < ym:
             done_m = _report_auto_count(conn, client, projects, it["source"] or "", m) + _report_manual_count(conn, it["id"], m, it["source"])
-            carry = max(0, _report_item_plan(conn, it, client) + carry - done_m)
+            carry = max(0, int(it["qty"] or 0) + carry - done_m)
             m = _ym_add(m, 1)
-        plan = _report_item_plan(conn, it, client)
+        plan = int(it["qty"] or 0)
         auto = _report_auto_count(conn, client, projects, it["source"] or "", ym)
         manual = _report_manual_count(conn, it["id"], ym, it["source"])
         done = auto + manual
@@ -6782,7 +6731,6 @@ def _report_client_month(conn, client, ym):
             continue
         items.append({
             "id": it["id"], "kind": it["kind"], "label": it["label"], "source": it["source"] or "",
-            "fromProject": (it["source"] or "").startswith("project:"),
             "plan": plan, "carry": carry, "target": target, "done": done, "auto": auto, "manual": manual,
             "unplanned": plan == 0 and carry == 0,
             "extra": max(0, done - target), "short": max(0, target - done),
@@ -6811,6 +6759,7 @@ def api_report_overview(user, ym=None):
     for c in with_items:
         if c not in clients:
             clients.append(c)
+    clients = [c for c in clients if _report_can_access(conn, user, c)]
     today = uz_today()
     cur = today.strftime("%Y-%m") == ym
     from calendar import monthrange
@@ -6825,7 +6774,7 @@ def api_report_overview(user, ym=None):
                         "totalDone": rep["totalDone"], "totalExtra": rep["totalExtra"], "totalShort": rep["totalShort"],
                         "totalCarry": rep["totalCarry"], "behind": behind,
                         "items": [{"id": i["id"], "label": i["label"], "target": i["target"], "done": i["done"],
-                                   "extra": i["extra"], "unplanned": i["unplanned"], "fromProject": i["fromProject"]}
+                                   "extra": i["extra"], "unplanned": i["unplanned"]}
                                   for i in rep["items"]],
                         "hidden": rep["unplanned"]})
         else:
@@ -6840,16 +6789,49 @@ def api_report_month(user, client, ym=None):
     client = (client or "").strip()
     ym = (ym or "").strip() or uz_today().strftime("%Y-%m")
     conn = get_db()
+    if not _report_can_access(conn, user, client):
+        conn.close()
+        return {"error": "Bu mijoz sizning loyihangiz emas"}, 403
     rep = _report_client_month(conn, client, ym)
-    logs = [dict(r) for r in conn.execute(
-        "SELECT l.id, l.item_id, l.qty, l.note, l.created_by, l.created_at, i.label FROM report_log l "
-        "LEFT JOIN report_items i ON i.id=l.item_id WHERE l.client=? AND l.ym=? AND COALESCE(l.deleted,0)=0 "
-        "ORDER BY l.id DESC", (client, ym)).fetchall()]
+    for it in rep["items"] + rep["unplanned"]:
+        it["manual"] = it.get("manual", _report_manual_count(conn, it["id"], ym))
     conn.close()
-    rep["logs"] = logs
     rep["kinds"] = REPORT_KINDS
     rep["sources"] = REPORT_SOURCES
     return rep
+
+
+def api_report_done_save(user, b):
+    """Loyiha rahbari shu oy mijozga nima qancha qilinganini kiritadi (har ish turi uchun jami son)."""
+    if user["role"] not in REPORT_ROLES:
+        return {"error": "Ruxsat yo'q"}, 403
+    client = (b.get("client") or "").strip()
+    ym = (b.get("ym") or "").strip() or uz_today().strftime("%Y-%m")
+    values = b.get("values") or []
+    conn = get_db()
+    if not _report_can_access(conn, user, client):
+        conn.close()
+        return {"error": "Bu mijoz sizning loyihangiz emas"}, 403
+    valid = {r["id"] for r in conn.execute("SELECT id FROM report_items WHERE client=?", (client,)).fetchall()}
+    changed = []
+    for v in values:
+        try:
+            iid = int(v.get("item_id"))
+            qty = int(v.get("qty") or 0)
+        except (ValueError, TypeError):
+            continue
+        if iid not in valid or qty < 0 or qty > 100000:
+            continue
+        old = _report_manual_count(conn, iid, ym)
+        conn.execute("DELETE FROM report_done WHERE item_id=? AND ym=?", (iid, ym))
+        conn.execute("INSERT INTO report_done (item_id, ym, qty, updated_by, updated_at) VALUES (?,?,?,?,?)",
+                     (iid, ym, qty, user["name"], now_local()))
+        if old != qty:
+            changed.append((iid, old, qty))
+    log_audit(conn, user["name"], "mijoz hisobotini to'ldirdi", f"{client} {ym}: {len(changed)} ta qator o'zgardi")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "changed": len(changed)}
 
 
 def api_report_agreement_save(user, b):
@@ -6898,76 +6880,18 @@ def api_report_agreement_save(user, b):
     return {"ok": True}
 
 
-def api_report_from_projects(user, client):
-    """Loyihalar sahifasidagi oylik rejadan (plan) kelishuv qatorlarini taklif qiladi."""
-    if user["role"] not in REPORT_ROLES:
-        return {"error": "Ruxsat yo'q"}, 403
-    conn = get_db()
-    plan = 0
-    for r in conn.execute("SELECT plan, self_post, self_script FROM projects WHERE client=?", ((client or "").strip(),)).fetchall():
-        plan += r["plan"] or 0
-    conn.close()
-    items = []
-    if plan:
-        items = [
-            {"kind": "ssenariy", "label": "Ssenariy", "qty": plan, "source": "project:ssenariy"},
-            {"kind": "syomka", "label": "Syomka", "qty": plan, "source": "project:syomka"},
-            {"kind": "reels", "label": "Reels video (joylangan)", "qty": plan, "source": "project:joylash"},
-        ]
-    return {"client": client, "plan": plan, "items": items}
-
-
 def api_report_agreement_get(user, client):
     if user["role"] not in REPORT_ROLES:
         return {"error": "Ruxsat yo'q"}, 403
     conn = get_db()
+    if not _report_can_access(conn, user, (client or "").strip()):
+        conn.close()
+        return {"error": "Bu mijoz sizning loyihangiz emas"}, 403
     items = [dict(r) for r in conn.execute(
         "SELECT id, kind, label, qty, source FROM report_items WHERE client=? AND COALESCE(active,1)=1 ORDER BY sort, id",
         ((client or "").strip(),)).fetchall()]
     conn.close()
     return {"client": client, "items": items}
-
-
-def api_report_log_add(user, b):
-    if user["role"] not in REPORT_ROLES:
-        return {"error": "Ruxsat yo'q"}, 403
-    try:
-        item_id = int(b.get("item_id") or 0)
-        qty = int(b.get("qty") or 1)
-    except (ValueError, TypeError):
-        return {"error": "Noto'g'ri ma'lumot"}, 400
-    if qty < 1 or qty > 1000:
-        return {"error": "Sonni to'g'ri kiriting"}, 400
-    ym = (b.get("ym") or "").strip() or uz_today().strftime("%Y-%m")
-    conn = get_db()
-    it = conn.execute("SELECT id, client, label FROM report_items WHERE id=?", (item_id,)).fetchone()
-    if not it:
-        conn.close()
-        return {"error": "Ish turi topilmadi"}, 404
-    conn.execute("INSERT INTO report_log (item_id, client, ym, qty, note, created_by, created_at) VALUES (?,?,?,?,?,?,?)",
-                 (item_id, it["client"], ym, qty, (b.get("note") or "").strip()[:300], user["name"], now_local()))
-    log_audit(conn, user["name"], "hisobotga ish qo'shdi", f"{it['client']}: {it['label']} +{qty}")
-    conn.commit()
-    conn.close()
-    return {"ok": True}
-
-
-def api_report_log_delete(user, lid):
-    if user["role"] not in REPORT_ROLES:
-        return {"error": "Ruxsat yo'q"}, 403
-    conn = get_db()
-    row = conn.execute("SELECT * FROM report_log WHERE id=?", (lid,)).fetchone()
-    if not row:
-        conn.close()
-        return {"error": "Topilmadi"}, 404
-    if user["role"] != "ceo" and row["created_by"] != user["name"]:
-        conn.close()
-        return {"error": "Faqat o'zingiz kiritganni o'chira olasiz"}, 403
-    conn.execute("UPDATE report_log SET deleted=1 WHERE id=?", (lid,))
-    log_audit(conn, user["name"], "hisobotdagi yozuvni o'chirdi", f"{row['client']} #{lid}")
-    conn.commit()
-    conn.close()
-    return {"ok": True}
 
 
 def api_report_send_image(user, b):
@@ -10827,8 +10751,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/reports/month":
             q = parse_qs(urlparse(self.path).query)
             return self._json(api_report_month(user, (q.get("client") or [""])[0], (q.get("ym") or [""])[0]))
-        if path == "/api/reports/from-projects":
-            return self._json(api_report_from_projects(user, (parse_qs(urlparse(self.path).query).get("client") or [""])[0]))
         if path == "/api/reports/agreement":
             return self._json(api_report_agreement_get(user, (parse_qs(urlparse(self.path).query).get("client") or [""])[0]))
         if path == "/api/penalties":
@@ -11180,10 +11102,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(api_clear_attendance(user, b))
         if path == "/api/reports/agreement":
             return self._json(api_report_agreement_save(user, b or {}))
-        if path == "/api/reports/log":
-            return self._json(api_report_log_add(user, b or {}))
-        if len(seg) == 5 and seg[1] == "reports" and seg[2] == "log" and seg[4] == "delete" and seg[3].isdigit():
-            return self._json(api_report_log_delete(user, int(seg[3])))
+        if path == "/api/reports/done":
+            return self._json(api_report_done_save(user, b or {}))
         if path == "/api/reports/send-image":
             return self._json(api_report_send_image(user, b or {}))
         if path == "/api/penalties":

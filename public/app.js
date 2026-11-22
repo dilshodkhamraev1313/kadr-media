@@ -301,7 +301,7 @@ const NAV_ITEMS = [
   { view: 'kassa',     icon: '💰', label: 'Kassa',         roles: ['ceo', 'lead'], names: ['Dilshod Khamraev', 'Gulmira'] },
   { view: 'late',      icon: '⏰', label: 'Kechikkanlar',   roles: ['ceo'] },
   { view: 'penalties', icon: '⚖️', label: 'Jarima',         roles: ['ceo'] },
-  { view: 'reports',   icon: '📊', label: 'Mijoz hisoboti', roles: ['ceo', 'coordinator', 'lead'], names: ['Dilshod Khamraev', 'Xonzoda', 'Gulmira', 'Samandar', 'Shodiya', 'Umid'] },
+  { view: 'reports',   icon: '📊', label: 'Mijoz hisoboti', roles: ['ceo', 'coordinator', 'lead'] },
   { view: 'archive',   icon: '🗄', label: 'Oylik arxiv',    roles: ['ceo'] },
   { view: 'income',    icon: '💳', label: 'To\'lovlar',      roles: ['ceo'] },
   { view: 'budget',    icon: '💳', label: 'Budjet',        roles: ['ceo', 'coordinator', 'lead', 'editor'], flag: 'budgetUser' },
@@ -734,13 +734,8 @@ async function viewDashboard() {
 
 // ---------- PROJECTS ----------
 async function viewProjects() {
-  const [projects, repOv] = await Promise.all([
-    api('/api/projects' + ''),
-    ['ceo', 'coordinator', 'lead'].includes(ME.role) ? api('/api/reports/overview').catch(() => null) : Promise.resolve(null),
-  ]);
+  const projects = await api('/api/projects' + '');
   DATA.projects = projects;
-  DATA.repOv = {};
-  ((repOv && repOv.clients) || []).forEach((c) => { DATA.repOv[c.client] = c; });
   let list = projects.filter((p) => matchSearch(p.name + ' ' + p.client + ' ' + p.responsible));
   if (FILTER === 'overdue') list = list.filter((p) => p.overdue);
   else if (FILTER === 'risk') list = list.filter((p) => p.atRisk);
@@ -751,31 +746,6 @@ async function viewProjects() {
     <div class="cards-grid">${list.map(projectCard).join('') || emptyState('Loyiha topilmadi')}</div>`;
   $('#content').querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => { FILTER = c.dataset.f; render(); }));
   bindProjectCards();
-}
-
-// Loyiha kartasida mijozning oylik kelishuvi (hisobot bilan BIR XIL ma'lumot): +Qo'shish bu yerdan ham ishlaydi
-function projectAgreementBlock(p) {
-  if (!DATA.repOv || !p.client || !['ceo', 'coordinator', 'lead'].includes(ME.role)) return '';
-  const e = DATA.repOv[p.client];
-  const isCeo = ME.role === 'ceo';
-  if (!e || !e.hasAgreement) {
-    return isCeo ? `<div class="pc-agree"><div class="muted" style="margin-bottom:6px">📋 Oylik kelishuv kiritilmagan</div>
-      <button class="mini-btn blue pc-rep-edit" data-client="${esc(p.client)}" style="width:100%">⚙️ Kelishuvni kiritish</button></div>` : '';
-  }
-  const rows = (e.items || []).map((i) => `
-    <div class="pc-agree-row">
-      <div class="rep-head" style="font-size:13px"><span>${esc(i.label)}${i.unplanned ? ' <span class="muted">(kelishuvda yo\'q)</span>' : ''}</span>
-        <span><b>${i.done}</b>${i.unplanned ? '' : ' / ' + i.target}${i.extra ? ` <b style="color:${REP_GREEN}">+${i.extra}</b>` : ''}
-          ${i.fromProject ? '' : `<button class="mini-btn gray pc-rep-add" data-id="${i.id}" data-label="${esc(i.label)}" style="margin-left:6px;padding:2px 8px">+</button>`}</span></div>
-      ${repBarHTML({ target: i.target, done: i.done, extra: i.extra })}
-    </div>`).join('');
-  const hidden = (e.hidden || []).map((h) => `<button class="mini-btn gray pc-rep-add" data-id="${h.id}" data-label="${esc(h.label)}" style="margin:2px 4px 0 0">+ ${esc(h.label)}</button>`).join('');
-  return `<div class="pc-agree" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-soft)">
-    <div class="muted" style="margin-bottom:6px">📋 Oylik kelishuv · <b>${e.planPct}%</b> bajarildi${e.totalExtra ? ` · <span style="color:${REP_GREEN}">+${e.totalExtra} ortiqcha</span>` : ''}</div>
-    ${rows}
-    ${hidden ? `<div class="muted" style="margin-top:6px;font-size:12px">Kelishuvda yo'q, qilinsa qo'shing:</div>${hidden}` : ''}
-    ${isCeo ? `<button class="mini-btn blue pc-rep-edit" data-client="${esc(p.client)}" style="margin-top:8px;width:100%">⚙️ Kelishuvni o'zgartirish</button>` : ''}
-  </div>`;
 }
 
 function projectCard(p) {
@@ -817,8 +787,6 @@ function projectCard(p) {
         </div>` : ''}
       <div class="pc-foot"><div class="pc-resp"><div class="mini-av" style="background:${colorFor(p.responsible)}">${initials(p.responsible)}</div><span>${esc(p.responsible) || '—'}</span></div>
         <div class="pc-deadline ${dlCls}">📅 ${dl}</div></div>
-      ${projectAgreementBlock(p)}
-      ${['ceo', 'coordinator', 'lead'].includes(ME.role) && p.client ? `<button class="mini-btn gray proj-report" data-client="${esc(p.client)}" style="margin-top:8px;width:100%">📊 Mijoz hisoboti</button>` : ''}
       ${(ME.role === 'ceo' && !p.frozen) ? `<button class="mini-btn blue proj-reset" data-resetproj="${p.id}" data-name="${esc(p.name)}" style="margin-top:8px;width:100%">🔄 Shu loyihani yangilash (yangi davr)</button>` : ''}
       ${(ME.role === 'ceo' && !p.fullyDone) ? `<button class="mini-btn ${p.frozen ? 'green' : 'gray'} proj-freeze" data-freezeproj="${p.id}" data-name="${esc(p.name)}" data-frozen="${p.frozen ? 1 : 0}" style="margin-top:8px;width:100%">${p.frozen ? '🔥 Muzlatishdan tiklash' : '🧊 Muzlatish (mijoz to\'xtatdi)'}</button>` : ''}
     </div>`;
@@ -828,16 +796,6 @@ function bindProjectCards() {
     document.querySelectorAll('.project-card.clickable').forEach((el) =>
       el.addEventListener('click', () => openProjectModal((DATA.projects || []).find((p) => p.id == el.dataset.id))));
   }
-  document.querySelectorAll('.pc-rep-add').forEach((b) => b.addEventListener('click', (e) => {
-    e.stopPropagation(); openRepAddModal(b.dataset.id, b.dataset.label, new Date().toISOString().slice(0, 7));
-  }));
-  document.querySelectorAll('.pc-rep-edit').forEach((b) => b.addEventListener('click', (e) => {
-    e.stopPropagation(); openAgreementModal(b.dataset.client);
-  }));
-  document.querySelectorAll('.pc-agree').forEach((el) => el.addEventListener('click', (e) => e.stopPropagation()));
-  document.querySelectorAll('.proj-report').forEach((b) => b.addEventListener('click', (e) => {
-    e.stopPropagation(); REP_CLIENT = b.dataset.client; VIEW = 'reports'; render();
-  }));
   document.querySelectorAll('.proj-reset').forEach((b) => b.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (!confirm(`«${b.dataset.name}» loyihasini yangilaysizmi?\n\nJoriy sonlar arxivga yoziladi (Oldingi davrlar), yangi davr 0 dan boshlanadi.`)) return;
@@ -4167,19 +4125,18 @@ async function viewReportClient(ym) {
   const r = await api('/api/reports/month?client=' + encodeURIComponent(REP_CLIENT) + '&ym=' + ym);
   if (r.error) { $('#content').innerHTML = emptyState(r.error); return; }
   const isCeo = ME.role === 'ceo';
-  const rows = r.items.map((i) => `
+  const all = [...r.items, ...(r.unplanned || [])];
+  const formRows = all.map((i) => `
     <div class="rep-row">
-      <div class="rep-head"><b>${esc(i.label)}${i.unplanned ? ' <span class="muted" style="font-weight:400">(kelishuvda yo\'q)</span>' : ''}</b>
-        <span>${i.unplanned ? `<b>${i.done}</b>` : `<b>${i.done}</b> / ${i.target}`}${i.carry ? ` <span class="muted">(o'tgan oydan +${i.carry})</span>` : ''}
-          ${i.extra ? `<b style="color:${REP_GREEN}"> +${i.extra} ortiqcha</b>` : ''}</span></div>
-      ${repBarHTML(i)}
-      <div class="rep-foot"><span class="muted">${i.source ? `avto ${i.auto} + qo'lda ${i.manual}` : `qo'lda ${i.manual}`}${i.short ? ` · qoldi ${i.short}` : ''}</span>
-        ${i.fromProject ? `<span class="muted">«Loyihalar» kartasidagi bosqichdan olinadi</span>` : `<button class="mini-btn gray rep-add" data-id="${i.id}" data-label="${esc(i.label)}">+ Qo'shish</button>`}</div>
+      <div class="rep-head"><b>${esc(i.label)}${(i.unplanned || (i.plan === 0 && !i.carry)) ? ' <span class="muted" style="font-weight:400">(kelishuvda yo\'q)</span>' : ''}</b>
+        <span class="muted">reja: ${i.plan || 0}${i.carry ? ` + o'tgan oydan ${i.carry}` : ''}</span></div>
+      ${(i.target > 0 || i.done > 0) ? repBarHTML(i) : ''}
+      <div class="rep-foot" style="margin-top:6px">
+        <span>${i.extra ? `<b style="color:${REP_GREEN}">+${i.extra} ortiqcha</b>` : (i.short ? `<span class="muted">qoldi ${i.short} — keyingi oyga ko'chadi</span>` : '')}</span>
+        <label style="display:flex;align-items:center;gap:6px">Shu oy qilindi:
+          <input class="rep-input" type="number" inputmode="numeric" min="0" data-id="${i.id}" value="${i.manual || 0}" style="width:80px" />${i.source ? `<span class="muted">+ avto ${i.auto}</span>` : ''}</label>
+      </div>
     </div>`).join('');
-  const logs = (r.logs || []).map((l) => `
-    <div class="activity-item"><div class="activity-dot" style="background:${REP_YELLOW}"></div>
-      <div style="flex:1"><b>${esc(l.label || '—')}</b> +${l.qty} <span class="muted">· ${esc(l.created_by || '')} · ${esc((l.created_at || '').slice(5, 16))}${l.note ? ' · ' + esc(l.note) : ''}</span></div>
-      <button class="mini-btn red rep-del" data-id="${l.id}">🗑</button></div>`).join('') || '<div class="muted">Hali qo\'lda yozuv yo\'q</div>';
   $('#content').innerHTML = `
     <div class="panel" style="margin-bottom:16px;max-width:640px">
       <div class="field-row" style="align-items:center">
@@ -4191,24 +4148,26 @@ async function viewReportClient(ym) {
         ${statTile('✅', r.totalExtra ? '+' + r.totalExtra : '0', 'Ortiqcha ish', 'green')}
         ${statTile('⏳', r.totalShort, 'Keyingi oyga ko\'chadi', 'purple')}
       </div>
-      <div style="margin-top:12px">${rows || emptyState('Kelishuv kiritilmagan')}</div>
-      ${(r.unplanned || []).length ? `<div class="rep-unplanned"><div class="muted" style="margin-bottom:6px">Kelishuvda yo'q ishlar — qilinsa, «+ Qo'shish» bosing, hisobotda ortiqcha (yashil) bo'lib chiqadi:</div>
-        ${r.unplanned.map((u) => `<div class="rep-foot" style="margin-bottom:6px"><span>${esc(u.label)}</span><button class="mini-btn gray rep-add" data-id="${u.id}" data-label="${esc(u.label)}">+ Qo'shish</button></div>`).join('')}</div>` : ''}
-      <div class="field-row" style="margin-top:12px;gap:8px">
-        <button class="btn-save" id="rep_dl">📥 Rasm yuklab olish</button>
+      <div class="sec-label" style="margin:14px 0 4px">✏️ Shu oyda nima qancha qilindi</div>
+      <p class="muted" style="margin-bottom:6px">Har ish turi uchun shu oyda <b>jami</b> nechta ish qilinganini yozing, so'ng «Saqlash»ni bosing. Hisobot avtomatik yangilanadi.</p>
+      <div>${formRows || emptyState('Kelishuv kiritilmagan' + (isCeo ? '' : ' — CEO kiritishi kerak'))}</div>
+      <div class="field-row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
+        ${all.length ? `<button class="btn-save" id="rep_save">💾 Saqlash</button>` : ''}
+        <button class="btn-ghost" id="rep_dl">📥 Rasm yuklab olish</button>
         ${isCeo ? `<button class="btn-primary" id="rep_send">📤 Guruhga yuborish</button>` : ''}
         ${isCeo ? `<button class="btn-ghost" id="rep_edit">⚙️ Kelishuv</button>` : ''}
       </div>
-    </div>
-    <div class="panel" style="max-width:640px"><div class="sec-label" style="margin-bottom:8px">Qo'lda kiritilganlar</div>${logs}</div>`;
+    </div>`;
   $('#rep_back').addEventListener('click', () => { REP_CLIENT = ''; render(); });
-  $$('.rep-add').forEach((b) => b.addEventListener('click', () => openRepAddModal(b.dataset.id, b.dataset.label, ym)));
-  $$('.rep-del').forEach((b) => b.addEventListener('click', async () => {
-    if (!confirm('Bu yozuv o\'chirilsinmi?')) return;
-    const x = await api('/api/reports/log/' + b.dataset.id + '/delete', { method: 'POST', body: '{}' });
+  const sv = $('#rep_save');
+  if (sv) sv.addEventListener('click', async () => {
+    sv.disabled = true;
+    const values = $$('.rep-input').map((el) => ({ item_id: parseInt(el.dataset.id, 10), qty: Math.max(parseInt(el.value || '0', 10) || 0, 0) }));
+    const x = await api('/api/reports/done', { method: 'POST', body: JSON.stringify({ client: r.client, ym, values }) });
+    sv.disabled = false;
     if (x && x.error) { toast('⚠️ ' + x.error); return; }
-    render();
-  }));
+    toast('✅ Saqlandi'); render();
+  });
   $('#rep_dl').addEventListener('click', () => {
     const cv = drawReportCanvas(r);
     const a = document.createElement('a');
@@ -4230,21 +4189,6 @@ async function viewReportClient(ym) {
   if (eb) eb.addEventListener('click', () => openAgreementModal(r.client));
 }
 
-function openRepAddModal(itemId, label, ym) {
-  openModal('➕ ' + label, `
-    <div class="field"><label>Nechta ish qilindi?</label><input id="ra_qty" type="number" inputmode="numeric" value="1" min="1" /></div>
-    <div class="field"><label>Izoh / havola (ixtiyoriy)</label><input id="ra_note" type="text" placeholder="masalan: instagram.com/p/..." /></div>
-    <button class="btn-save" id="ra_save">Saqlash</button>`, () => {
-    $('#ra_save').addEventListener('click', async () => {
-      const qty = parseInt($('#ra_qty').value || '0', 10);
-      if (!(qty > 0)) { toast('Sonni kiriting'); return; }
-      const x = await api('/api/reports/log', { method: 'POST', body: JSON.stringify({ item_id: itemId, qty, note: $('#ra_note').value.trim(), ym }) });
-      if (x && x.error) { toast('⚠️ ' + x.error); return; }
-      closeModal(); toast('✅ Qo\'shildi'); render();
-    });
-  });
-}
-
 async function openAgreementModal(client) {
   const meta = await api('/api/reports/overview');
   const kinds = meta.kinds || [], sources = meta.sources || {};
@@ -4254,7 +4198,7 @@ async function openAgreementModal(client) {
     <div class="ag-row" data-id="${it.id || ''}">
       <select class="ag-kind">${kinds.map(([k, l]) => `<option value="${k}" ${it.kind === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       <input class="ag-label" type="text" value="${esc(it.label || '')}" placeholder="Nomi (masalan: Reels video)" />
-      <input class="ag-qty" type="number" inputmode="numeric" min="0" value="${(it.source || '').startsWith('project:') ? '' : (it.qty === undefined ? '' : it.qty)}" ${(it.source || '').startsWith('project:') ? 'disabled' : ''} placeholder="${(it.source || '').startsWith('project:') ? 'Loyiha' : 'Soni'}" title="Oylik son. 0 = kelishuvda yo'q (qilinsa ortiqcha bo'lib chiqadi)" />
+      <input class="ag-qty" type="number" inputmode="numeric" min="0" value="${it.qty === undefined ? '' : it.qty}" placeholder="Soni" title="Oylik son. 0 = kelishuvda yo'q (qilinsa ortiqcha bo'lib chiqadi)" />
       <select class="ag-src">${Object.entries(sources).map(([k, l]) => `<option value="${k}" ${(it.source || '') === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       <button class="mini-btn red ag-rm" type="button">✕</button>
     </div>`;
@@ -4262,37 +4206,21 @@ async function openAgreementModal(client) {
     <div class="field"><label>Mijoz</label>
       <input id="ag_client" list="ag_clients" type="text" value="${esc(client)}" ${client ? 'readonly' : ''} placeholder="Mijoz nomi" />
       <datalist id="ag_clients">${clientNames.map((n) => `<option value="${esc(n)}">`).join('')}</datalist></div>
-    <p class="muted" style="margin-bottom:8px">Har oy qilinadigan ishlar. «Soni» — oylik kelishuv. <b>«Loyihalar: …» manbali</b> qatorlarda soni «Loyihalar» sahifasidagi reja va bosqich hisobidan o'zi olinadi (qayta kiritilmaydi). Kelishuvda bo'lmagan ish (masalan podcast) uchun <b>0</b> yozing yoki bo'sh qoldiring: hisobotda ko'rinmaydi, lekin qilinsa «ortiqcha» (yashil) bo'lib chiqadi. Manba «Avto» bo'lsa tizim o'zi sanaydi, «Qo'lda» bo'lsa loyiha rahbari +1 bosadi.</p>
+    <p class="muted" style="margin-bottom:8px">Har oy mijozga qilinadigan ishlar va oylik soni (kelishuv). Kelishuvda bo'lmagan ish uchun <b>0</b> yozing yoki bo'sh qoldiring: hisobotda ko'rinmaydi, lekin qilinsa «ortiqcha» (yashil) bo'lib chiqadi. Loyiha rahbarlari har oy shu ro'yxat bo'yicha nima qancha qilinganini kiritadi.</p>
     <div id="ag_rows">${(existing.length ? existing : [
-      { kind: 'reels', label: 'Reels video (joylangan)', source: 'project:joylash' }, { kind: 'ssenariy', label: 'Ssenariy', source: 'project:ssenariy' },
-      { kind: 'podcast', label: 'Podcast' }, { kind: 'youtube', label: 'YouTube video' },
-      { kind: 'karusel', label: 'Karusel post' }, { kind: 'story', label: 'Stories' },
+      { kind: 'reels', label: 'Reels video' }, { kind: 'podcast', label: 'Podcast' }, { kind: 'youtube', label: 'YouTube video' },
+      { kind: 'karusel', label: 'Karusel post' }, { kind: 'story', label: 'Stories' }, { kind: 'ssenariy', label: 'Ssenariy' },
     ]).map(rowHTML).join('')}</div>
     <button class="btn-ghost sm" id="ag_add" type="button">+ Ish turi qo'shish</button>
-    <button class="btn-ghost sm" id="ag_fromproj" type="button" title="Loyihalar sahifasidagi oylik rejadan to'ldiradi">📥 Loyihalar rejasidan olish</button>
     <button class="btn-save" id="ag_save" style="margin-top:12px">💾 Saqlash</button>`, () => {
     const bind = () => $$('.ag-rm').forEach((b) => { b.onclick = () => b.closest('.ag-row').remove(); });
     // tur tanlanganda nom bo'sh bo'lsa avtomatik to'ldiriladi
-    const bindSrc = () => $$('.ag-src').forEach((s) => { s.onchange = () => {
-      const q = s.closest('.ag-row').querySelector('.ag-qty');
-      const fromProj = s.value.startsWith('project:');
-      q.disabled = fromProj; q.placeholder = fromProj ? 'Loyiha' : 'Soni'; if (fromProj) q.value = '';
-    }; });
     const bindKind = () => $$('.ag-kind').forEach((s) => { s.onchange = () => {
       const lab = s.closest('.ag-row').querySelector('.ag-label');
       if (!lab.value.trim()) lab.value = (kinds.find(([k]) => k === s.value) || [, ''])[1];
     }; });
-    bind(); bindKind(); bindSrc();
-    $('#ag_add').onclick = () => { $('#ag_rows').insertAdjacentHTML('beforeend', rowHTML({})); bind(); bindKind(); bindSrc(); };
-    $('#ag_fromproj').onclick = async () => {
-      const cl = $('#ag_client').value.trim();
-      if (!cl) { toast('Avval mijoz nomini kiriting'); return; }
-      const d = await api('/api/reports/from-projects?client=' + encodeURIComponent(cl));
-      if (d.error) { toast('⚠️ ' + d.error); return; }
-      if (!d.items.length) { toast('Bu mijozning loyihalarida oylik reja kiritilmagan'); return; }
-      $('#ag_rows').insertAdjacentHTML('beforeend', d.items.map(rowHTML).join('')); bind(); bindKind(); bindSrc();
-      toast(`📥 Loyihalardagi reja (${d.plan} ta) qo'shildi`);
-    };
+    bind(); bindKind();
+    $('#ag_add').onclick = () => { $('#ag_rows').insertAdjacentHTML('beforeend', rowHTML({})); bind(); bindKind(); };
     $('#ag_save').onclick = async () => {
       const cl = $('#ag_client').value.trim();
       if (!cl) { toast('Mijoz nomini kiriting'); return; }
