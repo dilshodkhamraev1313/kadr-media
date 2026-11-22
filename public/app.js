@@ -766,7 +766,7 @@ function projectAgreementBlock(p) {
     <div class="pc-agree-row">
       <div class="rep-head" style="font-size:13px"><span>${esc(i.label)}${i.unplanned ? ' <span class="muted">(kelishuvda yo\'q)</span>' : ''}</span>
         <span><b>${i.done}</b>${i.unplanned ? '' : ' / ' + i.target}${i.extra ? ` <b style="color:${REP_GREEN}">+${i.extra}</b>` : ''}
-          <button class="mini-btn gray pc-rep-add" data-id="${i.id}" data-label="${esc(i.label)}" style="margin-left:6px;padding:2px 8px">+</button></span></div>
+          ${i.fromProject ? '' : `<button class="mini-btn gray pc-rep-add" data-id="${i.id}" data-label="${esc(i.label)}" style="margin-left:6px;padding:2px 8px">+</button>`}</span></div>
       ${repBarHTML({ target: i.target, done: i.done, extra: i.extra })}
     </div>`).join('');
   const hidden = (e.hidden || []).map((h) => `<button class="mini-btn gray pc-rep-add" data-id="${h.id}" data-label="${esc(h.label)}" style="margin:2px 4px 0 0">+ ${esc(h.label)}</button>`).join('');
@@ -4174,7 +4174,7 @@ async function viewReportClient(ym) {
           ${i.extra ? `<b style="color:${REP_GREEN}"> +${i.extra} ortiqcha</b>` : ''}</span></div>
       ${repBarHTML(i)}
       <div class="rep-foot"><span class="muted">${i.source ? `avto ${i.auto} + qo'lda ${i.manual}` : `qo'lda ${i.manual}`}${i.short ? ` · qoldi ${i.short}` : ''}</span>
-        <button class="mini-btn gray rep-add" data-id="${i.id}" data-label="${esc(i.label)}">+ Qo'shish</button></div>
+        ${i.fromProject ? `<span class="muted">«Loyihalar» kartasidagi bosqichdan olinadi</span>` : `<button class="mini-btn gray rep-add" data-id="${i.id}" data-label="${esc(i.label)}">+ Qo'shish</button>`}</div>
     </div>`).join('');
   const logs = (r.logs || []).map((l) => `
     <div class="activity-item"><div class="activity-dot" style="background:${REP_YELLOW}"></div>
@@ -4254,7 +4254,7 @@ async function openAgreementModal(client) {
     <div class="ag-row" data-id="${it.id || ''}">
       <select class="ag-kind">${kinds.map(([k, l]) => `<option value="${k}" ${it.kind === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       <input class="ag-label" type="text" value="${esc(it.label || '')}" placeholder="Nomi (masalan: Reels video)" />
-      <input class="ag-qty" type="number" inputmode="numeric" min="0" value="${it.qty === undefined ? '' : it.qty}" placeholder="Soni" title="Oylik son. 0 = kelishuvda yo'q (qilinsa ortiqcha bo'lib chiqadi)" />
+      <input class="ag-qty" type="number" inputmode="numeric" min="0" value="${(it.source || '').startsWith('project:') ? '' : (it.qty === undefined ? '' : it.qty)}" ${(it.source || '').startsWith('project:') ? 'disabled' : ''} placeholder="${(it.source || '').startsWith('project:') ? 'Loyiha' : 'Soni'}" title="Oylik son. 0 = kelishuvda yo'q (qilinsa ortiqcha bo'lib chiqadi)" />
       <select class="ag-src">${Object.entries(sources).map(([k, l]) => `<option value="${k}" ${(it.source || '') === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       <button class="mini-btn red ag-rm" type="button">✕</button>
     </div>`;
@@ -4262,29 +4262,35 @@ async function openAgreementModal(client) {
     <div class="field"><label>Mijoz</label>
       <input id="ag_client" list="ag_clients" type="text" value="${esc(client)}" ${client ? 'readonly' : ''} placeholder="Mijoz nomi" />
       <datalist id="ag_clients">${clientNames.map((n) => `<option value="${esc(n)}">`).join('')}</datalist></div>
-    <p class="muted" style="margin-bottom:8px">Har oy qilinadigan ishlar. «Soni» — oylik kelishuv. Kelishuvda bo'lmagan ish (masalan podcast) uchun <b>0</b> yozing yoki bo'sh qoldiring: hisobotda ko'rinmaydi, lekin qilinsa «ortiqcha» (yashil) bo'lib chiqadi. Manba «Avto» bo'lsa tizim o'zi sanaydi, «Qo'lda» bo'lsa loyiha rahbari +1 bosadi.</p>
+    <p class="muted" style="margin-bottom:8px">Har oy qilinadigan ishlar. «Soni» — oylik kelishuv. <b>«Loyihalar: …» manbali</b> qatorlarda soni «Loyihalar» sahifasidagi reja va bosqich hisobidan o'zi olinadi (qayta kiritilmaydi). Kelishuvda bo'lmagan ish (masalan podcast) uchun <b>0</b> yozing yoki bo'sh qoldiring: hisobotda ko'rinmaydi, lekin qilinsa «ortiqcha» (yashil) bo'lib chiqadi. Manba «Avto» bo'lsa tizim o'zi sanaydi, «Qo'lda» bo'lsa loyiha rahbari +1 bosadi.</p>
     <div id="ag_rows">${(existing.length ? existing : [
-      { kind: 'reels', label: 'Reels video' }, { kind: 'podcast', label: 'Podcast' }, { kind: 'youtube', label: 'YouTube video' },
-      { kind: 'karusel', label: 'Karusel post' }, { kind: 'story', label: 'Stories' }, { kind: 'ssenariy', label: 'Ssenariy' },
+      { kind: 'reels', label: 'Reels video (joylangan)', source: 'project:joylash' }, { kind: 'ssenariy', label: 'Ssenariy', source: 'project:ssenariy' },
+      { kind: 'podcast', label: 'Podcast' }, { kind: 'youtube', label: 'YouTube video' },
+      { kind: 'karusel', label: 'Karusel post' }, { kind: 'story', label: 'Stories' },
     ]).map(rowHTML).join('')}</div>
     <button class="btn-ghost sm" id="ag_add" type="button">+ Ish turi qo'shish</button>
     <button class="btn-ghost sm" id="ag_fromproj" type="button" title="Loyihalar sahifasidagi oylik rejadan to'ldiradi">📥 Loyihalar rejasidan olish</button>
     <button class="btn-save" id="ag_save" style="margin-top:12px">💾 Saqlash</button>`, () => {
     const bind = () => $$('.ag-rm').forEach((b) => { b.onclick = () => b.closest('.ag-row').remove(); });
     // tur tanlanganda nom bo'sh bo'lsa avtomatik to'ldiriladi
+    const bindSrc = () => $$('.ag-src').forEach((s) => { s.onchange = () => {
+      const q = s.closest('.ag-row').querySelector('.ag-qty');
+      const fromProj = s.value.startsWith('project:');
+      q.disabled = fromProj; q.placeholder = fromProj ? 'Loyiha' : 'Soni'; if (fromProj) q.value = '';
+    }; });
     const bindKind = () => $$('.ag-kind').forEach((s) => { s.onchange = () => {
       const lab = s.closest('.ag-row').querySelector('.ag-label');
       if (!lab.value.trim()) lab.value = (kinds.find(([k]) => k === s.value) || [, ''])[1];
     }; });
-    bind(); bindKind();
-    $('#ag_add').onclick = () => { $('#ag_rows').insertAdjacentHTML('beforeend', rowHTML({})); bind(); bindKind(); };
+    bind(); bindKind(); bindSrc();
+    $('#ag_add').onclick = () => { $('#ag_rows').insertAdjacentHTML('beforeend', rowHTML({})); bind(); bindKind(); bindSrc(); };
     $('#ag_fromproj').onclick = async () => {
       const cl = $('#ag_client').value.trim();
       if (!cl) { toast('Avval mijoz nomini kiriting'); return; }
       const d = await api('/api/reports/from-projects?client=' + encodeURIComponent(cl));
       if (d.error) { toast('⚠️ ' + d.error); return; }
       if (!d.items.length) { toast('Bu mijozning loyihalarida oylik reja kiritilmagan'); return; }
-      $('#ag_rows').insertAdjacentHTML('beforeend', d.items.map(rowHTML).join('')); bind(); bindKind();
+      $('#ag_rows').insertAdjacentHTML('beforeend', d.items.map(rowHTML).join('')); bind(); bindKind(); bindSrc();
       toast(`📥 Loyihalardagi reja (${d.plan} ta) qo'shildi`);
     };
     $('#ag_save').onclick = async () => {

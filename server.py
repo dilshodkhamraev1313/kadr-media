@@ -6731,7 +6731,24 @@ def _report_auto_count(conn, client, projects, source, ym):
     return 0
 
 
-def _report_manual_count(conn, item_id, ym):
+def _report_item_plan(conn, it, client):
+    """Oylik reja: «Loyihalar» bosqichiga bog'langan qator (source=project:X) uchun — loyihalardagi reja (plan)
+    yig'indisi (bir joydan yuritiladi); qolganlari uchun — kelishuvda yozilgan son."""
+    src = it.get("source") or ""
+    if src.startswith("project:"):
+        stage = src.split(":", 1)[1]
+        total = 0
+        for r in conn.execute("SELECT plan, self_post, self_script FROM projects WHERE client=?", (client,)).fetchall():
+            if (stage == "joylash" and r["self_post"]) or (stage == "ssenariy" and r["self_script"]):
+                continue
+            total += r["plan"] or 0
+        return total
+    return int(it.get("qty") or 0)
+
+
+def _report_manual_count(conn, item_id, ym, source=""):
+    if (source or "").startswith("project:"):
+        return 0   # «Loyihalar» bosqichidan olinadigan qatorda qo'lda yozuvlar sanalmaydi (ikki marta sanalmasin)
     return conn.execute("SELECT COALESCE(SUM(qty),0) AS n FROM report_log WHERE item_id=? AND ym=? AND COALESCE(deleted,0)=0",
                         (item_id, ym)).fetchone()["n"] or 0
 
@@ -6752,12 +6769,12 @@ def _report_client_month(conn, client, ym):
         carry = 0
         m = first
         while m < ym:
-            done_m = _report_auto_count(conn, client, projects, it["source"] or "", m) + _report_manual_count(conn, it["id"], m)
-            carry = max(0, (it["qty"] or 0) + carry - done_m)
+            done_m = _report_auto_count(conn, client, projects, it["source"] or "", m) + _report_manual_count(conn, it["id"], m, it["source"])
+            carry = max(0, _report_item_plan(conn, it, client) + carry - done_m)
             m = _ym_add(m, 1)
-        plan = int(it["qty"] or 0)
+        plan = _report_item_plan(conn, it, client)
         auto = _report_auto_count(conn, client, projects, it["source"] or "", ym)
-        manual = _report_manual_count(conn, it["id"], ym)
+        manual = _report_manual_count(conn, it["id"], ym, it["source"])
         done = auto + manual
         target = plan + carry
         if target == 0 and done == 0:
@@ -6765,6 +6782,7 @@ def _report_client_month(conn, client, ym):
             continue
         items.append({
             "id": it["id"], "kind": it["kind"], "label": it["label"], "source": it["source"] or "",
+            "fromProject": (it["source"] or "").startswith("project:"),
             "plan": plan, "carry": carry, "target": target, "done": done, "auto": auto, "manual": manual,
             "unplanned": plan == 0 and carry == 0,
             "extra": max(0, done - target), "short": max(0, target - done),
@@ -6807,7 +6825,8 @@ def api_report_overview(user, ym=None):
                         "totalDone": rep["totalDone"], "totalExtra": rep["totalExtra"], "totalShort": rep["totalShort"],
                         "totalCarry": rep["totalCarry"], "behind": behind,
                         "items": [{"id": i["id"], "label": i["label"], "target": i["target"], "done": i["done"],
-                                   "extra": i["extra"], "unplanned": i["unplanned"]} for i in rep["items"]],
+                                   "extra": i["extra"], "unplanned": i["unplanned"], "fromProject": i["fromProject"]}
+                                  for i in rep["items"]],
                         "hidden": rep["unplanned"]})
         else:
             out.append({"client": c, "hasAgreement": False})
@@ -6892,9 +6911,8 @@ def api_report_from_projects(user, client):
     if plan:
         items = [
             {"kind": "ssenariy", "label": "Ssenariy", "qty": plan, "source": "project:ssenariy"},
-            {"kind": "syomka", "label": "Syomka (video)", "qty": plan, "source": "project:syomka"},
-            {"kind": "reels", "label": "Montaj (video)", "qty": plan, "source": "project:montaj"},
-            {"kind": "boshqa", "label": "Joylangan post", "qty": plan, "source": "project:joylash"},
+            {"kind": "syomka", "label": "Syomka", "qty": plan, "source": "project:syomka"},
+            {"kind": "reels", "label": "Reels video (joylangan)", "qty": plan, "source": "project:joylash"},
         ]
     return {"client": client, "plan": plan, "items": items}
 
