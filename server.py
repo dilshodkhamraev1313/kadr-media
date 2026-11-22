@@ -6805,7 +6805,10 @@ def api_report_overview(user, ym=None):
                       if cur and i["target"] and i["done"] < i["target"] * frac * 0.7]
             out.append({"client": c, "hasAgreement": True, "planPct": rep["planPct"], "totalTarget": rep["totalTarget"],
                         "totalDone": rep["totalDone"], "totalExtra": rep["totalExtra"], "totalShort": rep["totalShort"],
-                        "totalCarry": rep["totalCarry"], "behind": behind})
+                        "totalCarry": rep["totalCarry"], "behind": behind,
+                        "items": [{"id": i["id"], "label": i["label"], "target": i["target"], "done": i["done"],
+                                   "extra": i["extra"], "unplanned": i["unplanned"]} for i in rep["items"]],
+                        "hidden": rep["unplanned"]})
         else:
             out.append({"client": c, "hasAgreement": False})
     conn.close()

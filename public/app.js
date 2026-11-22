@@ -734,8 +734,13 @@ async function viewDashboard() {
 
 // ---------- PROJECTS ----------
 async function viewProjects() {
-  const projects = await api('/api/projects' + '');
+  const [projects, repOv] = await Promise.all([
+    api('/api/projects' + ''),
+    ['ceo', 'coordinator', 'lead'].includes(ME.role) ? api('/api/reports/overview').catch(() => null) : Promise.resolve(null),
+  ]);
   DATA.projects = projects;
+  DATA.repOv = {};
+  ((repOv && repOv.clients) || []).forEach((c) => { DATA.repOv[c.client] = c; });
   let list = projects.filter((p) => matchSearch(p.name + ' ' + p.client + ' ' + p.responsible));
   if (FILTER === 'overdue') list = list.filter((p) => p.overdue);
   else if (FILTER === 'risk') list = list.filter((p) => p.atRisk);
@@ -746,6 +751,31 @@ async function viewProjects() {
     <div class="cards-grid">${list.map(projectCard).join('') || emptyState('Loyiha topilmadi')}</div>`;
   $('#content').querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => { FILTER = c.dataset.f; render(); }));
   bindProjectCards();
+}
+
+// Loyiha kartasida mijozning oylik kelishuvi (hisobot bilan BIR XIL ma'lumot): +Qo'shish bu yerdan ham ishlaydi
+function projectAgreementBlock(p) {
+  if (!DATA.repOv || !p.client || !['ceo', 'coordinator', 'lead'].includes(ME.role)) return '';
+  const e = DATA.repOv[p.client];
+  const isCeo = ME.role === 'ceo';
+  if (!e || !e.hasAgreement) {
+    return isCeo ? `<div class="pc-agree"><div class="muted" style="margin-bottom:6px">📋 Oylik kelishuv kiritilmagan</div>
+      <button class="mini-btn blue pc-rep-edit" data-client="${esc(p.client)}" style="width:100%">⚙️ Kelishuvni kiritish</button></div>` : '';
+  }
+  const rows = (e.items || []).map((i) => `
+    <div class="pc-agree-row">
+      <div class="rep-head" style="font-size:13px"><span>${esc(i.label)}${i.unplanned ? ' <span class="muted">(kelishuvda yo\'q)</span>' : ''}</span>
+        <span><b>${i.done}</b>${i.unplanned ? '' : ' / ' + i.target}${i.extra ? ` <b style="color:${REP_GREEN}">+${i.extra}</b>` : ''}
+          <button class="mini-btn gray pc-rep-add" data-id="${i.id}" data-label="${esc(i.label)}" style="margin-left:6px;padding:2px 8px">+</button></span></div>
+      ${repBarHTML({ target: i.target, done: i.done, extra: i.extra })}
+    </div>`).join('');
+  const hidden = (e.hidden || []).map((h) => `<button class="mini-btn gray pc-rep-add" data-id="${h.id}" data-label="${esc(h.label)}" style="margin:2px 4px 0 0">+ ${esc(h.label)}</button>`).join('');
+  return `<div class="pc-agree" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-soft)">
+    <div class="muted" style="margin-bottom:6px">📋 Oylik kelishuv · <b>${e.planPct}%</b> bajarildi${e.totalExtra ? ` · <span style="color:${REP_GREEN}">+${e.totalExtra} ortiqcha</span>` : ''}</div>
+    ${rows}
+    ${hidden ? `<div class="muted" style="margin-top:6px;font-size:12px">Kelishuvda yo'q, qilinsa qo'shing:</div>${hidden}` : ''}
+    ${isCeo ? `<button class="mini-btn blue pc-rep-edit" data-client="${esc(p.client)}" style="margin-top:8px;width:100%">⚙️ Kelishuvni o'zgartirish</button>` : ''}
+  </div>`;
 }
 
 function projectCard(p) {
@@ -787,6 +817,7 @@ function projectCard(p) {
         </div>` : ''}
       <div class="pc-foot"><div class="pc-resp"><div class="mini-av" style="background:${colorFor(p.responsible)}">${initials(p.responsible)}</div><span>${esc(p.responsible) || '—'}</span></div>
         <div class="pc-deadline ${dlCls}">📅 ${dl}</div></div>
+      ${projectAgreementBlock(p)}
       ${['ceo', 'coordinator', 'lead'].includes(ME.role) && p.client ? `<button class="mini-btn gray proj-report" data-client="${esc(p.client)}" style="margin-top:8px;width:100%">📊 Mijoz hisoboti</button>` : ''}
       ${(ME.role === 'ceo' && !p.frozen) ? `<button class="mini-btn blue proj-reset" data-resetproj="${p.id}" data-name="${esc(p.name)}" style="margin-top:8px;width:100%">🔄 Shu loyihani yangilash (yangi davr)</button>` : ''}
       ${(ME.role === 'ceo' && !p.fullyDone) ? `<button class="mini-btn ${p.frozen ? 'green' : 'gray'} proj-freeze" data-freezeproj="${p.id}" data-name="${esc(p.name)}" data-frozen="${p.frozen ? 1 : 0}" style="margin-top:8px;width:100%">${p.frozen ? '🔥 Muzlatishdan tiklash' : '🧊 Muzlatish (mijoz to\'xtatdi)'}</button>` : ''}
@@ -797,6 +828,13 @@ function bindProjectCards() {
     document.querySelectorAll('.project-card.clickable').forEach((el) =>
       el.addEventListener('click', () => openProjectModal((DATA.projects || []).find((p) => p.id == el.dataset.id))));
   }
+  document.querySelectorAll('.pc-rep-add').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation(); openRepAddModal(b.dataset.id, b.dataset.label, new Date().toISOString().slice(0, 7));
+  }));
+  document.querySelectorAll('.pc-rep-edit').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation(); openAgreementModal(b.dataset.client);
+  }));
+  document.querySelectorAll('.pc-agree').forEach((el) => el.addEventListener('click', (e) => e.stopPropagation()));
   document.querySelectorAll('.proj-report').forEach((b) => b.addEventListener('click', (e) => {
     e.stopPropagation(); REP_CLIENT = b.dataset.client; VIEW = 'reports'; render();
   }));
@@ -4224,8 +4262,11 @@ async function openAgreementModal(client) {
     <div class="field"><label>Mijoz</label>
       <input id="ag_client" list="ag_clients" type="text" value="${esc(client)}" ${client ? 'readonly' : ''} placeholder="Mijoz nomi" />
       <datalist id="ag_clients">${clientNames.map((n) => `<option value="${esc(n)}">`).join('')}</datalist></div>
-    <p class="muted" style="margin-bottom:8px">Har oy qilinadigan ishlar. «Soni» — oylik kelishuv. Kelishuvda bo'lmagan ish (masalan podcast) uchun <b>0</b> yozing: hisobotda ko'rinmaydi, lekin qilinsa «ortiqcha» (yashil) bo'lib chiqadi. Manba «Avto» bo'lsa tizim o'zi sanaydi, «Qo'lda» bo'lsa loyiha rahbari +1 bosadi.</p>
-    <div id="ag_rows">${(existing.length ? existing : [{}]).map(rowHTML).join('')}</div>
+    <p class="muted" style="margin-bottom:8px">Har oy qilinadigan ishlar. «Soni» — oylik kelishuv. Kelishuvda bo'lmagan ish (masalan podcast) uchun <b>0</b> yozing yoki bo'sh qoldiring: hisobotda ko'rinmaydi, lekin qilinsa «ortiqcha» (yashil) bo'lib chiqadi. Manba «Avto» bo'lsa tizim o'zi sanaydi, «Qo'lda» bo'lsa loyiha rahbari +1 bosadi.</p>
+    <div id="ag_rows">${(existing.length ? existing : [
+      { kind: 'reels', label: 'Reels video' }, { kind: 'podcast', label: 'Podcast' }, { kind: 'youtube', label: 'YouTube video' },
+      { kind: 'karusel', label: 'Karusel post' }, { kind: 'story', label: 'Stories' }, { kind: 'ssenariy', label: 'Ssenariy' },
+    ]).map(rowHTML).join('')}</div>
     <button class="btn-ghost sm" id="ag_add" type="button">+ Ish turi qo'shish</button>
     <button class="btn-ghost sm" id="ag_fromproj" type="button" title="Loyihalar sahifasidagi oylik rejadan to'ldiradi">📥 Loyihalar rejasidan olish</button>
     <button class="btn-save" id="ag_save" style="margin-top:12px">💾 Saqlash</button>`, () => {
@@ -4257,7 +4298,7 @@ async function openAgreementModal(client) {
       if (!items.length) { toast('Kamida bitta ish turini kiriting'); return; }
       const x = await api('/api/reports/agreement', { method: 'POST', body: JSON.stringify({ client: cl, items }) });
       if (x && x.error) { toast('⚠️ ' + x.error); return; }
-      closeModal(); toast('✅ Kelishuv saqlandi'); REP_CLIENT = cl; render();
+      closeModal(); toast('✅ Kelishuv saqlandi'); if (VIEW === 'reports') REP_CLIENT = cl; render();
     };
   });
 }
