@@ -4,8 +4,22 @@
     {
       "name": "kadr-media",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["server.py"],
+      "runtimeArgs": [
+        "server.py"
+      ],
       "port": 3000
+    },
+    {
+      "name": "lid-sayt",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "4300",
+        "--directory",
+        "/Users/a1/kadr-lid-sayt"
+      ],
+      "port": 4300
     }
   ]
 }

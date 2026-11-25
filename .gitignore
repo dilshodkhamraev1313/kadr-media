@@ -12,3 +12,4 @@ __pycache__/
 
 # Tizim
 .DS_Store
+*.local.md

@@ -16,6 +16,7 @@ import re
 import time
 import urllib.request
 import hashlib
+import hmac
 import secrets
 import base64
 import uuid
@@ -214,6 +215,8 @@ LEAD_SOURCES = {
     "sovuq":   "Sovuq qidiruv",
     "boshqa":  "Sayt/boshqa",
     "sayt":    "Premium sayt (target)",
+    "akademiya": "Kadr Akademiya sayti",
+    "kadr_studio": "Kadr Studio (Instagram forma)",
 }
 
 # Kelib tushgan pullar shaffofligi — kim qabul qildi + qanday usul.
@@ -4264,6 +4267,8 @@ def api_public_lead(b, ip):
         return {"error": "Ism va telefon raqamini to'g'ri kiriting."}, 400
     hits.append(now_t)
     _PUBLIC_HITS[ip] = hits
+    if b.get("kind") == "akademiya":
+        return _public_lead_akademiya(name, phone, clip("interest", 60), clip("utm", 200))
     budget_label, value = PUBLIC_BUDGETS.get(b.get("budget"), ("—", 0))
     when = PUBLIC_WHEN.get(b.get("when"), "—")
     btype = PUBLIC_TYPES.get(b.get("brand_type"), "—")
@@ -4297,6 +4302,240 @@ def api_public_lead(b, ip):
         f"{_telegram_mention(assigned_to)} — CRM'da ko'ring.",
         thread_id=thread_id)
     return {"ok": True}
+
+
+AKADEMIYA_PRICE = 5_000_000
+
+
+def _public_lead_akademiya(name, phone, interest, utm):
+    """Kadr Akademiya kurs saytidan lid (kind=akademiya). Madina keyin shu lidni raqami bo'yicha topadi."""
+    assigned_to = CRM_USERS[0] if CRM_USERS else "Dilshod Khamraev"
+    conn = get_db()
+    now = now_local()
+    sql = ("INSERT INTO leads (name, phone, source, stage, value_estimate, assigned_to, created_by, created_at, updated_at) "
+           "VALUES (?,?,?,?,?,?,?,?,?)")
+    params = (name, phone, "akademiya", "yangi", AKADEMIYA_PRICE, assigned_to, "Akademiya sayti", now, now)
+    if IS_PG:
+        lid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        lid = conn.execute(sql, params).lastrowid
+    note = (f"🎓 Kadr Akademiya kursi (5 mln, 1-dekabr)\nQiziqqan yo'nalish: {interest or '—'}"
+            + (f"\nUTM: {utm}" if utm else ""))
+    conn.execute("INSERT INTO lead_notes (lead_id, kind, text, created_by, created_at) VALUES (?,?,?,?,?)",
+                 (lid, "note", note, "Akademiya sayti", now))
+    log_audit(conn, "Akademiya sayti", "kurs saytidan yangi lid", name)
+    conn.commit()
+    conn.close()
+    thread_id = int(CRM_TOPIC_ID) if CRM_TOPIC_ID.isdigit() else None
+    esc_ = lambda x: html.escape(x or "—")
+    send_telegram(
+        f"🎓 <b>Kadr Akademiya — yangi lid</b>\n👤 {esc_(name)}\n📞 {esc_(phone)}\n"
+        f"🎯 {esc_(interest)}\n{_telegram_mention(assigned_to)} — CRM'da ko'ring.",
+        thread_id=thread_id)
+    return {"ok": True}
+
+
+# ------------------------------------------------------------
+#  Kadr Studio — Meta (Instagram) lid-forma → Make.com → shu yer
+# ------------------------------------------------------------
+STUDIO_LEAD_TOKEN = os.environ.get("STUDIO_LEAD_TOKEN", "").strip()
+STUDIO_TOPIC_ID = os.environ.get("STUDIO_TOPIC_ID", "22143").strip()   # Telegram "kadr studio lid" topigi
+STUDIO_PRICE_USD = 300
+_STUDIO_SKIP = {"name", "phone", "k", "token", "full_name", "phone_number"}
+
+
+def api_studio_lead(tok, b):
+    """Make.com Meta lid-formadan yuboradi: name, phone + forma javoblari (istalgan kalitlar).
+    IP limit yo'q (Make IP'lari umumiy) — o'rniga STUDIO_LEAD_TOKEN. Bir raqam 3 kunda faqat 1 marta."""
+    if not STUDIO_LEAD_TOKEN or not hmac.compare_digest(str(tok or ""), STUDIO_LEAD_TOKEN):
+        return {"error": "token"}, 403
+    clip = lambda v, n=200: str(v or "").strip()[:n]
+    name = clip(b.get("name") or b.get("full_name"), 80) or "Instagram lid"
+    phone = clip(b.get("phone") or b.get("phone_number"), 30)
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) < 9:
+        return {"error": "phone"}, 400
+    extras = [(clip(k, 60), clip(v)) for k, v in b.items()
+              if k not in _STUDIO_SKIP and clip(v)][:12]
+    conn = get_db()
+    now = now_local()
+    tail = digits[-9:]
+    since = (uz_now() - datetime.timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
+    dup = conn.execute("SELECT id, phone FROM leads WHERE source='kadr_studio' AND created_at >= ?",
+                       (since,)).fetchall()
+    if any(re.sub(r"\D", "", r["phone"] or "")[-9:] == tail for r in dup):
+        conn.close()
+        return {"ok": True, "duplicate": True}
+    assigned_to = CRM_USERS[0] if CRM_USERS else "Dilshod Khamraev"
+    value = STUDIO_PRICE_USD * get_usd_rate()
+    sql = ("INSERT INTO leads (name, phone, source, stage, value_estimate, assigned_to, created_by, created_at, updated_at) "
+           "VALUES (?,?,?,?,?,?,?,?,?)")
+    params = (name, phone, "kadr_studio", "yangi", value, assigned_to, "Instagram forma", now, now)
+    if IS_PG:
+        lid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        lid = conn.execute(sql, params).lastrowid
+    note = "🎬 Kadr Studio — Instagram yuritish ($300/oy)\n" + "\n".join(f"{k}: {v}" for k, v in extras)
+    conn.execute("INSERT INTO lead_notes (lead_id, kind, text, created_by, created_at) VALUES (?,?,?,?,?)",
+                 (lid, "note", note, "Instagram forma", now))
+    log_audit(conn, "Instagram forma", "Kadr Studio yangi lid", name)
+    conn.commit()
+    conn.close()
+    esc_ = lambda x: html.escape(x or "—")
+    lines = "".join(f"\n▫️ {esc_(k)}: <b>{esc_(v)}</b>" for k, v in extras)
+    send_telegram(
+        f"🎬 <b>Kadr Studio — yangi lid keldi!</b>\n👤 {esc_(name)}\n📞 {esc_(phone)}{lines}\n\n"
+        f"@musfira_25 — lid keldi, tezroq qo'ng'iroq qiling 📲",
+        thread_id=int(STUDIO_TOPIC_ID) if STUDIO_TOPIC_ID.isdigit() else None)
+    return {"ok": True}
+
+
+# ------------------------------------------------------------
+#  AI operator "Madina" (ElevenLabs Agents) — CRM ulanishi
+# ------------------------------------------------------------
+AI_OPERATOR_TOKEN = os.environ.get("AI_OPERATOR_TOKEN", "").strip()
+ELEVENLABS_WEBHOOK_SECRET = os.environ.get("ELEVENLABS_WEBHOOK_SECRET", "").strip()
+AI_OPERATOR_NAME = "Madina AI"
+# Madina qo'yadigan natija → CRM bosqichi. "mijoz" ni HECH QACHON AI qo'ymaydi (faqat to'lovdan keyin Gulro).
+AI_OUTCOME_STAGE = {
+    "javob_yoq": None, "boglanildi": "boglanildi", "qayta_qongiroq": "boglanildi",
+    "qiziqdi": "qiziqdi", "tolovga_tayyor": "taklif", "rad": "rad", "bezovta_qilmang": "rad",
+}
+AI_OUTCOME_LABEL = {
+    "javob_yoq": "📵 Javob yo'q", "boglanildi": "📞 Gaplashildi", "qayta_qongiroq": "⏰ Qayta qo'ng'iroq",
+    "qiziqdi": "🔥 Qiziqdi", "tolovga_tayyor": "💰 To'lovga tayyor", "rad": "❌ Rad etdi",
+    "bezovta_qilmang": "⛔️ Bezovta qilmang",
+}
+_STAGE_RANK = {"yangi": 0, "boglanildi": 1, "qiziqdi": 2, "taklif": 3, "mijoz": 4}
+
+
+def _ai_token_ok(tok):
+    return bool(AI_OPERATOR_TOKEN) and hmac.compare_digest(str(tok or ""), AI_OPERATOR_TOKEN)
+
+
+def _ai_find_or_create_lead(conn, phone, name, now):
+    """Telefonning oxirgi 9 raqami bo'yicha lidni topadi, bo'lmasa yaratadi. (lid_dict, yangi_mi)"""
+    tail = re.sub(r"\D", "", phone or "")[-9:]
+    if len(tail) == 9:
+        for r in conn.execute("SELECT * FROM leads WHERE phone<>'' ORDER BY id DESC").fetchall():
+            if re.sub(r"\D", "", r["phone"] or "")[-9:] == tail:
+                return dict(r), False
+    assigned_to = CRM_USERS[0] if CRM_USERS else "Dilshod Khamraev"
+    sql = ("INSERT INTO leads (name, phone, source, stage, value_estimate, assigned_to, created_by, created_at, updated_at) "
+           "VALUES (?,?,?,?,?,?,?,?,?)")
+    params = ((name or "Noma'lum (AI qo'ng'iroq)")[:80], (phone or "")[:30], "boshqa", "yangi", 5000000,
+              assigned_to, AI_OPERATOR_NAME, now, now)
+    if IS_PG:
+        lid = conn.execute(sql + " RETURNING id", params).fetchone()["id"]
+    else:
+        lid = conn.execute(sql, params).lastrowid
+    row = conn.execute("SELECT * FROM leads WHERE id=?", (lid,)).fetchone()
+    return dict(row), True
+
+
+def api_ai_operator_tool(token, b):
+    """Madina suhbat oxirida chaqiradigan 'crm_yozish' asbobi."""
+    if not _ai_token_ok(token):
+        return {"error": "Ruxsat yo'q"}, 403
+    clip = lambda k, n=300: (str(b.get(k) or "")).strip()[:n]
+    phone, name = clip("phone", 30), clip("name", 80)
+    outcome = clip("outcome", 30)
+    if outcome not in AI_OUTCOME_STAGE:
+        outcome = "boglanildi"
+    if len(re.sub(r"\D", "", phone)) < 9:
+        return {"error": "Telefon raqami kerak"}, 400
+    conn = get_db()
+    now = now_local()
+    lead, created = _ai_find_or_create_lead(conn, phone, name, now)
+    lid = lead["id"]
+    # Bosqich faqat oldinga siljiydi; "mijoz" bo'lgan lidga tegilmaydi.
+    new_stage = AI_OUTCOME_STAGE[outcome]
+    cur = lead.get("stage") or "yangi"
+    if new_stage and cur != "mijoz":
+        if new_stage == "rad" or cur == "rad" or _STAGE_RANK.get(new_stage, 0) > _STAGE_RANK.get(cur, 0):
+            conn.execute("UPDATE leads SET stage=?, updated_at=? WHERE id=?", (new_stage, now, lid))
+            if new_stage == "rad":
+                conn.execute("UPDATE leads SET lost_reason=? WHERE id=?",
+                             (clip("objection", 200) or AI_OUTCOME_LABEL[outcome], lid))
+    if name and (lead.get("name") or "").startswith("Noma'lum"):
+        conn.execute("UPDATE leads SET name=? WHERE id=?", (name, lid))
+    lines = [f"🤖 Madina AI qo'ng'irog'i — {AI_OUTCOME_LABEL[outcome]}"]
+    for k, lbl in (("interest", "Qiziqishi"), ("objection", "E'tiroz"), ("note", "Izoh"),
+                   ("callback_at", "Qayta qo'ng'iroq"), ("conversation_id", "Suhbat ID")):
+        v = clip(k, 600)
+        if v:
+            lines.append(f"{lbl}: {v}")
+    conn.execute("INSERT INTO lead_notes (lead_id, kind, text, created_by, created_at) VALUES (?,?,?,?,?)",
+                 (lid, "call", "\n".join(lines), AI_OPERATOR_NAME, now))
+    cb = clip("callback_at", 25).replace("T", " ")
+    if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}", cb):
+        conn.execute("INSERT INTO lead_followups (lead_id, due_at, note, created_by, created_at) VALUES (?,?,?,?,?)",
+                     (lid, cb[:16], "Madina AI: qayta qo'ng'iroq — " + (clip("note", 200) or "kelishilgan"),
+                      AI_OPERATOR_NAME, now))
+    log_audit(conn, AI_OPERATOR_NAME, f"AI qo'ng'iroq: {outcome}", f"{name or lead.get('name')} {phone}")
+    conn.commit()
+    conn.close()
+    if outcome in ("tolovga_tayyor", "qiziqdi") or created:
+        thread_id = int(CRM_TOPIC_ID) if CRM_TOPIC_ID.isdigit() else None
+        esc_ = lambda x: html.escape(x or "—")
+        who = lead.get("assigned_to") or (CRM_USERS[0] if CRM_USERS else "")
+        send_telegram(
+            f"🤖 <b>Madina AI</b> — {AI_OUTCOME_LABEL[outcome]}\n👤 {esc_(name or lead.get('name'))}\n📞 {esc_(phone)}\n"
+            f"💬 {esc_(clip('note', 300))}\n"
+            + (f"⏰ {esc_(cb)}\n" if cb else "")
+            + f"{_telegram_mention(who)} — " + ("<b>to'lov uchun darhol bog'laning!</b>" if outcome == "tolovga_tayyor"
+                                               else "CRM'da ko'ring."),
+            thread_id=thread_id)
+    return {"ok": True, "lead_id": lid, "message": "CRM'ga yozildi"}
+
+
+def _elevenlabs_sig_ok(raw, header):
+    """ElevenLabs-Signature: 't=<unix>,v0=<hex sha256 HMAC of "<t>.<body>">'. 30 daqiqadan eski — rad."""
+    if not ELEVENLABS_WEBHOOK_SECRET or not header:
+        return False
+    parts = dict(p.split("=", 1) for p in header.split(",") if "=" in p)
+    t, v0 = parts.get("t", ""), parts.get("v0", "")
+    if not t.isdigit() or abs(time.time() - int(t)) > 1800:
+        return False
+    mac = hmac.new(ELEVENLABS_WEBHOOK_SECRET.encode(), f"{t}.".encode() + raw, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(mac, v0)
+
+
+def api_ai_operator_post_call(raw, sig_header):
+    """ElevenLabs post-call webhook: suhbat xulosasi + transkript parchasini lidga yozadi."""
+    if not _elevenlabs_sig_ok(raw, sig_header):
+        return {"error": "Imzo noto'g'ri"}, 401
+    try:
+        ev = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return {"error": "JSON noto'g'ri"}, 400
+    if ev.get("type") != "post_call_transcription":
+        return {"ok": True, "skipped": ev.get("type")}
+    d = ev.get("data") or {}
+    dyn = ((d.get("conversation_initiation_client_data") or {}).get("dynamic_variables") or {})
+    phone = str(dyn.get("lead_phone") or dyn.get("system__caller_id") or dyn.get("system__called_number") or "")
+    ana = d.get("analysis") or {}
+    summary = (ana.get("transcript_summary") or "").strip()
+    dc = {k: (v or {}).get("value") for k, v in (ana.get("data_collection_results") or {}).items()}
+    turns = d.get("transcript") or []
+    excerpt = "\n".join(f"{'Madina' if t.get('role') == 'agent' else 'Mijoz'}: {(t.get('message') or '').strip()}"
+                        for t in turns if (t.get("message") or "").strip())[:3500]
+    dur = (d.get("metadata") or {}).get("call_duration_secs")
+    if len(re.sub(r"\D", "", phone)) < 9:
+        return {"ok": True, "skipped": "telefon yo'q"}
+    conn = get_db()
+    now = now_local()
+    lead, _ = _ai_find_or_create_lead(conn, phone, str(dc.get("ism") or ""), now)
+    text = (f"🎧 Madina AI — suhbat yakuni" + (f" ({int(dur)} s)" if dur else "") + "\n"
+            + (f"Xulosa: {summary}\n" if summary else "")
+            + "".join(f"{k}: {v}\n" for k, v in dc.items() if v not in (None, ""))
+            + (f"— Transkript —\n{excerpt}" if excerpt else "")
+            + f"\nSuhbat ID: {d.get('conversation_id') or '—'}")
+    conn.execute("INSERT INTO lead_notes (lead_id, kind, text, created_by, created_at) VALUES (?,?,?,?,?)",
+                 (lead["id"], "call", text[:6000], AI_OPERATOR_NAME, now))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "lead_id": lead["id"]}
 
 
 def api_list_leads(user, stage=None):
@@ -10875,6 +11114,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/telegram/webhook":
             return self._json(api_telegram_webhook(self._body()))
         # Premium landing sayt formasi — ochiq (CORS, auth yo'q)
+        # AI operator Madina (ElevenLabs) — o'z tokeni / HMAC imzosi bilan
+        if path == "/api/ai-operator/tool":
+            k = (parse_qs(urlparse(self.path).query).get("k") or [""])[0]
+            return self._json(api_ai_operator_tool(k, self._body()))
+        if path == "/api/ai-operator/post-call":
+            n = min(int(self.headers.get("Content-Length") or 0), 5_000_000)
+            raw = self.rfile.read(n) if n else b""
+            return self._json(api_ai_operator_post_call(raw, self.headers.get("ElevenLabs-Signature", "")))
+        # Kadr Studio Meta lid-forma (Make.com) — o'z tokeni bilan
+        if path == "/api/integrations/studio-lead":
+            k = (parse_qs(urlparse(self.path).query).get("k") or [""])[0]
+            return self._json(api_studio_lead(k, self._body()))
         if path == "/api/public/lead":
             self._cors = True
             ip = (self.headers.get("X-Forwarded-For") or self.client_address[0]).split(",")[0].strip()
