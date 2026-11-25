@@ -4339,6 +4339,8 @@ def _public_lead_akademiya(name, phone, interest, utm):
 #  Kadr Studio — Meta (Instagram) lid-forma → Make.com → shu yer
 # ------------------------------------------------------------
 STUDIO_LEAD_TOKEN = os.environ.get("STUDIO_LEAD_TOKEN", "").strip()
+# Token o'zi emas, faqat sha256 xeshi (env bo'lmasa ham ishlaydi; tokenni tiklab bo'lmaydi)
+STUDIO_LEAD_TOKEN_SHA256 = os.environ.get("STUDIO_LEAD_TOKEN_SHA256", "a6a0e3af993e024a86dbd99aaab0e4914c746faa076015cc336063c93e5e865d").strip()
 STUDIO_TOPIC_ID = os.environ.get("STUDIO_TOPIC_ID", "22143").strip()   # Telegram "kadr studio lid" topigi
 STUDIO_PRICE_USD = 300
 _STUDIO_SKIP = {"name", "phone", "k", "token", "full_name", "phone_number"}
@@ -4347,7 +4349,11 @@ _STUDIO_SKIP = {"name", "phone", "k", "token", "full_name", "phone_number"}
 def api_studio_lead(tok, b):
     """Make.com Meta lid-formadan yuboradi: name, phone + forma javoblari (istalgan kalitlar).
     IP limit yo'q (Make IP'lari umumiy) — o'rniga STUDIO_LEAD_TOKEN. Bir raqam 3 kunda faqat 1 marta."""
-    if not STUDIO_LEAD_TOKEN or not hmac.compare_digest(str(tok or ""), STUDIO_LEAD_TOKEN):
+    t = str(tok or "")
+    ok = bool(STUDIO_LEAD_TOKEN) and hmac.compare_digest(t, STUDIO_LEAD_TOKEN)
+    if not ok and len(t) >= 24 and STUDIO_LEAD_TOKEN_SHA256:
+        ok = hmac.compare_digest(hashlib.sha256(t.encode()).hexdigest(), STUDIO_LEAD_TOKEN_SHA256)
+    if not ok:
         return {"error": "token"}, 403
     clip = lambda v, n=200: str(v or "").strip()[:n]
     name = clip(b.get("name") or b.get("full_name"), 80) or "Instagram lid"
