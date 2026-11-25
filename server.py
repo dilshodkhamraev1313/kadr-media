@@ -4359,17 +4359,23 @@ def api_studio_lead(tok, b):
     name = clip(b.get("name") or b.get("full_name"), 80) or "Instagram lid"
     phone = clip(b.get("phone") or b.get("phone_number"), 30)
     digits = re.sub(r"\D", "", phone)
-    if len(digits) < 9:
-        return {"error": "phone"}, 400
     extras = [(clip(k, 60), clip(v)) for k, v in b.items()
               if k not in _STUDIO_SKIP and clip(v)][:12]
+    thread = int(STUDIO_TOPIC_ID) if STUDIO_TOPIC_ID.isdigit() else None
+    # Meta Lead Ads Testing Tool: "<test lead: dummy data for ...>" — CRM'ga yozmaymiz, faqat zanjir ishlashini ko'rsatamiz
+    if "dummy data" in (name + phone).lower() or "test lead" in (name + phone).lower():
+        send_telegram("🧪 <b>Kadr Studio — Meta test lidi keldi</b>\nZanjir ishlayapti: Instagram forma → Make → Dashboard. "
+                      "CRM'ga yozilmadi (test).", thread_id=thread)
+        return {"ok": True, "test": True}
+    # Diqqat: 4xx qaytarmaymiz — Make xatoda ssenariyni o'chirib qo'yadi. G'alati raqamli lid ham saqlanadi.
+    bad_phone = len(digits) < 9
     conn = get_db()
     now = now_local()
     tail = digits[-9:]
     since = (uz_now() - datetime.timedelta(days=3)).strftime("%Y-%m-%d %H:%M:%S")
     dup = conn.execute("SELECT id, phone FROM leads WHERE source='kadr_studio' AND created_at >= ?",
                        (since,)).fetchall()
-    if any(re.sub(r"\D", "", r["phone"] or "")[-9:] == tail for r in dup):
+    if not bad_phone and any(re.sub(r"\D", "", r["phone"] or "")[-9:] == tail for r in dup):
         conn.close()
         return {"ok": True, "duplicate": True}
     assigned_to = CRM_USERS[0] if CRM_USERS else "Dilshod Khamraev"
@@ -4390,9 +4396,10 @@ def api_studio_lead(tok, b):
     esc_ = lambda x: html.escape(x or "—")
     lines = "".join(f"\n▫️ {esc_(k)}: <b>{esc_(v)}</b>" for k, v in extras)
     send_telegram(
-        f"🎬 <b>Kadr Studio — yangi lid keldi!</b>\n👤 {esc_(name)}\n📞 {esc_(phone)}{lines}\n\n"
+        f"🎬 <b>Kadr Studio — yangi lid keldi!</b>\n👤 {esc_(name)}\n📞 {esc_(phone)}"
+        f"{' ⚠️ <i>raqam to‘liq emas</i>' if bad_phone else ''}{lines}\n\n"
         f"@musfira_25 — lid keldi, tezroq qo'ng'iroq qiling 📲",
-        thread_id=int(STUDIO_TOPIC_ID) if STUDIO_TOPIC_ID.isdigit() else None)
+        thread_id=thread)
     return {"ok": True}
 
 
